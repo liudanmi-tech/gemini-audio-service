@@ -19,3 +19,4 @@ echo "=========================================="
 curl -s http://47.79.254.213:8001/test-gemini | python3 -m json.tool || echo "无法连接"
 echo ""
 
+

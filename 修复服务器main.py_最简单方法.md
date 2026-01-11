@@ -65,3 +65,4 @@ curl http://localhost:8001/health
 tail -50 ~/gemini-audio-service.log
 ```
 
+

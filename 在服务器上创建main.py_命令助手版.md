@@ -52,3 +52,4 @@ python3 -c "import base64; content = open('main.py', 'rb').read(); encoded = bas
 
 由于文件较大，我建议创建一个 Python 脚本，在服务器上直接生成文件内容。
 
+

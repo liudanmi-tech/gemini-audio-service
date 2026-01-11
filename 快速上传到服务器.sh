@@ -77,3 +77,4 @@ echo ""
 echo "✅ 完成！"
 echo "📋 查看日志: ssh $SERVER 'tail -f /tmp/gemini-service.log'"
 
+

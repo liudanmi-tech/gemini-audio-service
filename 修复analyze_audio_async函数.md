@@ -105,3 +105,4 @@ logging.FileHandler(os.path.expanduser('~/gemini-audio-service.log'))
 
 如果是 `/tmp/gemini-audio-service.log`，需要修复。
 
+

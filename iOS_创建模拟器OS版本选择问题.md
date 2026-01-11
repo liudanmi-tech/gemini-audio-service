@@ -167,3 +167,4 @@ xcrun simctl create "iPhone 14 (iOS 18)" "iPhone 14" "iOS 18.6"
 
 **现在先点击 "Cancel" 关闭对话框，等待几秒，然后重新点击 `+` 按钮，再试试选择 OS Version！**
 
+

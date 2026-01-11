@@ -75,3 +75,4 @@ tail -30 /tmp/gemini-service.log
 curl http://localhost:8001/health
 ```
 
+
