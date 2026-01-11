@@ -2,13 +2,15 @@
 //  DialogueReviewView.swift
 //  WorkSurvivalGuide
 //
-//  对话复盘组件 - 按照Figma设计稿实现
+//  对话复盘组件 - 按照Figma设计稿实现（带总结和展开按钮）
 //
 
 import SwiftUI
 
 struct DialogueReviewView: View {
+    let summary: String?
     let dialogues: [DialogueItem]
+    @State private var isExpanded: Bool = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -16,19 +18,56 @@ struct DialogueReviewView: View {
             Text("对话复盘")
                 .font(AppFonts.cardTitle)
                 .foregroundColor(AppColors.headerText)
+                .padding(.horizontal, 21.5)
+                .padding(.top, 21.5)
             
-            // 对话列表
-            VStack(spacing: 16) {
-                ForEach(Array(dialogues.enumerated()), id: \.offset) { index, dialogue in
-                    DialogueBubbleView(dialogue: dialogue, isOwn: index % 2 == 1)
+            // 总结文本
+            if let summary = summary, !summary.isEmpty {
+                Text(summary)
+                    .font(.system(size: 14, weight: .regular, design: .rounded))
+                    .foregroundColor(AppColors.headerText.opacity(0.8))
+                    .lineSpacing(4)
+                    .padding(.horizontal, 21.5)
+                    .padding(.bottom, 8)
+            }
+            
+            // 显示详情按钮
+            HStack {
+                Spacer()
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        isExpanded.toggle()
+                    }
+                }) {
+                    Text("显示详情")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(AppColors.headerText)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                Spacer()
+            }
+            .padding(.bottom, isExpanded ? 0 : 21.5)
+            
+            // 对话列表（展开时显示）
+            if isExpanded {
+                VStack(spacing: 16) {
+                ForEach(Array(dialogues.enumerated()), id: \.offset) { index, dialogue in
+                    DialogueBubbleView(
+                        dialogue: dialogue,
+                        isOwn: dialogue.isMe ?? false  // 使用后端返回的is_me字段
+                    )
+                }
+                }
+                .padding(.horizontal, 21.5)
+                .padding(.bottom, 21.5)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .padding(21.37)
         .background(AppColors.cardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(AppColors.border, lineWidth: 1.38)
+                .stroke(AppColors.border, lineWidth: 1.51)
         )
         .cornerRadius(12)
         .shadow(color: AppColors.border, radius: 0, x: 3, y: 3)
@@ -111,9 +150,9 @@ struct DialogueBubbleView: View {
     
     private func getSpeakerEmoji(_ speaker: String) -> String {
         // 根据说话人返回emoji或首字母
-        if speaker.contains("说话人1") || speaker.contains("Speaker1") {
+        if speaker.contains("说话人1") || speaker.contains("Speaker1") || speaker.contains("Speaker_1") {
             return "🐮"
-        } else if speaker.contains("说话人2") || speaker.contains("Speaker2") {
+        } else if speaker.contains("说话人2") || speaker.contains("Speaker2") || speaker.contains("Speaker_0") {
             return "👤"
         }
         return String(speaker.prefix(1))

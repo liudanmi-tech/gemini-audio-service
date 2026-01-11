@@ -79,8 +79,8 @@ class GeminiAnalysisService {
         return AudioAnalysisResult(
             speakerCount: 2,
             dialogues: [
-                DialogueItem(speaker: "说话人1", content: "这是测试对话内容", tone: "平静", timestamp: 10.5),
-                DialogueItem(speaker: "说话人2", content: "这是另一个人的回复", tone: "轻松", timestamp: 25.3)
+                DialogueItem(speaker: "说话人1", content: "这是测试对话内容", tone: "平静", timestamp: "00:10", isMe: false),
+                DialogueItem(speaker: "说话人2", content: "这是另一个人的回复", tone: "轻松", timestamp: "00:25", isMe: true)
             ],
             risks: ["测试风险点1", "测试风险点2"]
         )

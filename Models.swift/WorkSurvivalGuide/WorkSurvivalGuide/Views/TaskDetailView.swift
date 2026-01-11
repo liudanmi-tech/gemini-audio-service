@@ -32,7 +32,10 @@ struct TaskDetailView: View {
                     
                     // 对话复盘模块
                     if let detail = detail, !detail.dialogues.isEmpty {
-                        DialogueReviewView(dialogues: detail.dialogues)
+                        DialogueReviewView(
+                            summary: detail.summary,
+                            dialogues: detail.dialogues
+                        )
                     }
                     
                     // 回放分析与策略模块
@@ -158,7 +161,7 @@ struct DetailHeaderView: View {
             
             Spacer()
             
-            Text("每日总结")
+            Text("总结")
                 .font(.system(size: 20, weight: .bold, design: .rounded))
                 .foregroundColor(AppColors.headerText)
             

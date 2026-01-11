@@ -176,6 +176,7 @@ struct TaskDetailResponse: Codable {
     let speakerCount: Int?
     let dialogues: [DialogueItem]
     let risks: [String]
+    let summary: String?  // 新增：对话总结
     let createdAt: String
     let updatedAt: String
     
@@ -191,6 +192,7 @@ struct TaskDetailResponse: Codable {
         case speakerCount = "speaker_count"
         case dialogues
         case risks
+        case summary  // 新增
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -219,6 +221,7 @@ struct TaskDetailResponse: Codable {
         speakerCount = try? container.decode(Int.self, forKey: .speakerCount)
         dialogues = try container.decode([DialogueItem].self, forKey: .dialogues)
         risks = try container.decode([String].self, forKey: .risks)
+        summary = try? container.decode(String.self, forKey: .summary)
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
     }
@@ -229,7 +232,16 @@ struct DialogueItem: Codable {
     let speaker: String
     let content: String
     let tone: String
-    let timestamp: Double?
+    let timestamp: String?  // 时间戳格式："MM:SS"
+    let isMe: Bool?  // 新增：是否是我说的
+    
+    enum CodingKeys: String, CodingKey {
+        case speaker
+        case content
+        case tone
+        case timestamp
+        case isMe = "is_me"
+    }
 }
 
 // 任务状态响应

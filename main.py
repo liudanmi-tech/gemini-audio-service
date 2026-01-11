@@ -11,7 +11,7 @@ import traceback
 import logging
 import uuid
 from io import BytesIO
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Tuple
 from pathlib import Path
 from datetime import datetime
 
@@ -143,12 +143,49 @@ class DialogueItem(BaseModel):
     speaker: str  # 说话人标识（如：说话人1、说话人A等）
     content: str  # 说话内容
     tone: str  # 说话语气（如：平静、愤怒、轻松、焦虑等）
+    timestamp: Optional[str] = None  # 时间戳（格式："MM:SS"）
+    is_me: Optional[bool] = False  # 是否是我说的（Speaker_1为true）
 
 class AudioAnalysisResponse(BaseModel):
     """音频分析结果的数据模型"""
     speaker_count: int  # 说话人数
     dialogues: List[DialogueItem]  # 所有对话列表，按时间顺序
     risks: List[str]  # 风险点列表
+
+# Call #1 数据模型（新的分析格式）
+class TranscriptItem(BaseModel):
+    """转录项数据模型"""
+    speaker: str  # 说话人标识
+    text: str  # 对话内容
+    timestamp: Optional[str] = None  # 时间戳（格式："MM:SS"）
+    is_me: bool  # 是否是我说的
+
+class Call1Response(BaseModel):
+    """Call #1 分析响应"""
+    mood_score: int  # 情绪分数 (0-100)
+    stats: dict  # 统计信息，包含 sigh 和 laugh
+    summary: str  # 对话总结
+    transcript: List[TranscriptItem]  # 转录列表
+
+# Call #2 数据模型（策略分析）
+class StrategyItem(BaseModel):
+    """策略项数据模型"""
+    id: str  # 策略ID
+    label: str  # 策略标签
+    emoji: str  # 表情符号
+    title: str  # 策略标题
+    content: str  # 策略内容（Markdown格式）
+
+class VisualData(BaseModel):
+    """视觉数据模型"""
+    image_prompt: str  # 火柴人图片描述词
+    my_inner: str  # 我的内心OS
+    other_inner: str  # 对方的内心OS
+
+class Call2Response(BaseModel):
+    """Call #2 策略分析响应"""
+    visual: VisualData  # 视觉数据
+    strategies: List[StrategyItem]  # 策略列表
 
 
 def wait_for_file_active(file: Any, max_wait_time=300) -> Any:
@@ -221,7 +258,7 @@ def parse_gemini_response(response_text: str) -> dict:
         raise HTTPException(status_code=500, detail=f"无法解析 Gemini 返回的 JSON: {str(e)}")
 
 
-async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> AudioAnalysisResponse:
+async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tuple[AudioAnalysisResponse, Optional[Call1Response]]:
     """
     从文件路径分析音频文件（内部函数）
     
@@ -230,7 +267,9 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Au
         file_filename: 文件名
         
     Returns:
-        结构化的音频分析结果
+        元组：(AudioAnalysisResponse, Optional[Call1Response])
+        - AudioAnalysisResponse: 兼容旧版本的分析结果
+        - Call1Response: 新的Call1格式数据（如果解析成功）
     """
     uploaded_file = None
     
@@ -300,37 +339,55 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Au
         model = genai.GenerativeModel(model_name)
         logger.info(f"模型初始化完成")
         
-        prompt = """请分析这段音频，识别所有说话人及其对话内容。
+        # 使用新的提示词（Call #1 - Observer）
+        prompt = """角色: 你是一个专业的语音分析与行为观察专家。
 
-要求：
-1. 识别说话人数量。
-2. 按时间顺序列出所有对话，每个对话包含：
-   - 说话人标识（如：说话人1、说话人A、说话人B等）
-   - 说话的具体内容（完整原话）
-   - 说话的语气（如：平静、愤怒、轻松、焦虑、兴奋、严肃等）
-3. 识别关键风险点。
+任务: 请深入解析上传的音频文件，并输出严格格式化的 JSON 数据。
+
+参数定义:
+
+1. **mood_score**: (Integer, 0-100) 根据语调波动、语速变化及语义冲突程度对对话氛围进行建模评分。分数越高表示氛围越轻松愉快。
+
+2. **sigh_count**: (Integer) 识别并统计 Speaker_1 (用户) 在音频中产生的长呼气或叹气次数（通常代表压力、疲惫或无奈）。
+
+3. **laugh_count**: (Integer) 识别并统计全场出现的所有类型笑声（包括愉快的、尴尬的或嘲讽的笑）。
+
+4. **summary**: (String) 对对话内容、核心矛盾及情绪转折点进行精炼总结（100-200字）。
+
+5. **transcript**: (Array) 按时间顺序包含所有对话，每个对话包含：
+   - speaker: 说话人标识（如：Speaker_0, Speaker_1，其中Speaker_1为用户）
+   - text: 对话内容（完整原话）
+   - timestamp: 时间戳（格式："MM:SS"，如"00:01"）
+   - is_me: (Boolean) 是否为用户说的（Speaker_1为true，其他为false）
+
+6. **risks**: (Array) 关键风险点列表
 
 请务必以纯 JSON 格式返回，不要包含 Markdown 标记。
 
 返回格式必须严格遵循以下结构：
 {
-  "speaker_count": 数字,
-  "dialogues": [
+  "mood_score": 75,
+  "sigh_count": 2,
+  "laugh_count": 5,
+  "summary": "对话气氛整体缓和，但在周末加班的截止日期问题上存在明显的隐形拉锯，用户试图防御个人时间。",
+  "transcript": [
     {
-      "speaker": "说话人1",
-      "content": "说话的具体内容",
-      "tone": "说话语气"
+      "speaker": "Speaker_0",
+      "text": "具体说话内容",
+      "timestamp": "00:01",
+      "is_me": false
     },
     {
-      "speaker": "说话人2",
-      "content": "说话的具体内容",
-      "tone": "说话语气"
+      "speaker": "Speaker_1",
+      "text": "具体说话内容",
+      "timestamp": "00:05",
+      "is_me": true
     }
   ],
   "risks": ["风险点1", "风险点2", ...]
 }
 
-注意：dialogues 数组必须包含所有对话，按时间顺序排列，不要遗漏任何对话。"""
+注意：transcript 数组必须包含所有对话，按时间顺序排列，不要遗漏任何对话。"""
         
         # 调用模型进行分析（添加重试机制）
         logger.info(f"========== 开始调用 Gemini 模型分析音频 ==========")
@@ -372,24 +429,68 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Au
         # 解析响应
         analysis_data = parse_gemini_response(response.text)
         
-        # 解析对话列表
-        dialogues_list = []
-        if "dialogues" in analysis_data:
-            for dialogue in analysis_data["dialogues"]:
+        # 尝试解析新的Call1格式，如果失败则使用旧格式
+        call1_result = None
+        try:
+            # 解析转录列表
+            transcript_list = []
+            if "transcript" in analysis_data:
+                for item in analysis_data["transcript"]:
+                    transcript_list.append(TranscriptItem(
+                        speaker=item.get("speaker", "未知"),
+                        text=item.get("text", ""),
+                        timestamp=item.get("timestamp"),
+                        is_me=item.get("is_me", False)
+                    ))
+            
+            # 构建Call1Response
+            call1_result = Call1Response(
+                mood_score=analysis_data.get("mood_score", 70),
+                stats={
+                    "sigh": analysis_data.get("sigh_count", 0),
+                    "laugh": analysis_data.get("laugh_count", 0)
+                },
+                summary=analysis_data.get("summary", ""),
+                transcript=transcript_list
+            )
+            
+            # 转换为旧格式以保持兼容性
+            dialogues_list = []
+            for item in transcript_list:
                 dialogues_list.append(DialogueItem(
-                    speaker=dialogue.get("speaker", "未知"),
-                    content=dialogue.get("content", ""),
-                    tone=dialogue.get("tone", "未知")
+                    speaker=item.speaker,
+                    content=item.text,
+                    tone="未知",  # 新格式不包含tone，保留默认值
+                    timestamp=item.timestamp,
+                    is_me=item.is_me
                 ))
+            
+            speaker_count = len(set(item.speaker for item in transcript_list)) if transcript_list else 0
+            
+        except Exception as e:
+            logger.warning(f"解析新格式失败，使用旧格式: {e}")
+            # 兼容旧格式
+            dialogues_list = []
+            if "dialogues" in analysis_data:
+                for dialogue in analysis_data["dialogues"]:
+                    dialogues_list.append(DialogueItem(
+                        speaker=dialogue.get("speaker", "未知"),
+                        content=dialogue.get("content", ""),
+                        tone=dialogue.get("tone", "未知"),
+                        timestamp=dialogue.get("timestamp"),
+                        is_me=dialogue.get("is_me", False)
+                    ))
+            speaker_count = analysis_data.get("speaker_count", 0)
         
         # 验证并构建返回数据
         result = AudioAnalysisResponse(
-            speaker_count=analysis_data.get("speaker_count", 0),
+            speaker_count=speaker_count,
             dialogues=dialogues_list,
             risks=analysis_data.get("risks", [])
         )
         
-        return result
+        # 返回结果和Call1数据（如果存在）
+        return result, call1_result
         
     except Exception as e:
         error_msg = str(e)
@@ -442,8 +543,9 @@ async def analyze_audio(file: UploadFile = File(...)):
             content = await file.read()
             temp_file.write(content)
         
-        # 调用内部函数分析
-        return await analyze_audio_from_path(temp_file_path, file.filename or "audio.m4a")
+        # 调用内部函数分析（只返回旧格式以保持API兼容性）
+        result, _ = await analyze_audio_from_path(temp_file_path, file.filename or "audio.m4a")
+        return result
         
     except Exception as e:
         error_msg = str(e)
@@ -520,6 +622,7 @@ class TaskDetailResponse(BaseModel):
     speaker_count: Optional[int] = None
     dialogues: List[dict] = []
     risks: List[str] = []
+    summary: Optional[str] = None  # 新增：对话总结
     created_at: str
     updated_at: str
 
@@ -665,9 +768,20 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             raise ValueError("temp_file_path 参数不能为空")
         
         # 直接使用临时文件路径调用 analyze_audio_from_path
-        result = await analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a")
+        result, call1_result = await analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a")
         
-        emotion_score = calculate_emotion_score(result)
+        # 使用Call1结果或旧结果
+        if call1_result:
+            emotion_score = call1_result.mood_score
+            stats = call1_result.stats
+            summary = call1_result.summary
+            transcript = [t.dict() for t in call1_result.transcript]
+        else:
+            emotion_score = calculate_emotion_score(result)
+            stats = {"sigh": 0, "laugh": 0}
+            summary = ""
+            transcript = []
+        
         tags = generate_tags(result)
         
         end_time = datetime.now()
@@ -683,9 +797,15 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             "updated_at": end_time.isoformat()
         })
         
+        # 存储分析结果（包含Call1数据）
         analysis_storage[session_id] = {
             "dialogues": [d.dict() for d in result.dialogues],
-            "risks": result.risks
+            "risks": result.risks,
+            "call1": call1_result.dict() if call1_result else None,
+            "mood_score": emotion_score,
+            "stats": stats,
+            "summary": summary,
+            "transcript": transcript
         }
         
         logger.info(f"任务 {session_id} 分析完成")
@@ -793,6 +913,7 @@ async def get_task_detail(session_id: str):
             speaker_count=task_data.get("speaker_count"),
             dialogues=analysis_result.get("dialogues", []),
             risks=analysis_result.get("risks", []),
+            summary=analysis_result.get("summary"),  # 新增字段
             created_at=task_data["created_at"],
             updated_at=task_data["updated_at"]
         )
@@ -837,6 +958,153 @@ async def get_task_status(session_id: str):
     except Exception as e:
         logger.error(f"获取任务状态失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取状态失败: {str(e)}")
+
+
+@app.post("/api/v1/tasks/sessions/{session_id}/strategies")
+async def generate_strategies(session_id: str):
+    """生成策略分析（Call #2）- 情商教练"""
+    from datetime import datetime
+    
+    try:
+        task_data = tasks_storage.get(session_id)
+        if not task_data:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        
+        analysis_result = analysis_storage.get(session_id, {})
+        transcript = analysis_result.get("transcript", [])
+        
+        if not transcript:
+            raise HTTPException(status_code=400, detail="对话转录数据不存在，请先完成音频分析")
+        
+        # 构建提示词（使用需求文档中的提示词B）
+        prompt = """角色: 你是一位精通博弈论、职场心理学与视觉修辞的深度沟通专家。
+
+任务: 基于 Call #1 提供的对话转录音本，深入拆解双方的权力动态，并提供具备实战价值的应对策略与视觉化方案。
+
+核心指令:
+1. **博弈剖析**: 洞察对话文本背后的「权力位阶」与「隐性诉求」。
+2. **自主策略研判**: **请勿使用固定分类**。请根据具体场景（如：需求加塞、情感勒索、沟通僵局），自主研判 3 种最具破局可能性的应对路径。每种策略需给出独特的 `label`（如：借力打力、柔性边界、认知对齐）。
+3. **视觉建模**: 为当前情境设计一张 1:1 的火柴人绘图描述词 (`image_prompt`)。
+   - **构图规则**: 米色背景，极简火柴人线稿，左侧为用户，右侧为对方，专注于展现肢体语言中的情绪（如：耸肩、对峙、闪躲）。
+   - 心理 OS: 分别提炼出双方在此刻「想说但没说出口」的内心暗示语 (my_inner, other_inner)。
+
+参数定义:
+- **strategies**: 数组，每个策略包含 `id` (策略ID), `label` (风格标签), `emoji`, `title` (策略标题), `content` (Markdown 格式的详细建议与话术)。
+- **visual**: 对象，包含 `image_prompt`, `my_inner`, `other_inner`。
+
+要求: 必须以纯 JSON 形式返回，确保结构能直接驱动前端渲染。
+
+返回格式:
+{{
+  "visual": {{
+    "image_prompt": "...",
+    "my_inner": "感到被冒犯但保持礼貌",
+    "other_inner": "试探对方的弹性"
+  }},
+  "strategies": [
+    {{
+      "id": "s1",
+      "label": "策略标签",
+      "emoji": "⚔️",
+      "title": "策略标题",
+      "content": "### 建议话术\\n1. **心理逻辑**: ...\\n2. **推荐话术**: '...'"
+    }}
+  ]
+}}
+
+对话转录:
+{{transcript_json}}
+"""
+        
+        transcript_json = json.dumps(transcript, ensure_ascii=False, indent=2)
+        prompt = prompt.format(transcript_json=transcript_json)
+        
+        # 调用Gemini模型
+        model_name = 'gemini-3-flash-preview'
+        model = genai.GenerativeModel(model_name)
+        
+        logger.info(f"========== 开始生成策略分析 ==========")
+        logger.info(f"session_id: {session_id}")
+        logger.info(f"模型: {model_name}")
+        
+        response = model.generate_content(prompt)
+        
+        logger.info(f"Gemini 响应长度: {len(response.text)} 字符")
+        logger.debug(f"Gemini 响应内容: {response.text[:1000]}...")  # 记录前1000字符
+        
+        try:
+            analysis_data = parse_gemini_response(response.text)
+        except Exception as e:
+            logger.error(f"解析 Gemini 响应失败: {e}")
+            logger.error(f"响应内容: {response.text}")
+            raise HTTPException(status_code=500, detail=f"解析策略分析结果失败: {str(e)}")
+        
+        # 验证解析结果
+        if not isinstance(analysis_data, dict):
+            logger.error(f"解析结果不是字典类型: {type(analysis_data)}, 内容: {analysis_data}")
+            raise HTTPException(status_code=500, detail="策略分析结果格式错误")
+        
+        if "visual" not in analysis_data:
+            logger.error(f"缺少 'visual' 字段，可用字段: {list(analysis_data.keys())}")
+            logger.error(f"完整响应: {json.dumps(analysis_data, ensure_ascii=False, indent=2)}")
+            raise HTTPException(status_code=500, detail="策略分析结果缺少 'visual' 字段")
+        
+        if "strategies" not in analysis_data:
+            logger.error(f"缺少 'strategies' 字段，可用字段: {list(analysis_data.keys())}")
+            raise HTTPException(status_code=500, detail="策略分析结果缺少 'strategies' 字段")
+        
+        # 构建Call2Response
+        try:
+            visual_data = VisualData(
+                image_prompt=analysis_data["visual"].get("image_prompt", ""),
+                my_inner=analysis_data["visual"].get("my_inner", ""),
+                other_inner=analysis_data["visual"].get("other_inner", "")
+            )
+        except Exception as e:
+            logger.error(f"构建 VisualData 失败: {e}")
+            logger.error(f"visual 数据: {analysis_data.get('visual')}")
+            raise HTTPException(status_code=500, detail=f"构建视觉数据失败: {str(e)}")
+        
+        strategies_list = []
+        try:
+            for s in analysis_data.get("strategies", []):
+                strategies_list.append(StrategyItem(
+                    id=s.get("id", ""),
+                    label=s.get("label", ""),
+                    emoji=s.get("emoji", ""),
+                    title=s.get("title", ""),
+                    content=s.get("content", "")
+                ))
+        except Exception as e:
+            logger.error(f"构建策略列表失败: {e}")
+            logger.error(f"strategies 数据: {analysis_data.get('strategies')}")
+            raise HTTPException(status_code=500, detail=f"构建策略列表失败: {str(e)}")
+        
+        call2_result = Call2Response(
+            visual=visual_data,
+            strategies=strategies_list
+        )
+        
+        # 存储策略结果
+        if "call2" not in analysis_storage[session_id]:
+            analysis_storage[session_id]["call2"] = {}
+        analysis_storage[session_id]["call2"] = call2_result.dict()
+        
+        logger.info(f"策略分析生成成功，策略数量: {len(strategies_list)}")
+        
+        return APIResponse(
+            code=200,
+            message="success",
+            data=call2_result.dict(),
+            timestamp=datetime.now().isoformat()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成策略失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"生成策略失败: {str(e)}")
 
 
 @app.get("/test-gemini")

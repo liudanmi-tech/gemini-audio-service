@@ -2,7 +2,7 @@
 //  WorkSurvivalGuideApp.swift
 //  WorkSurvivalGuide
 //
-//  Created by liudan on 2026/1/8.123
+//  Created by liudan on 2026/1/8.
 //
 
 import SwiftUI
