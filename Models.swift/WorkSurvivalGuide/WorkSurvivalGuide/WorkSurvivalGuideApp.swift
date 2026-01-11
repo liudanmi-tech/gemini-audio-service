@@ -1,0 +1,17 @@
+//
+//  WorkSurvivalGuideApp.swift
+//  WorkSurvivalGuide
+//
+//  Created by liudan on 2026/1/8.123
+//
+
+import SwiftUI
+
+@main
+struct WorkSurvivalGuideApp: App {
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}

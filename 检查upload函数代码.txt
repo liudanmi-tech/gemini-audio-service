@@ -1,0 +1,10 @@
+# ============================================
+# 检查 upload_audio_api 函数代码
+# ============================================
+
+# 步骤1：查看 upload_audio_api 函数的完整代码
+cd /home/admin/gemini-audio-service && grep -A 50 "@app.post(\"/api/v1/audio/upload\")" main.py | head -60
+
+# 或者查看整个函数
+cd /home/admin/gemini-audio-service && sed -n '/@app.post("\/api\/v1\/audio\/upload")/,/^async def /p' main.py | head -80
+

@@ -1,0 +1,117 @@
+# 在阿里云控制台"命令助手"中执行以下命令
+
+# ============================================
+# 第一步：查看当前代码（确认问题）
+# ============================================
+cd ~/gemini-audio-service && echo "=== 函数定义 ===" && grep -A 3 "async def analyze_audio_async" main.py && echo "" && echo "=== 函数调用 ===" && grep -B 1 -A 1 "asyncio.create_task(analyze_audio_async" main.py
+
+# ============================================
+# 第二步：备份并修复代码
+# ============================================
+cd ~/gemini-audio-service && python3 << 'FIXEOF'
+import shutil
+import time
+
+# 备份
+backup = f'main.py.backup_{int(time.time())}'
+shutil.copy('main.py', backup)
+print(f"✅ 备份完成: {backup}")
+
+# 读取文件
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 修复 1: 添加 Query 导入（如果缺少）
+if 'from fastapi import' in content and 'Query' not in content.split('from fastapi import')[1].split('\n')[0]:
+    content = content.replace(
+        'from fastapi import FastAPI, UploadFile, File, HTTPException',
+        'from fastapi import FastAPI, UploadFile, File, HTTPException, Query'
+    )
+    print("✅ 修复1: 添加 Query 导入")
+
+# 修复 2: 确保 file_filename 不为 None
+if 'file_filename = file.filename' in content and 'or "audio.m4a"' not in content[content.find('file_filename = file.filename'):content.find('file_filename = file.filename')+50]:
+    content = content.replace(
+        'file_filename = file.filename',
+        'file_filename = file.filename or "audio.m4a"'
+    )
+    print("✅ 修复2: 修复 file_filename")
+
+# 修复 3: 确保 analyze_audio_async 函数定义包含 task_data 参数
+if 'async def analyze_audio_async(' in content:
+    # 检查函数定义是否包含 task_data
+    func_start = content.find('async def analyze_audio_async(')
+    func_line_end = content.find('):', func_start)
+    func_signature = content[func_start:func_line_end+2]
+    
+    if 'task_data' not in func_signature:
+        # 函数定义缺少 task_data，需要添加
+        # 找到最后一个参数的位置
+        if 'file_filename: str)' in func_signature:
+            content = content.replace(
+                'async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str):',
+                'async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict):'
+            )
+            print("✅ 修复3: 函数定义添加 task_data 参数")
+        elif 'file_filename: str,' in func_signature:
+            content = content.replace(
+                'async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str,',
+                'async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict,'
+            )
+            print("✅ 修复3: 函数定义添加 task_data 参数")
+
+# 修复 4: 确保调用时传递了 task_data 参数
+if 'asyncio.create_task(analyze_audio_async(' in content:
+    # 查找所有调用
+    call_start = content.find('asyncio.create_task(analyze_audio_async(')
+    if call_start != -1:
+        # 找到这个调用的结束位置
+        call_end = content.find('))', call_start)
+        if call_end == -1:
+            call_end = content.find(')', call_start)
+        
+        call_line = content[call_start:call_end+1]
+        
+        # 检查是否包含 task_data
+        if 'task_data' not in call_line:
+            # 需要添加 task_data
+            # 找到最后一个参数的位置
+            if call_line.endswith('file_filename))'):
+                content = content.replace(
+                    'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename))',
+                    'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))'
+                )
+                print("✅ 修复4: 函数调用添加 task_data 参数")
+            elif 'file_filename,' in call_line and 'task_data' not in call_line:
+                # 可能格式不同，尝试替换
+                old_call = call_line
+                new_call = call_line.replace('file_filename))', 'file_filename, task_data))')
+                if new_call != old_call:
+                    content = content.replace(old_call, new_call)
+                    print("✅ 修复4: 函数调用添加 task_data 参数")
+
+# 写入文件
+with open('main.py', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+print("\n✅ 修复完成！")
+
+# 检查语法
+import py_compile
+try:
+    py_compile.compile('main.py', doraise=True)
+    print("✅ 语法检查通过")
+except Exception as e:
+    print(f"❌ 语法错误: {e}")
+    print("正在恢复备份...")
+    shutil.copy(backup, 'main.py')
+    raise
+
+print(f"\n✅ 所有修复完成！备份文件: {backup}")
+FIXEOF
+
+# ============================================
+# 第三步：重启服务
+# ============================================
+cd ~/gemini-audio-service && pkill -f "python3 main.py" && sleep 2 && nohup python3 main.py > /tmp/gemini-service.log 2>&1 & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health && echo "" && echo "最近日志:" && tail -10 /tmp/gemini-service.log
+

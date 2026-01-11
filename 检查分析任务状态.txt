@@ -1,0 +1,18 @@
+# ============================================
+# 检查分析任务状态
+# 执行用户: admin
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：查看最近的服务器日志（包含 analyze_audio_async）
+tail -200 ~/gemini-service.log | grep -E "analyze_audio_async|90eb1544-5a49-4751-9086-5017125df8a4|上传|分析|ERROR|错误" | tail -30
+
+# 步骤2：直接查询任务状态（使用 curl，增加超时时间）
+curl -m 10 "http://localhost:8001/api/v1/tasks/sessions/90eb1544-5a49-4751-9086-5017125df8a4/status"
+
+# 步骤3：查看任务列表
+curl -m 10 "http://localhost:8001/api/v1/tasks/sessions"
+
+# 步骤4：查看完整的服务器日志（最近100行）
+tail -100 ~/gemini-service.log
+

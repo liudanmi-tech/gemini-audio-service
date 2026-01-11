@@ -1,0 +1,71 @@
+# ============================================
+# 修复 Nginx 配置
+# 执行用户: admin（需要 root 权限执行部分命令）
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：查看当前的 Nginx 配置文件
+cat /etc/nginx/conf.d/gemini.conf
+
+# 步骤2：查看 Nginx 主配置文件
+cat /etc/nginx/nginx.conf | head -30
+
+# 步骤3：修复配置文件（使用正确的 proxy_pass 语法）
+sudo tee /etc/nginx/conf.d/gemini.conf > /dev/null << 'NGINX_CONFIG'
+server {
+    listen 80;
+    server_name 47.79.254.213;
+
+    # 反向代理到 Google Gemini API
+    location /secret-channel {
+        # 移除 /secret-channel 前缀，转发到 Google API
+        rewrite ^/secret-channel/(.*) /$1 break;
+        
+        # 直接使用 proxy_pass，不使用 upstream
+        proxy_pass https://generativelanguage.googleapis.com;
+        
+        # 设置必要的请求头
+        proxy_set_header Host generativelanguage.googleapis.com;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        
+        # SSL 相关设置
+        proxy_ssl_server_name on;
+        proxy_ssl_verify off;
+        
+        # 超时设置（支持大文件上传和长时间处理）
+        proxy_connect_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
+        
+        # 支持大文件上传
+        client_max_body_size 100M;
+        client_body_buffer_size 128k;
+        
+        # 缓冲设置
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    
+    # 健康检查端点
+    location /health {
+        return 200 "OK";
+        add_header Content-Type text/plain;
+    }
+}
+NGINX_CONFIG
+
+# 步骤4：测试 Nginx 配置
+sudo nginx -t
+
+# 步骤5：如果配置正确，启动 Nginx
+sudo systemctl start nginx
+
+# 步骤6：检查 Nginx 状态
+sudo systemctl status nginx
+
+# 步骤7：测试代理服务器
+curl -v http://localhost/secret-channel 2>&1 | head -20
+

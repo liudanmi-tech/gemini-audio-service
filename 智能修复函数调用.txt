@@ -1,0 +1,85 @@
+# ============================================
+# 智能修复函数调用 - 直接复制执行
+# ============================================
+
+cd /home/admin/gemini-audio-service && python3 << 'FIX'
+import re
+
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+    lines = content.split('\n')
+
+print("🔍 检查代码结构...")
+
+# 查找 upload_audio_api 函数
+upload_func_start = -1
+for i, line in enumerate(lines):
+    if '@app.post("/api/v1/audio/upload")' in line or 'def upload_audio_api' in line:
+        upload_func_start = i
+        break
+
+if upload_func_start == -1:
+    print("❌ 未找到 upload_audio_api 函数")
+    exit(1)
+
+# 查找 analyze_audio_async 调用
+call_line_idx = -1
+for i in range(upload_func_start, min(upload_func_start + 100, len(lines))):
+    if 'asyncio.create_task(analyze_audio_async' in lines[i]:
+        call_line_idx = i
+        break
+
+if call_line_idx == -1:
+    print("❌ 未找到 analyze_audio_async 调用")
+    exit(1)
+
+print(f"✅ 找到函数调用在第 {call_line_idx + 1} 行")
+print(f"   当前调用: {lines[call_line_idx].strip()}")
+
+# 检查调用前是否有 temp_file_path 和 file_filename
+has_temp_file = False
+has_file_filename = False
+for i in range(max(0, call_line_idx - 20), call_line_idx):
+    if 'temp_file_path' in lines[i] and '=' in lines[i]:
+        has_temp_file = True
+    if 'file_filename' in lines[i] and '=' in lines[i]:
+        has_file_filename = True
+
+print(f"   检查变量: temp_file_path={has_temp_file}, file_filename={has_file_filename}")
+
+# 修复调用
+if 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in lines[call_line_idx]:
+    if has_temp_file and has_file_filename:
+        # 替换为正确的调用
+        old_line = lines[call_line_idx]
+        # 保持缩进
+        indent = len(old_line) - len(old_line.lstrip())
+        new_line = ' ' * indent + 'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))'
+        lines[call_line_idx] = new_line
+        print("✅ 修复函数调用：使用 temp_file_path 和 file_filename")
+    else:
+        print("❌ 错误：代码中缺少 temp_file_path 或 file_filename 变量")
+        print("需要先修复 upload_audio_api 函数，确保读取文件并创建临时文件")
+        exit(1)
+elif 'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))' in lines[call_line_idx]:
+    print("✅ 函数调用已经是正确版本，无需修改")
+else:
+    print(f"⚠️  未知的调用格式: {lines[call_line_idx].strip()}")
+    print("需要手动检查代码")
+
+# 写入文件
+if 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in content:
+    content = '\n'.join(lines)
+    with open('main.py', 'w', encoding='utf-8') as f:
+        f.write(content)
+    
+    import py_compile
+    py_compile.compile('main.py', doraise=True)
+    print("✅ 修复完成，需要重启服务")
+else:
+    print("✅ 代码已经是正确版本，无需修改")
+FIX
+
+# 重启服务
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup python3 main.py > /tmp/gemini-service.log 2>&1 & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health
+

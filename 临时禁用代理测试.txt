@@ -1,0 +1,40 @@
+# ============================================
+# 临时禁用代理测试（如果代理服务器不可用）
+# 执行用户: admin
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：备份 .env 文件
+cd /home/admin/gemini-audio-service && cp .env .env.backup
+
+# 步骤2：临时禁用代理（测试用）
+cd /home/admin/gemini-audio-service && python3 << 'DISABLE_PROXY'
+import os
+
+env_file = '.env'
+if os.path.exists(env_file):
+    with open(env_file, 'r', encoding='utf-8') as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    for line in lines:
+        if line.startswith('USE_PROXY='):
+            new_lines.append('USE_PROXY=false\n')
+        else:
+            new_lines.append(line)
+    
+    with open(env_file, 'w', encoding='utf-8') as f:
+        f.writelines(new_lines)
+    
+    print("✅ 已临时禁用代理（USE_PROXY=false）")
+    print("⚠️  注意：如果直接连接 Gemini API 失败，需要修复代理服务器")
+else:
+    print("❌ .env 文件不存在")
+DISABLE_PROXY
+
+# 步骤3：重启服务
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup ./venv/bin/python3 main.py > ~/gemini-service.log 2>&1 & sleep 3 && curl http://localhost:8001/health
+
+# 步骤4：再次测试上传（如果禁用代理后可以工作，说明是代理服务器问题）
+# 执行服务端自测脚本
+

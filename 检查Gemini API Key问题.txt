@@ -1,0 +1,18 @@
+# ============================================
+# 检查 Gemini API Key 问题
+# 执行用户: admin
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：查看最近的错误日志（重点关注 API Key 相关错误）
+tail -200 ~/gemini-service.log | grep -E "API|Key|key|403|401|PERMISSION|DENIED|authentication|认证|权限" | tail -30
+
+# 步骤2：查看分析任务的完整日志
+tail -300 ~/gemini-service.log | grep -A 20 "analyze_audio_async\|开始异步分析\|上传文件到 Gemini" | tail -50
+
+# 步骤3：测试 Gemini API Key 是否有效（使用 test-gemini 接口）
+curl -m 10 "http://localhost:8001/test-gemini"
+
+# 步骤4：查看 .env 文件中的 API Key（只显示前10个字符）
+cd /home/admin/gemini-audio-service && cat .env | grep GEMINI_API_KEY | sed 's/\(.\{10\}\).*/\1.../'
+

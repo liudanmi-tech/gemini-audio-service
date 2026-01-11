@@ -1,0 +1,51 @@
+# ============================================
+# 修复命令 - 自动查找项目路径（推荐）
+# ============================================
+
+# 第一步：查找项目路径（复制执行）
+find /home -name "main.py" -path "*/gemini-audio-service/main.py" 2>/dev/null | head -1
+
+# 如果上面找不到，尝试这些路径：
+# ls -d /home/admin/gemini-audio-service 2>/dev/null
+# ls -d /root/gemini-audio-service 2>/dev/null
+
+# ============================================
+# 第二步：使用找到的路径执行修复（替换 PROJECT_PATH 为实际路径）
+# ============================================
+
+PROJECT_PATH="/home/admin/gemini-audio-service"  # 替换为第一步找到的实际路径
+
+cd "$PROJECT_PATH" && python3 << 'END'
+import shutil, time, os
+os.chdir(os.path.expanduser('~/gemini-audio-service'))
+backup = f'main.py.backup_{int(time.time())}'
+shutil.copy('main.py', backup)
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 修复1: 函数定义添加 task_data
+if 'async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str):' in content:
+    content = content.replace('async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str):', 'async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict):')
+    print("✅ 修复1: 函数定义添加task_data")
+
+# 修复2: 函数调用添加 task_data  
+if 'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename))' in content:
+    content = content.replace('asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename))', 'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))')
+    print("✅ 修复2: 函数调用添加task_data")
+
+# 修复3: 添加Query导入
+if 'from fastapi import FastAPI, UploadFile, File, HTTPException' in content and 'Query' not in content:
+    content = content.replace('from fastapi import FastAPI, UploadFile, File, HTTPException', 'from fastapi import FastAPI, UploadFile, File, HTTPException, Query')
+    print("✅ 修复3: 添加Query导入")
+
+with open('main.py', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+import py_compile
+py_compile.compile('main.py', doraise=True)
+print(f"✅ 修复完成！备份: {backup}")
+END
+
+# 重启服务
+cd "$PROJECT_PATH" && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup python3 main.py > /tmp/gemini-service.log 2>&1 & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health
+

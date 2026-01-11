@@ -1,0 +1,22 @@
+# ============================================
+# 检查代理服务器状态
+# 执行用户: admin
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：检查代理服务器是否在同一台机器上运行
+ps aux | grep -E "nginx|proxy|secret-channel|8000|8080" | grep -v grep
+
+# 步骤2：检查端口占用情况
+netstat -tlnp | grep -E "80|8000|8080|443" || ss -tlnp | grep -E "80|8000|8080|443"
+
+# 步骤3：检查是否有 nginx 或其他代理服务
+systemctl status nginx 2>/dev/null || service nginx status 2>/dev/null || echo "nginx 未安装或未运行"
+
+# 步骤4：检查代理服务器配置文件（如果存在）
+find /etc/nginx /usr/local/nginx ~ -name "*secret-channel*" -o -name "*proxy*" 2>/dev/null | head -10
+
+# 步骤5：测试本地代理服务器（如果代理服务器在同一台机器上）
+curl -v http://localhost/secret-channel 2>&1 | head -20
+curl -v http://127.0.0.1/secret-channel 2>&1 | head -20
+

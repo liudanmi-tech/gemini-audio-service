@@ -1,0 +1,249 @@
+# ============================================
+# 添加 analyze_audio_from_path 函数
+# ============================================
+
+cd /home/admin/gemini-audio-service && python3 << 'FIX'
+import shutil, time
+
+backup = f'main.py.backup_{int(time.time())}'
+shutil.copy('main.py', backup)
+print(f"✅ 备份: {backup}")
+
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 检查函数是否已存在
+if 'async def analyze_audio_from_path' in content:
+    print("✅ analyze_audio_from_path 函数已存在")
+    exit(0)
+
+print("❌ analyze_audio_from_path 函数不存在，开始添加...")
+
+# 找到插入位置：在 parse_gemini_response 函数之后
+insert_pos = content.find('def parse_gemini_response')
+if insert_pos == -1:
+    print("❌ 未找到 parse_gemini_response 函数")
+    exit(1)
+
+# 找到 parse_gemini_response 函数的结束位置
+# 查找下一个函数定义或装饰器
+next_func = content.find('\n@app.', insert_pos)
+if next_func == -1:
+    next_func = content.find('\nasync def ', insert_pos + 50)
+if next_func == -1:
+    next_func = content.find('\ndef ', insert_pos + 50)
+if next_func == -1:
+    next_func = len(content)
+
+# 在 parse_gemini_response 之后插入
+insert_point = next_func
+
+# 要插入的函数代码
+function_code = '''
+
+async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> AudioAnalysisResponse:
+    """
+    从文件路径分析音频文件（内部函数）
+    
+    Args:
+        temp_file_path: 临时文件路径
+        file_filename: 文件名
+        
+    Returns:
+        结构化的音频分析结果
+    """
+    uploaded_file = None
+    
+    try:
+        logger.info(f"========== 文件上传处理开始 ==========")
+        logger.info(f"文件已保存到临时路径: {temp_file_path}")
+        
+        # 上传文件到 Gemini（添加超时和重试机制）
+        file_size = os.path.getsize(temp_file_path)
+        file_size_mb = file_size / 1024 / 1024
+        logger.info(f"========== 开始上传文件到 Gemini ==========")
+        logger.info(f"文件名: {file_filename}")
+        logger.info(f"文件大小: {file_size} 字节 ({file_size_mb:.2f} MB)")
+        logger.info(f"文件路径: {temp_file_path}")
+        
+        max_retries = 3
+        retry_count = 0
+        uploaded_file = None
+        
+        while retry_count < max_retries:
+            try:
+                logger.info(f"尝试上传（第 {retry_count + 1}/{max_retries} 次）...")
+                logger.debug(f"调用 genai.upload_file()")
+                logger.debug(f"参数: path={temp_file_path}, display_name={file_filename}")
+                
+                start_upload = time.time()
+                uploaded_file = genai.upload_file(
+                    path=temp_file_path,
+                    display_name=file_filename
+                )
+                upload_time = time.time() - start_upload
+                
+                logger.info(f"✅ 文件上传成功！")
+                logger.info(f"上传的文件名: {uploaded_file.name}")
+                logger.info(f"文件状态: {uploaded_file.state}")
+                logger.info(f"上传耗时: {upload_time:.2f} 秒")
+                break
+            except Exception as e:
+                retry_count += 1
+                error_msg = str(e)
+                error_type = type(e).__name__
+                logger.error(f"❌ 上传失败（第 {retry_count}/{max_retries} 次）")
+                logger.error(f"错误类型: {error_type}")
+                logger.error(f"错误信息: {error_msg}")
+                logger.error(f"完整错误堆栈:")
+                logger.error(traceback.format_exc())
+                
+                if retry_count >= max_retries:
+                    logger.error(f"已达到最大重试次数，放弃上传")
+                    raise Exception(f"上传文件失败（已重试 {max_retries} 次）: {error_msg}")
+                
+                logger.info(f"等待 5 秒后重试...")
+                time.sleep(5)
+        
+        # 等待文件处理完成（最多等待 10 分钟）
+        logger.info(f"========== 等待文件处理完成 ==========")
+        logger.info(f"当前文件状态: {uploaded_file.state}")
+        uploaded_file = wait_for_file_active(uploaded_file, max_wait_time=600)
+        logger.info(f"✅ 文件处理完成，状态: ACTIVE")
+        
+        # 配置模型和提示词
+        # 使用 Gemini 3 Flash 模型（根据官方文档：https://ai.google.dev/gemini-api/docs/gemini-3）
+        # gemini-3-flash-preview: 免费层有配额，速度快，适合音频分析
+        model_name = 'gemini-3-flash-preview'
+        logger.info(f"========== 配置模型 ==========")
+        logger.info(f"使用模型: {model_name}")
+        model = genai.GenerativeModel(model_name)
+        logger.info(f"模型初始化完成")
+        
+        prompt = """请分析这段音频，识别所有说话人及其对话内容。
+
+要求：
+1. 识别说话人数量。
+2. 按时间顺序列出所有对话，每个对话包含：
+   - 说话人标识（如：说话人1、说话人A、说话人B等）
+   - 说话的具体内容（完整原话）
+   - 说话的语气（如：平静、愤怒、轻松、焦虑、兴奋、严肃等）
+3. 识别关键风险点。
+
+请务必以纯 JSON 格式返回，不要包含 Markdown 标记。
+
+返回格式必须严格遵循以下结构：
+{
+  "speaker_count": 数字,
+  "dialogues": [
+    {
+      "speaker": "说话人1",
+      "content": "说话的具体内容",
+      "tone": "说话语气"
+    },
+    {
+      "speaker": "说话人2",
+      "content": "说话的具体内容",
+      "tone": "说话语气"
+    }
+  ],
+  "risks": ["风险点1", "风险点2", ...]
+}
+
+注意：dialogues 数组必须包含所有对话，按时间顺序排列，不要遗漏任何对话。"""
+        
+        # 调用模型进行分析（添加重试机制）
+        logger.info(f"========== 开始调用 Gemini 模型分析音频 ==========")
+        logger.info(f"模型: {model_name}")
+        logger.info(f"提示词长度: {len(prompt)} 字符")
+        max_retries = 3
+        retry_count = 0
+        response = None
+        
+        while retry_count < max_retries:
+            try:
+                logger.info(f"调用模型（第 {retry_count + 1}/{max_retries} 次）...")
+                logger.debug(f"调用 model.generate_content()")
+                start_generate = time.time()
+                response = model.generate_content([
+                    uploaded_file,
+                    prompt
+                ])
+                generate_time = time.time() - start_generate
+                logger.info(f"✅ 模型调用成功，耗时: {generate_time:.2f} 秒")
+                break
+            except Exception as e:
+                retry_count += 1
+                error_msg = str(e)
+                error_type = type(e).__name__
+                logger.error(f"❌ 调用模型失败（第 {retry_count}/{max_retries} 次）")
+                logger.error(f"错误类型: {error_type}")
+                logger.error(f"错误信息: {error_msg}")
+                logger.error(f"完整错误堆栈:")
+                logger.error(traceback.format_exc())
+                if retry_count >= max_retries:
+                    raise Exception(f"调用模型失败（重试 {max_retries} 次）: {error_msg}")
+                logger.info(f"等待 5 秒后重试...")
+                time.sleep(5)
+        
+        logger.info(f"Gemini 响应长度: {len(response.text)} 字符")
+        logger.debug(f"Gemini 响应内容: {response.text[:500]}...")  # 只记录前500字符
+        
+        # 解析响应
+        analysis_data = parse_gemini_response(response.text)
+        
+        # 解析对话列表
+        dialogues_list = []
+        if "dialogues" in analysis_data:
+            for dialogue in analysis_data["dialogues"]:
+                dialogues_list.append(DialogueItem(
+                    speaker=dialogue.get("speaker", "未知"),
+                    content=dialogue.get("content", ""),
+                    tone=dialogue.get("tone", "未知")
+                ))
+        
+        # 验证并构建返回数据
+        result = AudioAnalysisResponse(
+            speaker_count=analysis_data.get("speaker_count", 0),
+            dialogues=dialogues_list,
+            risks=analysis_data.get("risks", [])
+        )
+        
+        return result
+        
+    except Exception as e:
+        error_msg = str(e)
+        error_type = type(e).__name__
+        logger.error(f"========== 处理过程中发生错误 ==========")
+        logger.error(f"错误类型: {error_type}")
+        logger.error(f"错误信息: {error_msg}")
+        logger.error(f"完整错误堆栈:")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"音频分析失败: {error_msg}")
+    
+    finally:
+        # 删除 Gemini 上的文件
+        if uploaded_file:
+            try:
+                genai.delete_file(uploaded_file.name)
+                logger.info(f"已删除 Gemini 文件: {uploaded_file.name}")
+            except Exception as e:
+                logger.error(f"删除 Gemini 文件失败: {e}")
+
+'''
+
+# 插入函数
+content = content[:insert_point] + function_code + content[insert_point:]
+
+with open('main.py', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+import py_compile
+py_compile.compile('main.py', doraise=True)
+print("✅ 语法检查通过")
+print(f"✅ 函数添加完成！备份: {backup}")
+FIX
+
+# 重启服务
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup ./venv/bin/python3 main.py > ~/gemini-service.log 2>&1 & sleep 3 && curl http://localhost:8001/health
+

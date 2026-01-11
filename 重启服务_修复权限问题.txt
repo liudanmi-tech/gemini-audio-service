@@ -1,0 +1,27 @@
+# ============================================
+# 重启服务 - 修复权限问题（使用用户目录日志）
+# ============================================
+
+# 方法1：使用用户目录下的日志文件（推荐）
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup python3 main.py > ~/gemini-service.log 2>&1 & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health
+
+# ============================================
+# 方法2：如果方法1失败，使用项目目录下的日志
+# ============================================
+# cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup python3 main.py > ./service.log 2>&1 & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health
+
+# ============================================
+# 方法3：不重定向日志，直接运行（最简单）
+# ============================================
+# cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup python3 main.py & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health
+
+# ============================================
+# 验证服务是否运行
+# ============================================
+# ps aux | grep "python3 main.py" | grep -v grep
+
+# ============================================
+# 查看日志（使用方法1后）
+# ============================================
+# tail -50 ~/gemini-service.log
+

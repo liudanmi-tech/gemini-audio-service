@@ -1,0 +1,39 @@
+# ============================================
+# 修复函数调用 - 直接复制执行
+# ============================================
+
+cd /home/admin/gemini-audio-service && python3 << 'FIX'
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 检查当前的调用方式
+if 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in content:
+    print("发现旧版本的函数调用，需要修复...")
+    
+    # 需要找到调用位置，看看上下文
+    # 先检查是否有 temp_file_path 和 file_filename 变量
+    if 'temp_file_path' in content and 'file_filename' in content:
+        # 修复调用
+        content = content.replace(
+            'asyncio.create_task(analyze_audio_async(session_id, file, task_data))',
+            'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))'
+        )
+        print("✅ 修复1: 函数调用已更新为使用 temp_file_path 和 file_filename")
+    else:
+        print("❌ 错误：代码中缺少 temp_file_path 或 file_filename 变量")
+        print("需要检查 upload_audio_api 函数的完整代码")
+        exit(1)
+    
+    with open('main.py', 'w', encoding='utf-8') as f:
+        f.write(content)
+    
+    import py_compile
+    py_compile.compile('main.py', doraise=True)
+    print("✅ 修复完成，需要重启服务")
+else:
+    print("✅ 函数调用已经是正确版本，无需修改")
+FIX
+
+# 重启服务
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup python3 main.py > /tmp/gemini-service.log 2>&1 & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health
+

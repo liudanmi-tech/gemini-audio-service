@@ -1,0 +1,13 @@
+# ============================================
+# 修复 temp_file_path 未定义问题
+# ============================================
+
+# 步骤1：检查服务器上的 upload_audio_api 函数代码
+cd /home/admin/gemini-audio-service && sed -n '/@app.post("\/api\/v1\/audio\/upload")/,/^@app\.\|^async def /p' main.py | head -70
+
+# 步骤2：检查是否有创建 temp_file_path 的代码
+cd /home/admin/gemini-audio-service && grep -n "temp_file_path" main.py | head -10
+
+# 步骤3：检查是否有 file_filename 的代码
+cd /home/admin/gemini-audio-service && grep -n "file_filename" main.py | head -10
+

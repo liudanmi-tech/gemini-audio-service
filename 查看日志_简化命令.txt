@@ -1,0 +1,22 @@
+# ============================================
+# 查看日志 - 简化命令
+# ============================================
+
+# 方法1：查看最近的错误日志（推荐）
+tail -100 ~/gemini-service.log | grep -E "ERROR|错误|失败|failed|analyze_audio_async" | tail -30
+
+# 方法2：查看最近的 analyze_audio_async 相关日志
+tail -200 ~/gemini-service.log | grep "analyze_audio_async"
+
+# 方法3：查看最近50行日志
+tail -50 ~/gemini-service.log
+
+# 方法4：实时查看日志（按 Ctrl+C 停止）
+tail -f ~/gemini-service.log
+
+# 方法5：查看特定 session_id 的日志（替换 SESSION_ID）
+# tail -500 ~/gemini-service.log | grep "ff58351d-9406-4a96-bbf8-2b25763c67a0"
+
+# 方法6：查看所有错误（最全面）
+tail -500 ~/gemini-service.log | grep -i error
+

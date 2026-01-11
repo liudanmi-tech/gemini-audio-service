@@ -1,0 +1,19 @@
+# ============================================
+# 安装依赖 - sh 兼容版（不使用 source）
+# ============================================
+
+# ============================================
+# 方法1：直接使用虚拟环境中的 pip（推荐）
+# ============================================
+cd /home/admin/gemini-audio-service && ./venv/bin/pip3 install -r requirements.txt
+
+# ============================================
+# 方法2：使用 . 代替 source（如果方法1失败）
+# ============================================
+cd /home/admin/gemini-audio-service && . venv/bin/activate && pip3 install -r requirements.txt
+
+# ============================================
+# 方法3：直接使用虚拟环境中的 Python 和 pip
+# ============================================
+cd /home/admin/gemini-audio-service && venv/bin/pip3 install -r requirements.txt
+

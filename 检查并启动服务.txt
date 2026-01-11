@@ -1,0 +1,22 @@
+# ============================================
+# 检查并启动服务
+# ============================================
+
+# 步骤1：检查是否有 Python 进程在运行
+ps aux | grep python | grep -v grep
+
+# 步骤2：检查端口 8001 是否被占用
+netstat -tlnp | grep 8001 || ss -tlnp | grep 8001 || lsof -i :8001
+
+# 步骤3：测试健康检查（如果服务在运行）
+curl http://localhost:8001/health 2>&1
+
+# 步骤4：如果服务没运行，启动服务
+cd /home/admin/gemini-audio-service && python3 main.py &
+sleep 3 && curl http://localhost:8001/health
+
+# ============================================
+# 或者使用 nohup 后台启动（如果步骤4成功）
+# ============================================
+# cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 1 && nohup python3 main.py > ~/gemini-service.log 2>&1 & sleep 3 && curl http://localhost:8001/health
+

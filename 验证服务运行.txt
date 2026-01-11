@@ -1,0 +1,19 @@
+# ============================================
+# 验证服务是否正常运行
+# ============================================
+
+# 步骤1：检查进程是否运行
+ps aux | grep "python3 main.py" | grep -v grep
+
+# 步骤2：测试健康检查接口
+curl http://localhost:8001/health
+
+# 步骤3：测试外部访问（从你的电脑）
+curl http://47.79.254.213:8001/health
+
+# 步骤4：查看日志（如果有）
+tail -20 ~/gemini-service.log 2>/dev/null || echo "日志文件不存在或无法访问"
+
+# 步骤5：检查端口是否监听
+netstat -tlnp | grep 8001 || ss -tlnp | grep 8001
+

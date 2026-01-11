@@ -1,0 +1,15 @@
+# ============================================
+# 查看 Nginx 错误日志
+# 执行用户: admin（可能需要 root 权限）
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：查看 Nginx 错误日志（最近50行）
+sudo tail -50 /var/log/nginx/error.log
+
+# 步骤2：查看 Nginx 访问日志
+sudo tail -20 /var/log/nginx/access.log
+
+# 步骤3：测试代理服务器（带路径）
+curl -v http://localhost/secret-channel/v1beta/models 2>&1 | head -40
+

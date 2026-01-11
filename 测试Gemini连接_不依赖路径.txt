@@ -1,0 +1,23 @@
+# ============================================
+# 测试 Gemini API 连接 - 不依赖执行路径
+# 执行用户: admin
+# 执行路径: 可以留空或填写 /home/admin/gemini-audio-service
+# ============================================
+
+# 方法1：直接测试（推荐）
+curl http://localhost:8001/test-gemini
+
+# 方法2：如果方法1失败，使用完整路径
+curl http://127.0.0.1:8001/test-gemini
+
+# 方法3：使用 Python 测试（更详细）
+python3 << 'TEST'
+import requests
+try:
+    response = requests.get("http://localhost:8001/test-gemini", timeout=10)
+    print(f"状态码: {response.status_code}")
+    print(f"响应: {response.text}")
+except Exception as e:
+    print(f"错误: {e}")
+TEST
+

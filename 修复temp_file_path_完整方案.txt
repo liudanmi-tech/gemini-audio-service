@@ -1,0 +1,182 @@
+# ============================================
+# 修复 temp_file_path 未定义问题 - 完整方案
+# ============================================
+
+# 步骤1：先检查服务器上的代码结构
+cd /home/admin/gemini-audio-service && python3 << 'CHECK'
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 检查 upload_audio_api 函数
+if 'async def upload_audio_api' in content:
+    # 找到函数开始位置
+    func_start = content.find('async def upload_audio_api')
+    # 找到下一个函数或装饰器
+    next_func = content.find('\n@app.', func_start)
+    if next_func == -1:
+        next_func = content.find('\nasync def ', func_start + 50)
+    if next_func == -1:
+        next_func = len(content)
+    
+    func_code = content[func_start:next_func]
+    
+    print("=" * 60)
+    print("检查 upload_audio_api 函数")
+    print("=" * 60)
+    
+    # 检查关键代码
+    if 'file_content = await file.read()' in func_code:
+        print("✅ 找到: file_content = await file.read()")
+    else:
+        print("❌ 缺少: file_content = await file.read()")
+    
+    if 'file_filename = file.filename' in func_code:
+        print("✅ 找到: file_filename = file.filename")
+    else:
+        print("❌ 缺少: file_filename = file.filename")
+    
+    if 'temp_file_path' in func_code:
+        print("✅ 找到: temp_file_path")
+        # 检查是如何创建的
+        if 'temp_file_path =' in func_code:
+            print("   ✅ temp_file_path 有赋值")
+        else:
+            print("   ❌ temp_file_path 没有赋值")
+    else:
+        print("❌ 缺少: temp_file_path")
+    
+    if 'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))' in func_code:
+        print("✅ 函数调用正确")
+    elif 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in func_code:
+        print("❌ 函数调用还是旧版本")
+    else:
+        print("⚠️  函数调用格式未知")
+    
+    print("=" * 60)
+CHECK
+
+# ============================================
+# 步骤2：修复代码（如果步骤1发现问题）
+# ============================================
+cd /home/admin/gemini-audio-service && python3 << 'FIX'
+import shutil, time, re
+
+backup = f'main.py.backup_{int(time.time())}'
+shutil.copy('main.py', backup)
+print(f"✅ 备份: {backup}")
+
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 查找 upload_audio_api 函数
+func_start = content.find('async def upload_audio_api')
+if func_start == -1:
+    print("❌ 未找到 upload_audio_api 函数")
+    exit(1)
+
+# 找到函数结束位置（下一个 @app. 或 async def）
+next_func = content.find('\n@app.', func_start)
+if next_func == -1:
+    next_func = content.find('\nasync def ', func_start + 50)
+if next_func == -1:
+    next_func = len(content)
+
+func_code = content[func_start:next_func]
+
+# 检查是否需要修复
+needs_fix = False
+
+# 检查1: 是否有 file_content = await file.read()
+if 'file_content = await file.read()' not in func_code:
+    needs_fix = True
+    print("需要添加: file_content = await file.read()")
+
+# 检查2: 是否有 file_filename
+if 'file_filename = file.filename' not in func_code:
+    needs_fix = True
+    print("需要添加: file_filename = file.filename")
+
+# 检查3: 是否有 temp_file_path
+if 'temp_file_path =' not in func_code:
+    needs_fix = True
+    print("需要添加: temp_file_path 创建代码")
+
+if not needs_fix:
+    print("✅ 代码看起来完整，检查调用...")
+    # 检查调用是否正确
+    if 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in func_code:
+        # 需要修复调用
+        old_call = 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))'
+        new_call = 'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))'
+        content = content.replace(old_call, new_call)
+        print("✅ 修复函数调用")
+        
+        with open('main.py', 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        import py_compile
+        py_compile.compile('main.py', doraise=True)
+        print("✅ 修复完成")
+    else:
+        print("✅ 代码看起来正确，可能是其他问题")
+else:
+    # 需要添加完整的代码
+    # 找到 tasks_storage[session_id] = task_data 这一行
+    if 'tasks_storage[session_id] = task_data' in func_code:
+        # 在这一行之后添加文件读取和临时文件创建代码
+        insert_point = func_code.find('tasks_storage[session_id] = task_data') + len('tasks_storage[session_id] = task_data')
+        
+        # 检查后面是否已经有文件读取代码
+        after_storage = func_code[insert_point:insert_point+200]
+        if 'file_content = await file.read()' not in after_storage:
+            # 需要插入代码
+            insert_code = '''
+        
+        # 读取文件内容并保存到临时文件（必须在异步任务之前读取，因为 UploadFile 只能读取一次）
+        file_content = await file.read()
+        file_filename = file.filename or "audio.m4a"
+        file_ext = Path(file_filename).suffix.lower() if file_filename else '.m4a'
+        
+        # 创建临时文件保存文件内容
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
+        temp_file.write(file_content)
+        temp_file.close()
+        temp_file_path = temp_file.name
+        
+        # 异步分析（传递临时文件路径和文件名，确保所有参数都正确传递）
+        logger.info(f"创建异步分析任务: session_id={session_id}, file_path={temp_file_path}, filename={file_filename}")
+'''
+            
+            # 替换整个函数
+            new_func_code = func_code[:insert_point] + insert_code + func_code[insert_point:]
+            
+            # 修复函数调用（如果还是旧版本）
+            if 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in new_func_code:
+                new_func_code = new_func_code.replace(
+                    'asyncio.create_task(analyze_audio_async(session_id, file, task_data))',
+                    'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))'
+                )
+            
+            # 替换整个内容
+            content = content[:func_start] + new_func_code + content[next_func:]
+            
+            with open('main.py', 'w', encoding='utf-8') as f:
+                f.write(content)
+            
+            import py_compile
+            py_compile.compile('main.py', doraise=True)
+            print("✅ 已添加文件读取和临时文件创建代码")
+        else:
+            print("✅ 文件读取代码已存在")
+    else:
+        print("❌ 未找到 tasks_storage[session_id] = task_data，无法自动修复")
+
+print(f"备份文件: {backup}")
+FIX
+
+# ============================================
+# 步骤3：重启服务
+# ============================================
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup ./venv/bin/python3 main.py > ~/gemini-service.log 2>&1 & sleep 3 && curl http://localhost:8001/health
+

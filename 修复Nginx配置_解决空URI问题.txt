@@ -1,0 +1,66 @@
+# ============================================
+# 修复 Nginx 配置 - 解决空 URI 问题
+# 执行用户: admin（需要 root 权限）
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+sudo tee /etc/nginx/conf.d/gemini.conf > /dev/null << 'NGINX_CONFIG'
+server {
+    listen 80;
+    server_name _;
+
+    # 允许上传 100MB 大文件
+    client_max_body_size 100M;
+
+    # 反向代理到 Google Gemini API
+    # 处理 /secret-channel/xxx 的情况
+    location /secret-channel/ {
+        # 移除 /secret-channel 前缀，转发到 Google API
+        rewrite ^/secret-channel/(.*) /$1 break;
+        
+        # 转发到 Google Gemini API（注意末尾有斜杠）
+        proxy_pass https://generativelanguage.googleapis.com/;
+        
+        # SSL 相关设置
+        proxy_ssl_server_name on;
+        proxy_ssl_verify off;
+        
+        # 设置必要的请求头
+        proxy_set_header Host generativelanguage.googleapis.com;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        
+        # 超时设置
+        proxy_connect_timeout 600s;
+        proxy_send_timeout 600s;
+        proxy_read_timeout 600s;
+        
+        # 缓冲设置
+        proxy_buffering off;
+        proxy_request_buffering off;
+    }
+    
+    # 处理 /secret-channel（没有末尾斜杠）的情况 - 重定向到带斜杠的版本
+    location = /secret-channel {
+        return 301 /secret-channel/;
+    }
+    
+    # 健康检查端点
+    location /health {
+        return 200 "OK";
+        add_header Content-Type text/plain;
+    }
+}
+NGINX_CONFIG
+
+# 测试配置
+sudo nginx -t
+
+# 重新加载配置
+sudo systemctl reload nginx
+
+# 测试代理服务器（带路径）
+curl -v http://localhost/secret-channel/v1beta/models 2>&1 | head -40
+

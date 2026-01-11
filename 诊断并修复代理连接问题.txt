@@ -1,0 +1,18 @@
+# ============================================
+# 诊断并修复代理连接问题
+# 执行用户: admin
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：检查 .env 配置
+cd /home/admin/gemini-audio-service && cat .env | grep -E "GEMINI|PROXY|USE_PROXY"
+
+# 步骤2：测试代理服务器是否可访问
+curl -v http://47.79.254.213/secret-channel 2>&1 | head -20
+
+# 步骤3：测试代理服务器的端口
+curl -v http://47.79.254.213:80/secret-channel 2>&1 | head -20
+
+# 步骤4：检查代理服务器是否在运行（如果代理服务器在同一台机器上）
+netstat -tlnp | grep 80 || ss -tlnp | grep 80
+

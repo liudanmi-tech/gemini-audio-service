@@ -1,0 +1,83 @@
+# ============================================
+# 服务端自测脚本 - 测试上传和分析功能
+# ============================================
+
+# 步骤1：检查服务是否运行
+echo "========== 步骤1: 检查服务状态 =========="
+curl -s http://localhost:8001/health
+echo ""
+
+# 步骤2：创建一个测试音频文件（使用 Python 生成一个简单的音频文件）
+echo "========== 步骤2: 创建测试音频文件 =========="
+cd /home/admin/gemini-audio-service && python3 << 'CREATE_AUDIO'
+import wave
+import struct
+import os
+
+# 创建一个简单的 WAV 文件（1秒的静音）
+sample_rate = 44100
+duration = 1  # 1秒
+num_samples = sample_rate * duration
+
+# 创建测试音频文件
+test_audio_path = "/tmp/test_audio.wav"
+with wave.open(test_audio_path, 'w') as wav_file:
+    wav_file.setnchannels(1)  # 单声道
+    wav_file.setsampwidth(2)  # 16位
+    wav_file.setframerate(sample_rate)
+    
+    # 写入静音数据
+    for i in range(num_samples):
+        value = int(0)  # 静音
+        packed_value = struct.pack('h', value)
+        wav_file.writeframes(packed_value)
+
+print(f"✅ 测试音频文件已创建: {test_audio_path}")
+print(f"文件大小: {os.path.getsize(test_audio_path)} 字节")
+CREATE_AUDIO
+
+# 步骤3：测试上传接口
+echo ""
+echo "========== 步骤3: 测试上传接口 =========="
+cd /home/admin/gemini-audio-service && python3 << 'TEST_UPLOAD'
+import requests
+import json
+
+# 测试上传
+url = "http://localhost:8001/api/v1/audio/upload"
+files = {'file': open('/tmp/test_audio.wav', 'rb')}
+data = {'title': '服务端自测'}
+
+try:
+    print(f"上传到: {url}")
+    print(f"文件: /tmp/test_audio.wav")
+    response = requests.post(url, files=files, data=data, timeout=30)
+    print(f"状态码: {response.status_code}")
+    print(f"响应: {response.text}")
+    
+    if response.status_code == 200:
+        result = response.json()
+        if result.get('code') == 200:
+            session_id = result['data']['session_id']
+            print(f"✅ 上传成功！session_id: {session_id}")
+            print(f"现在可以检查任务状态和日志")
+        else:
+            print(f"❌ 上传失败: {result.get('message')}")
+    else:
+        print(f"❌ 上传失败，状态码: {response.status_code}")
+except Exception as e:
+    print(f"❌ 请求失败: {e}")
+finally:
+    files['file'].close()
+TEST_UPLOAD
+
+# 步骤4：检查任务列表
+echo ""
+echo "========== 步骤4: 检查任务列表 =========="
+curl -s "http://localhost:8001/api/v1/tasks/sessions" | python3 -m json.tool
+
+# 步骤5：查看最近的日志
+echo ""
+echo "========== 步骤5: 查看最近的日志 =========="
+tail -50 ~/gemini-service.log | grep -E "upload|analyze|ERROR|错误|失败" | tail -20
+

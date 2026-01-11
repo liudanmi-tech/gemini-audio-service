@@ -1,0 +1,134 @@
+# ============================================
+# 增强日志 - 修复分析失败问题
+# ============================================
+
+cd /home/admin/gemini-audio-service && python3 << 'FIX'
+import shutil, time
+
+backup = f'main.py.backup_{int(time.time())}'
+shutil.copy('main.py', backup)
+print(f"✅ 备份: {backup}")
+
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 在 analyze_audio_async 函数开始处添加详细日志
+old_start = '''async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict):
+    """异步分析音频文件"""
+    from datetime import datetime
+    
+    try:'''
+
+new_start = '''async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict):
+    """异步分析音频文件"""
+    from datetime import datetime
+    
+    try:
+        logger.info(f"========== [analyze_audio_async] 开始分析音频 ==========")
+        logger.info(f"[analyze_audio_async] session_id: {session_id}")
+        logger.info(f"[analyze_audio_async] temp_file_path: {temp_file_path}")
+        logger.info(f"[analyze_audio_async] file_filename: {file_filename}")
+        logger.info(f"[analyze_audio_async] task_data keys: {list(task_data.keys()) if task_data else 'None'}")
+        
+        # 验证文件是否存在
+        import os
+        if not os.path.exists(temp_file_path):
+            raise FileNotFoundError(f"临时文件不存在: {temp_file_path}")
+        file_size = os.path.getsize(temp_file_path)
+        logger.info(f"[analyze_audio_async] 文件大小: {file_size} 字节")
+        
+        # 验证参数
+        if not task_data:
+            raise ValueError("task_data 参数不能为空")
+        if not session_id:
+            raise ValueError("session_id 参数不能为空")
+        if not temp_file_path:
+            raise ValueError("temp_file_path 参数不能为空")
+        
+        logger.info(f"[analyze_audio_async] 参数验证通过，开始调用 analyze_audio_from_path")'''
+
+if old_start in content:
+    content = content.replace(old_start, new_start)
+    print("✅ 已添加详细日志到函数开始处")
+else:
+    # 尝试找到函数定义
+    func_pos = content.find('async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict):')
+    if func_pos != -1:
+        # 找到 try: 的位置
+        try_pos = content.find('try:', func_pos)
+        if try_pos != -1:
+            # 在 try: 之后添加日志
+            insert_code = '''
+        logger.info(f"========== [analyze_audio_async] 开始分析音频 ==========")
+        logger.info(f"[analyze_audio_async] session_id: {session_id}")
+        logger.info(f"[analyze_audio_async] temp_file_path: {temp_file_path}")
+        logger.info(f"[analyze_audio_async] file_filename: {file_filename}")
+        logger.info(f"[analyze_audio_async] task_data keys: {list(task_data.keys()) if task_data else 'None'}")
+        
+        # 验证文件是否存在
+        import os
+        if not os.path.exists(temp_file_path):
+            raise FileNotFoundError(f"临时文件不存在: {temp_file_path}")
+        file_size = os.path.getsize(temp_file_path)
+        logger.info(f"[analyze_audio_async] 文件大小: {file_size} 字节")
+        
+        # 验证参数
+        if not task_data:
+            raise ValueError("task_data 参数不能为空")
+        if not session_id:
+            raise ValueError("session_id 参数不能为空")
+        if not temp_file_path:
+            raise ValueError("temp_file_path 参数不能为空")
+        
+        logger.info(f"[analyze_audio_async] 参数验证通过，开始调用 analyze_audio_from_path")
+'''
+            content = content[:try_pos+4] + insert_code + content[try_pos+4:]
+            print("✅ 已添加详细日志（使用备用方法）")
+
+# 增强异常处理日志
+old_except = '''    except Exception as e:
+        logger.error(f"分析音频失败: {e}")
+        logger.error(traceback.format_exc())
+        task_data["status"] = "failed"
+        task_data["updated_at"] = datetime.now().isoformat()'''
+
+new_except = '''    except Exception as e:
+        error_type = type(e).__name__
+        error_msg = str(e)
+        logger.error(f"========== [analyze_audio_async] 分析失败 ==========")
+        logger.error(f"[analyze_audio_async] 错误类型: {error_type}")
+        logger.error(f"[analyze_audio_async] 错误信息: {error_msg}")
+        logger.error(f"[analyze_audio_async] session_id: {session_id}")
+        logger.error(f"[analyze_audio_async] temp_file_path: {temp_file_path}")
+        logger.error(f"[analyze_audio_async] 完整错误堆栈:")
+        logger.error(traceback.format_exc())
+        task_data["status"] = "failed"
+        task_data["updated_at"] = datetime.now().isoformat()
+        logger.error(f"[analyze_audio_async] 任务状态已更新为 failed")'''
+
+if old_except in content:
+    content = content.replace(old_except, new_except)
+    print("✅ 已增强异常处理日志")
+
+# 在 upload_audio_api 中也添加日志
+if 'logger.info(f"创建异步分析任务:' not in content:
+    # 查找 asyncio.create_task 的位置
+    task_pos = content.find('asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))')
+    if task_pos != -1:
+        # 在前面添加日志
+        insert_log = '        logger.info(f"[upload_audio_api] 准备创建异步任务: session_id={session_id}, temp_file_path={temp_file_path}, file_filename={file_filename}")\n        '
+        content = content[:task_pos] + insert_log + content[task_pos:]
+        print("✅ 已在 upload_audio_api 中添加日志")
+
+with open('main.py', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+import py_compile
+py_compile.compile('main.py', doraise=True)
+print("✅ 语法检查通过")
+print(f"✅ 日志增强完成！备份: {backup}")
+FIX
+
+# 重启服务
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup ./venv/bin/python3 main.py > ~/gemini-service.log 2>&1 & sleep 3 && echo "✅ 服务已重启"
+

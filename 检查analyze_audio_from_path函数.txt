@@ -1,0 +1,13 @@
+# ============================================
+# 检查 analyze_audio_from_path 函数是否存在
+# ============================================
+
+# 步骤1：检查函数定义
+cd /home/admin/gemini-audio-service && grep -n "def analyze_audio_from_path\|async def analyze_audio_from_path" main.py
+
+# 步骤2：查看函数定义前后的代码
+cd /home/admin/gemini-audio-service && grep -B 5 -A 10 "async def analyze_audio_from_path" main.py | head -20
+
+# 步骤3：检查 analyze_audio_async 中如何调用这个函数
+cd /home/admin/gemini-audio-service && grep -A 5 "result = await analyze_audio_from_path" main.py
+

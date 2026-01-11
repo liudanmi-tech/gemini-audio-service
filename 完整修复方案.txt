@@ -1,0 +1,111 @@
+# ============================================
+# 完整修复方案 - 先检查再修复
+# ============================================
+
+# ============================================
+# 第一步：检查代码结构
+# ============================================
+cd /home/admin/gemini-audio-service && python3 << 'CHECK'
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+print("🔍 检查代码结构...")
+print("")
+
+# 检查是否有 temp_file_path
+if 'temp_file_path' in content:
+    print("✅ 找到 temp_file_path 变量")
+else:
+    print("❌ 未找到 temp_file_path 变量")
+
+# 检查是否有 file_filename
+if 'file_filename' in content:
+    print("✅ 找到 file_filename 变量")
+else:
+    print("❌ 未找到 file_filename 变量")
+
+# 检查函数调用
+if 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in content:
+    print("❌ 函数调用使用旧版本: (session_id, file, task_data)")
+elif 'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))' in content:
+    print("✅ 函数调用使用新版本: (session_id, temp_file_path, file_filename, task_data)")
+else:
+    print("⚠️  未知的调用格式")
+
+print("")
+print("检查 upload_audio_api 函数中是否有文件读取代码...")
+if 'file_content = await file.read()' in content:
+    print("✅ 找到文件读取代码")
+else:
+    print("❌ 未找到文件读取代码，可能需要添加")
+CHECK
+
+# ============================================
+# 第二步：根据检查结果执行修复
+# ============================================
+
+# 如果第一步显示需要修复，执行这个命令：
+
+cd /home/admin/gemini-audio-service && python3 << 'FIX'
+import shutil, time
+
+backup = f'main.py.backup_{int(time.time())}'
+shutil.copy('main.py', backup)
+print(f"✅ 备份: {backup}")
+
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 修复1: 函数调用
+if 'asyncio.create_task(analyze_audio_async(session_id, file, task_data))' in content:
+    content = content.replace(
+        'asyncio.create_task(analyze_audio_async(session_id, file, task_data))',
+        'asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))'
+    )
+    print("✅ 修复1: 函数调用已更新")
+
+# 检查是否需要添加文件读取代码
+if 'file_content = await file.read()' not in content and 'asyncio.create_task(analyze_audio_async' in content:
+    # 需要在调用前添加文件读取代码
+    # 查找调用位置
+    call_pos = content.find('asyncio.create_task(analyze_audio_async')
+    if call_pos != -1:
+        # 查找这一行的开始位置
+        line_start = content.rfind('\n', 0, call_pos) + 1
+        indent = len(content[line_start:call_pos]) - len(content[line_start:call_pos].lstrip())
+        
+        # 检查前面是否有文件读取代码
+        before_call = content[max(0, call_pos-500):call_pos]
+        if 'file_content = await file.read()' not in before_call:
+            # 需要添加文件读取和临时文件创建代码
+            insert_code = f'''
+        # 读取文件内容并保存到临时文件（必须在异步任务之前读取，因为 UploadFile 只能读取一次）
+        file_content = await file.read()
+        file_filename = file.filename or "audio.m4a"
+        file_ext = Path(file_filename).suffix.lower() if file_filename else '.m4a'
+        
+        # 创建临时文件保存文件内容
+        import tempfile
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
+        temp_file.write(file_content)
+        temp_file.close()
+        temp_file_path = temp_file.name
+        
+        # 异步分析（传递临时文件路径和文件名，确保所有参数都正确传递）
+        logger.info(f"创建异步分析任务: session_id={{session_id}}, file_path={{temp_file_path}}, filename={{file_filename}}")
+'''
+            # 在调用前插入
+            content = content[:call_pos] + insert_code + content[call_pos:]
+            print("✅ 修复2: 添加了文件读取和临时文件创建代码")
+
+with open('main.py', 'w', encoding='utf-8') as f:
+    f.write(content)
+
+import py_compile
+py_compile.compile('main.py', doraise=True)
+print("✅ 修复完成，需要重启服务")
+FIX
+
+# 重启服务
+cd /home/admin/gemini-audio-service && pkill -f "python3 main.py" 2>/dev/null; sleep 2 && nohup python3 main.py > /tmp/gemini-service.log 2>&1 & sleep 3 && echo "✅ 服务已重启" && curl -s http://localhost:8001/health
+

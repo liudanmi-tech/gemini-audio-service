@@ -1,0 +1,21 @@
+# ============================================
+# 配置并启动代理服务器（Nginx）
+# 执行用户: admin（可能需要 root 权限）
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：检查 Nginx 是否已安装
+which nginx || echo "Nginx 未安装"
+
+# 步骤2：检查 Nginx 是否在运行
+systemctl status nginx 2>/dev/null || service nginx status 2>/dev/null || ps aux | grep nginx | grep -v grep
+
+# 步骤3：检查 Nginx 配置文件位置
+ls -la /etc/nginx/sites-available/ 2>/dev/null || ls -la /etc/nginx/conf.d/ 2>/dev/null || echo "检查 Nginx 配置目录"
+
+# 步骤4：检查端口 80 是否被占用
+netstat -tlnp | grep :80 || ss -tlnp | grep :80 || lsof -i :80
+
+# 步骤5：测试本地 Nginx（如果已安装）
+curl -v http://localhost/secret-channel 2>&1 | head -20
+

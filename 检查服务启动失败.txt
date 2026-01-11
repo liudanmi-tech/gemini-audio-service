@@ -1,0 +1,14 @@
+# ============================================
+# 检查服务启动失败原因
+# 执行用户: admin
+# 执行路径: /home/admin/gemini-audio-service
+# ============================================
+
+# 步骤1：检查是否有 Python 进程在运行
+ps aux | grep "python3 main.py" | grep -v grep
+
+# 步骤2：查看日志文件（最近50行）
+tail -50 ~/gemini-service.log
+
+# 步骤3：尝试前台启动服务（查看错误信息）
+cd /home/admin/gemini-audio-service && timeout 10 ./venv/bin/python3 main.py 2>&1 | head -30

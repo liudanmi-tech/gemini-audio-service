@@ -1,0 +1,50 @@
+# ============================================
+# 修复 analyze_audio_from_path 未定义问题
+# ============================================
+
+cd /home/admin/gemini-audio-service && python3 << 'FIX'
+import shutil, time
+
+backup = f'main.py.backup_{int(time.time())}'
+shutil.copy('main.py', backup)
+print(f"✅ 备份: {backup}")
+
+with open('main.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 检查 analyze_audio_from_path 是否存在
+if 'async def analyze_audio_from_path' not in content:
+    print("❌ analyze_audio_from_path 函数不存在，需要添加")
+    print("这需要从本地代码复制整个函数定义")
+    exit(1)
+else:
+    print("✅ analyze_audio_from_path 函数存在")
+
+# 检查函数定义的位置
+func_pos = content.find('async def analyze_audio_from_path')
+if func_pos == -1:
+    print("❌ 未找到函数定义")
+    exit(1)
+
+# 检查 analyze_audio_async 的位置
+async_pos = content.find('async def analyze_audio_async')
+if async_pos == -1:
+    print("❌ 未找到 analyze_audio_async 函数")
+    exit(1)
+
+print(f"analyze_audio_from_path 位置: {func_pos}")
+print(f"analyze_audio_async 位置: {async_pos}")
+
+if async_pos < func_pos:
+    print("⚠️  analyze_audio_async 在 analyze_audio_from_path 之前定义")
+    print("这可能导致作用域问题，但通常不是问题")
+else:
+    print("✅ 函数定义顺序正确")
+
+# 检查是否有导入问题
+if 'from __future__ import' in content[:100]:
+    print("检查导入...")
+
+print("检查完成")
+FIX
+
