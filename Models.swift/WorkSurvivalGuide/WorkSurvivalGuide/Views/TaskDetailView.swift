@@ -2,148 +2,64 @@
 //  TaskDetailView.swift
 //  WorkSurvivalGuide
 //
-//  任务详情视图（简化版）
+//  任务详情视图 - 按照Figma设计稿实现
 //
 
 import SwiftUI
 
 struct TaskDetailView: View {
-    let task: TaskItem  // 直接传递 task 对象，而不是 taskId
+    let task: TaskItem
     @State private var detail: TaskDetailResponse?
     @State private var isLoading = false
+    @State private var moodStats: [MoodStat] = []
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // 任务信息
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(task.title)
-                        .font(.title)
-                        .fontWeight(.bold)
+        ZStack {
+            // 背景色
+            AppColors.background
+                .ignoresSafeArea()
+            
+            ScrollView {
+                VStack(spacing: 16) {
+                    // Header（返回按钮 + 标题）
+                    DetailHeaderView()
                     
-                    Text(task.timeRangeString)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                    // 今日心情模块
+                    TodayMoodView(
+                        emotionScore: task.emotionScore ?? detail?.emotionScore,
+                        moodStats: moodStats.isEmpty ? nil : moodStats
+                    )
                     
-                    Text("时长: \(task.durationString)")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                    
-                    if let score = task.emotionScore {
-                        Text("情绪分数: \(score)分")
-                            .font(.headline)
-                            .foregroundColor(emotionColor(for: score))
+                    // 对话复盘模块
+                    if let detail = detail, !detail.dialogues.isEmpty {
+                        DialogueReviewView(dialogues: detail.dialogues)
                     }
                     
-                    if let speakerCount = task.speakerCount {
-                        Text("说话人数: \(speakerCount)人")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
+                    // 回放分析与策略模块
+                    if let detail = detail {
+                        AnalysisStrategyView(
+                            sceneDescription: generateSceneDescription(from: detail),
+                            strategyAnalysis: nil // TODO: 从API获取策略分析
+                        )
                     }
                 }
-                .padding()
-                
-                // 标签
-                if !task.tags.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(task.tags, id: \.self) { tag in
-                                TagView(text: tag)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-                }
-                
-                // 状态信息
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("状态")
-                        .font(.headline)
-                    Text(statusText(for: task.status))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                }
-                .padding()
-                
-                // 对话列表（如果有详情）
-                if let detail = detail, !detail.dialogues.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("对话内容")
-                            .font(.headline)
-                            .padding(.horizontal)
-                        
-                        ForEach(Array(detail.dialogues.enumerated()), id: \.offset) { index, dialogue in
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(dialogue.speaker)
-                                        .font(.subheadline)
-                                        .fontWeight(.semibold)
-                                    Spacer()
-                                    if let timestamp = dialogue.timestamp {
-                                        Text(formatTime(timestamp))
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                    }
-                                }
-                                
-                                Text(dialogue.content)
-                                    .font(.body)
-                                
-                                Text("语气: \(dialogue.tone)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            .padding()
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(8)
-                            .padding(.horizontal)
-                        }
-                    }
-                }
-                
-                // 风险点列表（如果有详情）
-                if let detail = detail, !detail.risks.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("风险点")
-                            .font(.headline)
-                            .padding(.horizontal)
-                        
-                        ForEach(detail.risks, id: \.self) { risk in
-                            HStack {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .foregroundColor(.orange)
-                                Text(risk)
-                                    .font(.body)
-                                Spacer()
-                            }
-                            .padding()
-                            .background(Color.orange.opacity(0.1))
-                            .cornerRadius(8)
-                            .padding(.horizontal)
-                        }
-                    }
-                }
-                
-                if isLoading {
-                    ProgressView("加载详情中...")
-                        .padding()
-                } else if detail == nil && task.status == .archived {
-                    // 如果任务已归档但没有详情，尝试加载
-                    Text("点击加载详情")
-                        .foregroundColor(.blue)
-                        .onTapGesture {
-                            loadTaskDetail()
-                        }
-                        .padding()
-                }
+                .padding(.horizontal, 16)
+                .padding(.top, 88)
+                .padding(.bottom, 20)
+            }
+            
+            if isLoading {
+                ProgressView("加载详情中...")
+                    .tint(AppColors.headerText)
             }
         }
-        .navigationTitle("任务详情")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarHidden(true)
         .onAppear {
-            // 如果任务已归档，自动加载详情
-            if task.status == .archived && !AppConfig.shared.useMockData {
+            if task.status == .archived && detail == nil {
                 loadTaskDetail()
+            } else {
+                // 如果已有详情，生成情绪统计数据
+                generateMoodStats()
             }
         }
     }
@@ -157,6 +73,7 @@ struct TaskDetailView: View {
                 await MainActor.run {
                     self.detail = taskDetail
                     self.isLoading = false
+                    generateMoodStats()
                 }
             } catch {
                 await MainActor.run {
@@ -167,33 +84,91 @@ struct TaskDetailView: View {
         }
     }
     
-    private func formatTime(_ seconds: Double) -> String {
-        let minutes = Int(seconds) / 60
-        let secs = Int(seconds) % 60
-        return String(format: "%02d:%02d", minutes, secs)
-    }
-    
-    private func statusText(for status: TaskStatus) -> String {
-        switch status {
-        case .recording:
-            return "录制中"
-        case .analyzing:
-            return "分析中"
-        case .archived:
-            return "已归档"
-        case .burned:
-            return "已焚毁"
+    private func generateMoodStats() {
+        // 从对话中分析情绪统计
+        // 这里可以根据对话的语气（tone）来统计
+        guard let detail = detail else {
+            // 如果没有详情，使用默认值
+            moodStats = MoodStat.example
+            return
+        }
+        
+        var stats: [String: Int] = [:]
+        for dialogue in detail.dialogues {
+            let tone = dialogue.tone
+            stats[tone, default: 0] += 1
+        }
+        
+        moodStats = stats.map { key, value in
+            MoodStat(
+                name: key,
+                count: value,
+                color: getMoodColor(for: key)
+            )
+        }.sorted { $0.count > $1.count }
+        
+        // 如果没有统计数据，使用默认值
+        if moodStats.isEmpty {
+            moodStats = MoodStat.example
         }
     }
     
-    private func emotionColor(for score: Int) -> Color {
-        if score >= 70 {
-            return .green
-        } else if score >= 40 {
-            return .orange
-        } else {
-            return .red
+    private func getMoodColor(for tone: String) -> Color {
+        // 根据语气返回颜色
+        switch tone.lowercased() {
+        case "叹气", "sigh", "无奈":
+            return Color(hex: "#FF6900")
+        case "哈哈哈", "laugh", "轻松", "轻松":
+            return Color(hex: "#00C950")
+        case "焦虑", "anxious":
+            return Color(hex: "#FF6B6B")
+        default:
+            return AppColors.secondaryText
         }
+    }
+    
+    private func generateSceneDescription(from detail: TaskDetailResponse) -> String {
+        // 根据对话生成场景描述
+        if let firstDialogue = detail.dialogues.first {
+            return firstDialogue.content
+        }
+        return "当老板说 '周末前完成'..."
     }
 }
 
+// Detail Header视图
+struct DetailHeaderView: View {
+    @Environment(\.presentationMode) var presentationMode
+    
+    var body: some View {
+        HStack {
+            Button(action: {
+                presentationMode.wrappedValue.dismiss()
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.5))
+                        .frame(width: 40, height: 40)
+                    
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(AppColors.headerText)
+                }
+            }
+            
+            Spacer()
+            
+            Text("每日总结")
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundColor(AppColors.headerText)
+            
+            Spacer()
+            
+            // 占位，保持居中
+            Color.clear
+                .frame(width: 40, height: 40)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 0)
+    }
+}

@@ -2,7 +2,7 @@
 //  TaskCardView.swift
 //  WorkSurvivalGuide
 //
-//  任务卡片组件
+//  任务卡片组件 - 按照Figma设计稿实现
 //
 
 import SwiftUI
@@ -11,101 +11,112 @@ struct TaskCardView: View {
     let task: TaskItem
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // 标题和状态
-            HStack {
-                Text(task.title)
-                    .font(.headline)
-                    .foregroundColor(.primary)
+        VStack(alignment: .leading, spacing: 8) {
+            // 标题和时间行
+            HStack(alignment: .top, spacing: 0) {
+                VStack(alignment: .leading, spacing: 4) {
+                    // 标题
+                    Text(task.title)
+                        .font(AppFonts.cardTitle)
+                        .foregroundColor(AppColors.primaryText)
+                    
+                    // 时间（带时钟图标）
+                    HStack(spacing: 4) {
+                        Image(systemName: "clock")
+                            .font(.system(size: 14))
+                            .foregroundColor(AppColors.secondaryText)
+                        Text(task.timeRangeString)
+                            .font(AppFonts.time)
+                            .foregroundColor(AppColors.secondaryText)
+                    }
+                }
                 
                 Spacer()
                 
-                // 状态指示器
-                StatusIndicator(status: task.status)
+                // 状态标签
+                StatusBadge(status: task.status)
             }
             
-            // 时间和时长
-            HStack {
-                Text(task.timeRangeString)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Text("•")
-                    .foregroundColor(.secondary)
-                
-                Text(task.durationString)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            // 标签
+            // 标签行
             if !task.tags.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(task.tags, id: \.self) { tag in
-                            TagView(text: tag)
-                        }
+                HStack(spacing: 8) {
+                    ForEach(task.tags, id: \.self) { tag in
+                        TagView(text: tag)
                     }
                 }
             }
-            
-            // 情绪分数
-            if let score = task.emotionScore {
-                HStack {
-                    Text("情绪分数:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("\(score)分")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(emotionColor(for: score))
-                }
-            }
         }
-        .padding()
-        .background(Color(.systemBackground))
+        .padding(17)
+        .background(AppColors.cardBackground)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppColors.border, lineWidth: 1.38)
+        )
         .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
-    }
-    
-    // 根据情绪分数返回颜色
-    private func emotionColor(for score: Int) -> Color {
-        if score >= 70 {
-            return .green
-        } else if score >= 40 {
-            return .orange
-        } else {
-            return .red
-        }
+        .shadow(color: AppColors.border, radius: 0, x: 3, y: 3)
     }
 }
 
-// 状态指示器
-struct StatusIndicator: View {
+// 状态标签
+struct StatusBadge: View {
     let status: TaskStatus
     
     var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-            
-            Text(statusText)
-                .font(.caption)
-                .foregroundColor(.secondary)
+        Text(statusText)
+            .font(AppFonts.statusLabel)
+            .foregroundColor(textColor)
+            .padding(.horizontal, 8.69)
+            .padding(.vertical, 4)
+            .background(backgroundColor)
+            .overlay(
+                Capsule()
+                    .stroke(borderColor, lineWidth: 0.69)
+            )
+            .clipShape(Capsule())
+    }
+    
+    private var backgroundColor: Color {
+        switch status {
+        case .recording:
+            return AppColors.Status.analyzingBg
+        case .analyzing:
+            return AppColors.Status.analyzingBg
+        case .archived:
+            return AppColors.Status.completedBg
+        case .burned:
+            return Color.gray.opacity(0.2)
+        case .failed:
+            return Color.red.opacity(0.2)
         }
     }
     
-    private var statusColor: Color {
+    private var textColor: Color {
         switch status {
         case .recording:
-            return .red
+            return AppColors.Status.analyzingText
         case .analyzing:
-            return .orange
+            return AppColors.Status.analyzingText
         case .archived:
-            return .green
+            return AppColors.Status.completedText
         case .burned:
-            return .gray
+            return Color.gray
+        case .failed:
+            return Color.red
+        }
+    }
+    
+    private var borderColor: Color {
+        switch status {
+        case .recording:
+            return AppColors.Status.analyzingBorder
+        case .analyzing:
+            return AppColors.Status.analyzingBorder
+        case .archived:
+            return AppColors.Status.completedBorder
+        case .burned:
+            return Color.gray.opacity(0.3)
+        case .failed:
+            return Color.red.opacity(0.5)
         }
     }
     
@@ -116,9 +127,11 @@ struct StatusIndicator: View {
         case .analyzing:
             return "分析中"
         case .archived:
-            return "已归档"
+            return "已完成"
         case .burned:
             return "已焚毁"
+        case .failed:
+            return "分析失败"
         }
     }
 }
@@ -129,22 +142,35 @@ struct TagView: View {
     
     var body: some View {
         Text(text)
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(tagColor)
-            .foregroundColor(.white)
-            .cornerRadius(8)
+            .font(AppFonts.tagText)
+            .foregroundColor(AppColors.Tag.tagText)
+            .padding(.horizontal, 8.69)
+            .padding(.vertical, 1.99)
+            .background(backgroundColor)
+            .overlay(
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(AppColors.Tag.tagBorder, lineWidth: 0.69)
+            )
+            .cornerRadius(6)
     }
     
-    private var tagColor: Color {
-        if text.contains("PUA") || text.contains("风险") {
-            return .red
-        } else if text.contains("急躁") || text.contains("焦虑") {
-            return .orange
+    private var backgroundColor: Color {
+        if text.contains("焦虑") || text.lowercased().contains("anxiety") {
+            return AppColors.Tag.anxietyBg
+        } else if text.contains("PUA") || text.contains("预警") {
+            return AppColors.Tag.puaBg
+        } else if text.contains("创意") || text.contains("创意") {
+            return AppColors.Tag.creativeBg
         } else {
-            return .blue
+            // 默认颜色，根据标签内容智能判断
+            let lowerText = text.lowercased()
+            if lowerText.contains("pua") || lowerText.contains("预警") || lowerText.contains("风险") {
+                return AppColors.Tag.puaBg
+            } else if lowerText.contains("焦虑") || lowerText.contains("急躁") {
+                return AppColors.Tag.anxietyBg
+            } else {
+                return AppColors.Tag.creativeBg
+            }
         }
     }
 }
-

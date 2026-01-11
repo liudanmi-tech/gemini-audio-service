@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum Environment {
+enum AppEnvironment {
     case development  // 开发环境（使用 Mock 数据）
     case production   // 生产环境（使用真实 API）
 }
@@ -16,7 +16,7 @@ class AppConfig {
     static let shared = AppConfig()
     
     // 当前环境（可以通过 UserDefaults 或编译配置切换）
-    var currentEnvironment: Environment {
+    var currentEnvironment: AppEnvironment {
         // 方法 1: 通过 UserDefaults 切换（运行时切换）
         if let useMock = UserDefaults.standard.object(forKey: "use_mock_data") as? Bool {
             return useMock ? .development : .production

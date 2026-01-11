@@ -13,6 +13,7 @@ enum TaskStatus: String, Codable {
     case analyzing = "analyzing"    // 分析中
     case archived = "archived"       // 已归档
     case burned = "burned"          // 已焚毁
+    case failed = "failed"          // 分析失败
 }
 
 // 任务数据模型（重命名为 TaskItem 以避免与 Swift 的并发 Task 类型冲突）

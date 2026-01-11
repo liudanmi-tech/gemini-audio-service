@@ -2,7 +2,7 @@
 //  RecordingButtonView.swift
 //  WorkSurvivalGuide
 //
-//  录制按钮组件
+//  录制按钮组件 - 按照Figma设计稿实现
 //
 
 import SwiftUI
@@ -20,30 +20,29 @@ struct RecordingButtonView: View {
         }) {
             ZStack {
                 Circle()
-                    .fill(viewModel.isRecording ? Color.red : Color.blue)
-                    .frame(width: viewModel.isRecording ? 80 : 70, height: viewModel.isRecording ? 80 : 70)
-                    .shadow(radius: 8)
-                    .opacity(viewModel.isRecording ? 0.8 : 1.0)
+                    .fill(AppColors.recordButton)
+                    .frame(width: 64, height: 64)
+                    .overlay(
+                        Circle()
+                            .stroke(AppColors.recordButtonBorder, lineWidth: 3.45)
+                    )
+                    .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
                 
                 if viewModel.isRecording {
-                    VStack {
+                    VStack(spacing: 4) {
                         Image(systemName: "stop.fill")
-                            .font(.title2)
+                            .font(.system(size: 24))
                             .foregroundColor(.white)
-                        Text(viewModel.formattedTime)
-                            .font(.caption)
-                            .foregroundColor(.white)
+                            .frame(width: 8, height: 17.33)
                     }
                 } else {
                     Image(systemName: "mic.fill")
-                        .font(.title2)
+                        .font(.system(size: 24))
                         .foregroundColor(.white)
+                        .frame(width: 32, height: 32)
                 }
             }
         }
         .disabled(viewModel.isUploading)
-        .animation(.easeInOut(duration: 1.0).repeatForever(autoreverses: true), value: viewModel.isRecording)
     }
 }
-
-
