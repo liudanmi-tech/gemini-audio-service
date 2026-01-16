@@ -124,13 +124,17 @@ struct TaskListResponse: Codable {
 struct UploadResponse: Codable {
     let sessionId: String
     let audioId: String
+    let title: String
     let status: String
     let estimatedDuration: Int?
+    let createdAt: String?
     
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case audioId = "audio_id"
+        case title
         case status
         case estimatedDuration = "estimated_duration"
+        case createdAt = "created_at"
     }
 }

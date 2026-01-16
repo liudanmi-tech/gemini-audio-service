@@ -33,6 +33,29 @@ struct Task: Codable, Identifiable {
         case speakerCount = "speaker_count"
     }
     
+    // 直接初始化方法（用于从TaskDetailResponse创建）
+    init(
+        id: String,
+        title: String,
+        startTime: Date,
+        endTime: Date?,
+        duration: Int,
+        tags: [String],
+        status: TaskStatus,
+        emotionScore: Int?,
+        speakerCount: Int?
+    ) {
+        self.id = id
+        self.title = title
+        self.startTime = startTime
+        self.endTime = endTime
+        self.duration = duration
+        self.tags = tags
+        self.status = status
+        self.emotionScore = emotionScore
+        self.speakerCount = speakerCount
+    }
+    
     // 自定义日期解码器
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)

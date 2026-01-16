@@ -19,11 +19,16 @@ class NetworkManager {
     // 生产阶段：使用服务器地址（注意端口 8001）
     private let baseURL = "http://47.79.254.213:8001/api/v1"
     
+    // 获取 baseURL（供外部使用，用于图片 URL 转换）
+    func getBaseURL() -> String {
+        return baseURL
+    }
+    
     private init() {}
     
-    // 获取认证 Token（暂时返回空字符串，后续实现登录后添加）
+    // 获取认证 Token（从Keychain读取）
     private func getAuthToken() -> String {
-        return UserDefaults.standard.string(forKey: "auth_token") ?? ""
+        return KeychainManager.shared.getToken() ?? ""
     }
     
     // 获取任务列表（支持 Mock 和真实 API）
@@ -68,7 +73,8 @@ class NetworkManager {
             headers: [
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
-            ]
+            ],
+            requestModifier: { $0.timeoutInterval = 120 } // 设置超时时间为120秒
         )
         
         // 先获取原始响应数据用于调试
@@ -161,7 +167,8 @@ class NetworkManager {
             method: .post,
             headers: [
                 "Authorization": "Bearer \(getAuthToken())"
-            ]
+            ],
+            requestModifier: { $0.timeoutInterval = 180 } // 上传文件需要更长时间，设置180秒
         )
         
         // 监听上传进度
@@ -229,7 +236,8 @@ class NetworkManager {
             headers: [
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
-            ]
+            ],
+            requestModifier: { $0.timeoutInterval = 120 } // 设置超时时间为120秒
         )
         .serializingDecodable(APIResponse<TaskDetailResponse>.self)
         .value
@@ -267,7 +275,8 @@ class NetworkManager {
             headers: [
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
-            ]
+            ],
+            requestModifier: { $0.timeoutInterval = 120 } // 设置超时时间为120秒
         )
         .serializingDecodable(APIResponse<TaskStatusResponse>.self)
         .value
@@ -279,6 +288,47 @@ class NetworkManager {
                 userInfo: [NSLocalizedDescriptionKey: response.message]
             )
         }
+        
+        return data
+    }
+    
+    // 获取策略分析（包含图片）
+    func getStrategyAnalysis(sessionId: String) async throws -> StrategyAnalysisResponse {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据获取策略分析")
+            // Mock 模式下返回空数据
+            return StrategyAnalysisResponse(
+                visual: [],
+                strategies: []
+            )
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 获取策略分析")
+        let response = try await AF.request(
+            "\(baseURL)/tasks/sessions/\(sessionId)/strategies",
+            method: .post,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 180 } // 策略分析可能需要更长时间，设置180秒
+        )
+        .serializingDecodable(APIResponse<StrategyAnalysisResponse>.self)
+        .value
+        
+        guard response.code == 200, let data = response.data else {
+            throw NSError(
+                domain: "NetworkError",
+                code: response.code,
+                userInfo: [NSLocalizedDescriptionKey: response.message]
+            )
+        }
+        
+        print("✅ [NetworkManager] 策略分析获取成功")
+        print("  关键时刻数量: \(data.visual.count)")
+        print("  策略数量: \(data.strategies.count)")
         
         return data
     }

@@ -10,15 +10,20 @@ import tempfile
 import traceback
 import logging
 import uuid
+import asyncio
 from io import BytesIO
 from typing import List, Optional, Any, Tuple
 from pathlib import Path
 from datetime import datetime
 
 import google.generativeai as genai
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from google import genai as genai_new  # 新的 SDK 用于图片生成
+from google.genai import types as genai_types
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
+import base64
 
 # 配置日志
 # 使用用户目录下的日志文件，避免权限问题
@@ -38,6 +43,17 @@ load_dotenv()
 
 # 初始化 FastAPI 应用
 app = FastAPI(title="音频分析服务", description="通过 Gemini API 分析音频文件")
+
+# 注册认证路由
+from api.auth import router as auth_router
+app.include_router(auth_router)
+
+# 导入数据库相关
+from database.connection import get_db, init_db, close_db
+from database.models import User, Session, AnalysisResult, StrategyAnalysis
+from auth.jwt_handler import get_current_user_id, get_current_user
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # 配置 Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -136,6 +152,40 @@ except Exception as e:
     logger.error(f"配置 Gemini API 时出错: {e}")
     raise
 
+# 配置阿里云 OSS
+OSS_ACCESS_KEY_ID = os.getenv("OSS_ACCESS_KEY_ID")
+OSS_ACCESS_KEY_SECRET = os.getenv("OSS_ACCESS_KEY_SECRET")
+OSS_ENDPOINT = os.getenv("OSS_ENDPOINT")
+OSS_BUCKET_NAME = os.getenv("OSS_BUCKET_NAME")
+OSS_CDN_DOMAIN = os.getenv("OSS_CDN_DOMAIN")  # 可选，如果使用 CDN
+USE_OSS = os.getenv("USE_OSS", "true").lower() == "true"  # 是否启用 OSS
+
+# 初始化 OSS 客户端
+oss_bucket = None
+if USE_OSS:
+    if not all([OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_ENDPOINT, OSS_BUCKET_NAME]):
+        logger.warning("⚠️ OSS 配置不完整，将禁用 OSS 功能")
+        logger.warning("需要配置: OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, OSS_ENDPOINT, OSS_BUCKET_NAME")
+        USE_OSS = False
+    else:
+        try:
+            import oss2
+            auth = oss2.Auth(OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET)
+            oss_bucket = oss2.Bucket(auth, OSS_ENDPOINT, OSS_BUCKET_NAME)
+            logger.info(f"✅ OSS 配置成功")
+            logger.info(f"OSS Endpoint: {OSS_ENDPOINT}")
+            logger.info(f"OSS Bucket: {OSS_BUCKET_NAME}")
+            if OSS_CDN_DOMAIN:
+                logger.info(f"OSS CDN Domain: {OSS_CDN_DOMAIN}")
+        except ImportError:
+            logger.error("❌ 未安装 oss2 库，请运行: pip install oss2")
+            USE_OSS = False
+        except Exception as e:
+            logger.error(f"❌ OSS 初始化失败: {e}")
+            logger.error(traceback.format_exc())
+            USE_OSS = False
+else:
+    logger.info("OSS 功能已禁用（USE_OSS=false）")
 
 # 定义返回数据模型
 class DialogueItem(BaseModel):
@@ -178,13 +228,20 @@ class StrategyItem(BaseModel):
 
 class VisualData(BaseModel):
     """视觉数据模型"""
-    image_prompt: str  # 火柴人图片描述词
+    transcript_index: int  # 关联的 transcript 索引
+    speaker: str  # 说话人标识
+    image_prompt: str  # 火柴人图片描述词（详细版）
+    emotion: str  # 说话人情绪
+    subtext: str  # 潜台词
+    context: str  # 当时的情景或心理状态
     my_inner: str  # 我的内心OS
     other_inner: str  # 对方的内心OS
+    image_url: Optional[str] = None  # 图片 URL（优先使用）
+    image_base64: Optional[str] = None  # Base64 编码的图片数据（向后兼容，OSS 失败时使用）
 
 class Call2Response(BaseModel):
     """Call #2 策略分析响应"""
-    visual: VisualData  # 视觉数据
+    visual: List[VisualData]  # 视觉数据数组（关键时刻）
     strategies: List[StrategyItem]  # 策略列表
 
 
@@ -220,6 +277,201 @@ def wait_for_file_active(file: Any, max_wait_time=300) -> Any:
         raise Exception(f"文件处理失败，状态: {file.state}")
     
     return file
+
+
+def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image_index: int) -> Optional[str]:
+    """
+    上传图片到阿里云 OSS
+    
+    Args:
+        image_bytes: 图片的字节数据
+        user_id: 用户 ID
+        session_id: 会话 ID
+        image_index: 图片索引
+        
+    Returns:
+        OSS URL，如果失败返回 None
+    """
+    if not USE_OSS or oss_bucket is None:
+        logger.warning("OSS 未启用或未初始化，无法上传图片")
+        return None
+    
+    try:
+        # 构建 OSS 文件路径: images/{user_id}/{session_id}/{image_index}.png
+        oss_key = f"images/{user_id}/{session_id}/{image_index}.png"
+        
+        logger.info(f"上传图片到 OSS: {oss_key}")
+        logger.info(f"图片大小: {len(image_bytes)} 字节")
+        
+        # 上传图片到 OSS
+        start_time = time.time()
+        oss_bucket.put_object(oss_key, image_bytes, headers={'Content-Type': 'image/png'})
+        upload_time = time.time() - start_time
+        
+        logger.info(f"✅ 图片上传成功，耗时: {upload_time:.2f} 秒")
+        
+        # 构建图片 URL
+        if OSS_CDN_DOMAIN:
+            # 使用 CDN 域名
+            image_url = f"https://{OSS_CDN_DOMAIN}/{oss_key}"
+        else:
+            # 使用 OSS 直接访问 URL
+            # 格式: https://{bucket}.{endpoint}/{key}
+            if OSS_ENDPOINT.startswith('http://'):
+                endpoint = OSS_ENDPOINT.replace('http://', 'https://')
+            elif OSS_ENDPOINT.startswith('https://'):
+                endpoint = OSS_ENDPOINT
+            else:
+                endpoint = f"https://{OSS_BUCKET_NAME}.{OSS_ENDPOINT}"
+            image_url = f"{endpoint}/{oss_key}"
+        
+        logger.info(f"✅ 图片 URL: {image_url}")
+        return image_url
+        
+    except Exception as e:
+        logger.error(f"❌ 上传图片到 OSS 失败: {e}")
+        logger.error(f"错误类型: {type(e).__name__}")
+        logger.error(f"完整错误堆栈:")
+        logger.error(traceback.format_exc())
+        return None
+
+
+def generate_image_from_prompt(image_prompt: str, user_id: str, session_id: str, image_index: int, max_retries: int = 3) -> Optional[str]:
+    """
+    使用 Gemini Nano Banana 生成图片并上传到 OSS
+    
+    Args:
+        image_prompt: 图片生成提示词
+        user_id: 用户 ID（用于 OSS 文件路径）
+        session_id: 会话 ID（用于 OSS 文件路径）
+        image_index: 图片索引（用于 OSS 文件路径）
+        max_retries: 最大重试次数（默认 3 次）
+        
+    Returns:
+        图片 URL（如果 OSS 启用）或 Base64 编码的图片数据（如果 OSS 未启用或失败），如果失败返回 None
+    """
+    from google.genai.errors import ClientError
+    
+    client = genai_new.Client(api_key=GEMINI_API_KEY)
+    
+    # 配置图片生成参数
+    config = genai_types.GenerateContentConfig(
+        image_config=genai_types.ImageConfig(
+            aspect_ratio="4:3"  # 1184x864，接近 1024x768
+        )
+    )
+    
+    for attempt in range(max_retries):
+        try:
+            if attempt > 0:
+                logger.info(f"========== 重试生成图片 (第 {attempt + 1}/{max_retries} 次) ==========")
+            else:
+                logger.info(f"========== 开始生成图片 ==========")
+            
+            logger.info(f"提示词长度: {len(image_prompt)} 字符")
+            logger.debug(f"提示词内容: {image_prompt[:200]}...")
+            logger.info(f"调用模型: gemini-2.5-flash-image")
+            logger.info(f"宽高比: 4:3 (1184x864)")
+            
+            start_time = time.time()
+            response = client.models.generate_content(
+                model="gemini-2.5-flash-image",
+                contents=[image_prompt],
+                config=config
+            )
+            generate_time = time.time() - start_time
+            
+            logger.info(f"✅ 图片生成成功，耗时: {generate_time:.2f} 秒")
+            
+            # 提取图片数据
+            image_bytes = None
+            for part in response.parts:
+                if part.inline_data is not None:
+                    # 图片数据已经是 bytes
+                    image_bytes = part.inline_data.data
+                    logger.info(f"✅ 图片数据提取成功，大小: {len(image_bytes)} 字节")
+                    break
+            
+            if image_bytes is None:
+                logger.warning("⚠️ 响应中没有找到图片数据")
+                return None
+            
+            # 尝试上传到 OSS
+            if USE_OSS and oss_bucket is not None:
+                logger.info(f"尝试上传图片到 OSS...")
+                image_url = upload_image_to_oss(image_bytes, user_id, session_id, image_index)
+                if image_url:
+                    logger.info(f"✅ 图片已上传到 OSS，URL: {image_url}")
+                    return image_url
+                else:
+                    logger.warning("⚠️ OSS 上传失败，降级到 Base64")
+            
+            # 如果 OSS 未启用或上传失败，降级到 Base64
+            logger.info("使用 Base64 编码返回图片")
+            image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+            logger.info(f"✅ 图片 Base64 编码完成，大小: {len(image_base64)} 字符")
+            return image_base64
+            
+        except ClientError as e:
+            error_code = getattr(e, 'status_code', None)
+            error_message = str(e)
+            
+            # 处理 429 配额超限错误
+            if error_code == 429 or '429' in error_message or 'RESOURCE_EXHAUSTED' in error_message:
+                # 尝试从错误信息中提取重试延迟
+                retry_delay = 15  # 默认延迟 15 秒
+                if 'retry in' in error_message.lower() or 'retryDelay' in error_message:
+                    import re
+                    delay_match = re.search(r'retry in ([\d.]+)s', error_message, re.IGNORECASE)
+                    if delay_match:
+                        retry_delay = max(15, int(float(delay_match.group(1))) + 2)  # 至少等待 15 秒，多加 2 秒缓冲
+                
+                logger.warning(f"⚠️ 配额超限 (429)，等待 {retry_delay} 秒后重试...")
+                logger.warning(f"错误详情: {error_message[:500]}")
+                
+                # 检查是否是免费层配额为 0 的问题
+                if 'limit: 0' in error_message or 'free_tier' in error_message.lower():
+                    logger.error("❌ 检测到免费层配额限制 (limit: 0)")
+                    logger.error("💡 建议检查:")
+                    logger.error("   1. 确认 API Key 是否关联到付费项目")
+                    logger.error("   2. 在 Google Cloud Console 检查配额设置")
+                    logger.error("   3. 确认已启用图片生成 API 的付费配额")
+                    logger.error("   4. 可能需要等待几分钟让配额刷新")
+                
+                if attempt < max_retries - 1:
+                    logger.info(f"等待 {retry_delay} 秒后重试...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"❌ 重试 {max_retries} 次后仍然失败，放弃生成图片")
+                    logger.error(f"最终错误: {error_message[:500]}")
+                    return None
+            else:
+                # 其他类型的 ClientError
+                logger.error(f"❌ 生成图片失败 (ClientError): {error_code} - {error_message[:500]}")
+                if attempt < max_retries - 1:
+                    wait_time = (attempt + 1) * 5  # 指数退避：5秒、10秒、15秒
+                    logger.info(f"等待 {wait_time} 秒后重试...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    logger.error(traceback.format_exc())
+                    return None
+                    
+        except Exception as e:
+            logger.error(f"❌ 生成图片失败: {e}")
+            logger.error(f"错误类型: {type(e).__name__}")
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5  # 指数退避
+                logger.info(f"等待 {wait_time} 秒后重试...")
+                time.sleep(wait_time)
+                continue
+            else:
+                logger.error(f"完整错误堆栈:")
+                logger.error(traceback.format_exc())
+                return None
+    
+    return None
 
 
 def parse_gemini_response(response_text: str) -> dict:
@@ -681,25 +933,52 @@ def generate_tags(result: AudioAnalysisResponse) -> List[str]:
     return tags if tags else ["#正常"]
 
 
-@app.post("/api/v1/audio/upload")
+@app.post("/api/v1/audio/upload", response_model=APIResponse)
 async def upload_audio_api(
     file: UploadFile = File(...),
-    title: Optional[str] = None
+    title: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
-    """上传音频文件并开始分析"""
+    """上传音频文件并开始分析（需要JWT认证）"""
     import asyncio
     from datetime import datetime
     
+    logger.info("========== 收到音频上传请求 ==========")
+    logger.info(f"文件名: {file.filename}")
+    logger.info(f"Content-Type: {file.content_type}")
+    logger.info(f"Title: {title}")
+    logger.info(f"User ID: {user_id}")
+    
     try:
         session_id = str(uuid.uuid4())
+        logger.info(f"生成 session_id: {session_id}")
         
         if not title:
             formatter = datetime.now().strftime("%H:%M")
             title = f"录音 {formatter}"
         
         start_time = datetime.now()
+        
+        # 创建数据库Session记录
+        db_session = Session(
+            id=uuid.UUID(session_id),
+            user_id=uuid.UUID(user_id),
+            title=title,
+            start_time=start_time,
+            duration=0,
+            status="analyzing",
+            tags=[]
+        )
+        db.add(db_session)
+        await db.commit()
+        await db.refresh(db_session)
+        logger.info(f"数据库Session已创建: {session_id}")
+        
+        # 保留内存存储用于向后兼容（可选）
         task_data = {
             "session_id": session_id,
+            "user_id": user_id,
             "title": title,
             "start_time": start_time.isoformat(),
             "end_time": None,
@@ -711,11 +990,15 @@ async def upload_audio_api(
             "created_at": start_time.isoformat(),
             "updated_at": start_time.isoformat()
         }
-        
         tasks_storage[session_id] = task_data
+        logger.info(f"任务数据已存储: {session_id}")
         
         # 读取文件内容并保存到临时文件（必须在异步任务之前读取，因为 UploadFile 只能读取一次）
+        logger.info("开始读取文件内容...")
         file_content = await file.read()
+        file_size = len(file_content)
+        logger.info(f"文件内容读取完成，大小: {file_size} 字节 ({file_size / 1024 / 1024:.2f} MB)")
+        
         file_filename = file.filename or "audio.m4a"
         file_ext = Path(file_filename).suffix.lower() if file_filename else '.m4a'
         
@@ -725,103 +1008,192 @@ async def upload_audio_api(
         temp_file.write(file_content)
         temp_file.close()
         temp_file_path = temp_file.name
+        logger.info(f"临时文件已创建: {temp_file_path}")
+        logger.info(f"文件大小: {file_size} 字节 ({file_size / 1024 / 1024:.2f} MB)")
         
         # 异步分析（传递临时文件路径和文件名，确保所有参数都正确传递）
+        # 注意：不传递db会话，在异步任务中创建新的会话
         logger.info(f"创建异步分析任务: session_id={session_id}, file_path={temp_file_path}, filename={file_filename}")
-        asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data))
+        asyncio.create_task(analyze_audio_async(session_id, temp_file_path, file_filename, task_data, user_id))
         
-        return APIResponse(
+        # 构建响应数据
+        response_data = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "audio_id": session_id,
+            "title": title,
+            "status": "analyzing",
+            "estimated_duration": 300,
+            "created_at": start_time.isoformat()
+        }
+        
+        api_response = APIResponse(
             code=200,
             message="上传成功",
-            data={
-                "session_id": session_id,
-                "audio_id": session_id,
-                "title": title,
-                "status": "analyzing",
-                "estimated_duration": 300,
-                "created_at": start_time.isoformat()
-            },
+            data=response_data,
             timestamp=datetime.now().isoformat()
         )
+        
+        logger.info("========== 准备返回响应 ==========")
+        logger.info(f"响应码: {api_response.code}")
+        logger.info(f"响应消息: {api_response.message}")
+        logger.info(f"响应数据: {response_data}")
+        logger.info(f"响应对象: {api_response}")
+        logger.info(f"响应字典: {api_response.dict()}")
+        
+        # 使用 JSONResponse 确保正确序列化
+        return JSONResponse(
+            content=api_response.dict(),
+            status_code=200,
+            headers={"Content-Type": "application/json"}
+        )
     except Exception as e:
-        logger.error(f"上传音频失败: {e}")
+        logger.error(f"========== 上传音频失败 ==========")
+        logger.error(f"错误类型: {type(e).__name__}")
+        logger.error(f"错误信息: {str(e)}")
+        logger.error(f"完整错误堆栈:")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"上传失败: {str(e)}")
 
 
-async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict):
-    """异步分析音频文件"""
+async def analyze_audio_async(session_id: str, temp_file_path: str, file_filename: str, task_data: dict, user_id: str):
+    """异步分析音频文件（保存到数据库）"""
     from datetime import datetime
+    from database.connection import AsyncSessionLocal
     
-    try:
-        logger.info(f"========== 开始异步分析音频 ==========")
-        logger.info(f"session_id: {session_id}")
-        logger.info(f"temp_file_path: {temp_file_path}")
-        logger.info(f"file_filename: {file_filename}")
-        logger.info(f"task_data keys: {list(task_data.keys()) if task_data else 'None'}")
-        
-        # 验证参数
-        if not task_data:
-            raise ValueError("task_data 参数不能为空")
-        if not session_id:
-            raise ValueError("session_id 参数不能为空")
-        if not temp_file_path:
-            raise ValueError("temp_file_path 参数不能为空")
-        
-        # 直接使用临时文件路径调用 analyze_audio_from_path
-        result, call1_result = await analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a")
-        
-        # 使用Call1结果或旧结果
-        if call1_result:
-            emotion_score = call1_result.mood_score
-            stats = call1_result.stats
-            summary = call1_result.summary
-            transcript = [t.dict() for t in call1_result.transcript]
-        else:
-            emotion_score = calculate_emotion_score(result)
-            stats = {"sigh": 0, "laugh": 0}
-            summary = ""
-            transcript = []
-        
-        tags = generate_tags(result)
-        
-        end_time = datetime.now()
-        duration = int((end_time - datetime.fromisoformat(task_data["start_time"])).total_seconds())
-        
-        task_data.update({
-            "end_time": end_time.isoformat(),
-            "duration": duration,
-            "status": "archived",
-            "emotion_score": emotion_score,
-            "speaker_count": result.speaker_count,
-            "tags": tags,
-            "updated_at": end_time.isoformat()
-        })
-        
-        # 存储分析结果（包含Call1数据）
-        analysis_storage[session_id] = {
-            "dialogues": [d.dict() for d in result.dialogues],
-            "risks": result.risks,
-            "call1": call1_result.dict() if call1_result else None,
-            "mood_score": emotion_score,
-            "stats": stats,
-            "summary": summary,
-            "transcript": transcript
-        }
-        
-        logger.info(f"任务 {session_id} 分析完成")
-    except Exception as e:
-        logger.error(f"分析音频失败: {e}")
-        logger.error(traceback.format_exc())
-        task_data["status"] = "failed"
-        task_data["updated_at"] = datetime.now().isoformat()
-    finally:
-        # 清理临时文件
-        if temp_file_path and os.path.exists(temp_file_path):
+    # 创建新的数据库会话（因为原会话可能已关闭）
+    async with AsyncSessionLocal() as db:
+        try:
+            logger.info(f"========== 开始异步分析音频 ==========")
+            logger.info(f"session_id: {session_id}")
+            logger.info(f"user_id: {user_id}")
+            logger.info(f"temp_file_path: {temp_file_path}")
+            logger.info(f"file_filename: {file_filename}")
+            logger.info(f"task_data keys: {list(task_data.keys()) if task_data else 'None'}")
+            
+            # 验证参数
+            if not task_data:
+                raise ValueError("task_data 参数不能为空")
+            if not session_id:
+                raise ValueError("session_id 参数不能为空")
+            if not temp_file_path:
+                raise ValueError("temp_file_path 参数不能为空")
+            
+            # 检查文件是否存在
+            if not os.path.exists(temp_file_path):
+                raise FileNotFoundError(f"临时文件不存在: {temp_file_path}")
+            
+            # 记录文件大小（不限制）
+            file_size = os.path.getsize(temp_file_path)
+            logger.info(f"文件大小: {file_size} 字节 ({file_size / 1024 / 1024:.2f} MB)")
+            
+            # 直接使用临时文件路径调用 analyze_audio_from_path
+            result, call1_result = await analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a")
+            
+            # 使用Call1结果或旧结果
+            if call1_result:
+                emotion_score = call1_result.mood_score
+                stats = call1_result.stats
+                summary = call1_result.summary
+                transcript = [t.dict() for t in call1_result.transcript]
+            else:
+                emotion_score = calculate_emotion_score(result)
+                stats = {"sigh": 0, "laugh": 0}
+                summary = ""
+                transcript = []
+            
+            tags = generate_tags(result)
+            
+            end_time = datetime.now()
+            duration = int((end_time - datetime.fromisoformat(task_data["start_time"])).total_seconds())
+            
+            # 更新内存存储（向后兼容）
+            task_data.update({
+                "end_time": end_time.isoformat(),
+                "duration": duration,
+                "status": "archived",
+                "emotion_score": emotion_score,
+                "speaker_count": result.speaker_count,
+                "tags": tags,
+                "updated_at": end_time.isoformat()
+            })
+            
+            # 更新数据库Session
+            result_query = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+            db_session = result_query.scalar_one_or_none()
+            if db_session:
+                db_session.end_time = end_time
+                db_session.duration = duration
+                db_session.status = "archived"
+                db_session.emotion_score = emotion_score
+                db_session.speaker_count = result.speaker_count
+                db_session.tags = tags
+                await db.commit()
+                logger.info(f"数据库Session已更新: {session_id}")
+            
+            # 保存分析结果到数据库
+            analysis_result = AnalysisResult(
+                session_id=uuid.UUID(session_id),
+                dialogues=[d.dict() for d in result.dialogues],
+                risks=result.risks,
+                summary=summary,
+                mood_score=emotion_score,
+                stats=stats,
+                transcript=json.dumps(transcript, ensure_ascii=False) if transcript else None,
+                call1_result=call1_result.dict() if call1_result else None
+            )
+            db.add(analysis_result)
+            await db.commit()
+            logger.info(f"分析结果已保存到数据库: {session_id}")
+            
+            # 存储分析结果到内存（向后兼容）
+            analysis_storage[session_id] = {
+                "dialogues": [d.dict() for d in result.dialogues],
+                "risks": result.risks,
+                "call1": call1_result.dict() if call1_result else None,
+                "mood_score": emotion_score,
+                "stats": stats,
+                "summary": summary,
+                "transcript": transcript
+            }
+            
+            logger.info(f"任务 {session_id} 分析完成")
+            
+            # 异步生成策略分析（不阻塞主流程）
+            logger.info(f"开始异步生成策略分析: {session_id}")
+            asyncio.create_task(generate_strategies_async(session_id, user_id))
+            
+        except Exception as e:
+            logger.error(f"========== 分析音频失败 ==========")
+            logger.error(f"session_id: {session_id}")
+            logger.error(f"错误类型: {type(e).__name__}")
+            logger.error(f"错误信息: {str(e)}")
+            logger.error(traceback.format_exc())
+            
+            # 更新内存存储
+            task_data["status"] = "failed"
+            task_data["updated_at"] = datetime.now().isoformat()
+            
+            # 更新数据库状态
             try:
-                os.unlink(temp_file_path)
-                logger.info(f"已删除临时文件: {temp_file_path}")
-            except Exception as e:
-                logger.error(f"删除临时文件失败: {e}")
+                result_query = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+                db_session = result_query.scalar_one_or_none()
+                if db_session:
+                    db_session.status = "failed"
+                    await db.commit()
+                    logger.info(f"数据库Session状态已更新为 failed: {session_id}")
+                else:
+                    logger.warning(f"未找到数据库Session: {session_id}")
+            except Exception as db_error:
+                logger.error(f"更新数据库状态失败: {db_error}")
+        finally:
+            # 清理临时文件
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.unlink(temp_file_path)
+                    logger.info(f"已删除临时文件: {temp_file_path}")
+                except Exception as e:
+                    logger.error(f"删除临时文件失败: {e}")
 
 
 @app.get("/api/v1/tasks/sessions")
@@ -829,45 +1201,50 @@ async def get_task_list(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     date: Optional[str] = None,
-    status: Optional[str] = None
+    status: Optional[str] = None,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
 ):
-    """获取任务列表"""
+    """获取任务列表（需要JWT认证，仅返回当前用户的任务）"""
     from datetime import datetime
     
     try:
-        all_tasks = list(tasks_storage.values())
-        filtered_tasks = all_tasks
+        # 从数据库查询当前用户的任务
+        query = select(Session).where(Session.user_id == uuid.UUID(user_id))
         
         if date:
             target_date = datetime.fromisoformat(date).date()
-            filtered_tasks = [
-                t for t in filtered_tasks
-                if datetime.fromisoformat(t["start_time"]).date() == target_date
-            ]
+            query = query.where(
+                func.date(Session.start_time) == target_date
+            )
         
         if status:
-            filtered_tasks = [t for t in filtered_tasks if t["status"] == status]
+            query = query.where(Session.status == status)
         
-        filtered_tasks.sort(key=lambda x: x["created_at"], reverse=True)
+        query = query.order_by(Session.created_at.desc())
         
-        total = len(filtered_tasks)
-        start = (page - 1) * page_size
-        end = start + page_size
-        paginated_tasks = filtered_tasks[start:end]
+        # 获取总数
+        count_result = await db.execute(select(func.count()).select_from(query.subquery()))
+        total = count_result.scalar() or 0
+        
+        # 分页查询
+        query = query.offset((page - 1) * page_size).limit(page_size)
+        result = await db.execute(query)
+        sessions = result.scalars().all()
         
         task_items = [
             TaskItem(
-                session_id=t["session_id"],
-                title=t["title"],
-                start_time=t["start_time"],
-                end_time=t.get("end_time"),
-                duration=t["duration"],
-                tags=t["tags"],
-                status=t["status"],
-                emotion_score=t.get("emotion_score"),
-                speaker_count=t.get("speaker_count")
+                session_id=str(s.id),
+                title=s.title or "",
+                start_time=s.start_time.isoformat() if s.start_time else "",
+                end_time=s.end_time.isoformat() if s.end_time else None,
+                duration=s.duration or 0,
+                tags=s.tags or [],
+                status=s.status or "unknown",
+                emotion_score=s.emotion_score,
+                speaker_count=s.speaker_count
             )
-            for t in paginated_tasks
+            for s in sessions
         ]
         
         return APIResponse(
@@ -886,36 +1263,62 @@ async def get_task_list(
         )
     except Exception as e:
         logger.error(f"获取任务列表失败: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取列表失败: {str(e)}")
 
 
 @app.get("/api/v1/tasks/sessions/{session_id}")
-async def get_task_detail(session_id: str):
-    """获取任务详情"""
+async def get_task_detail(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取任务详情（需要JWT认证，仅能访问自己的任务）"""
     from datetime import datetime
     
     try:
-        task_data = tasks_storage.get(session_id)
-        if not task_data:
+        # 从数据库查询任务，确保属于当前用户
+        result = await db.execute(
+            select(Session).where(
+                Session.id == uuid.UUID(session_id),
+                Session.user_id == uuid.UUID(user_id)
+            )
+        )
+        db_session = result.scalar_one_or_none()
+        
+        if not db_session:
             raise HTTPException(status_code=404, detail="任务不存在")
         
-        analysis_result = analysis_storage.get(session_id, {})
+        # 查询分析结果
+        analysis_result_query = await db.execute(
+            select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+        )
+        analysis_result = analysis_result_query.scalar_one_or_none()
+        
+        dialogues = []
+        risks = []
+        summary = None
+        
+        if analysis_result:
+            dialogues = analysis_result.dialogues if isinstance(analysis_result.dialogues, list) else []
+            risks = analysis_result.risks or []
+            summary = analysis_result.summary
         
         detail = TaskDetailResponse(
-            session_id=task_data["session_id"],
-            title=task_data["title"],
-            start_time=task_data["start_time"],
-            end_time=task_data.get("end_time"),
-            duration=task_data["duration"],
-            tags=task_data["tags"],
-            status=task_data["status"],
-            emotion_score=task_data.get("emotion_score"),
-            speaker_count=task_data.get("speaker_count"),
-            dialogues=analysis_result.get("dialogues", []),
-            risks=analysis_result.get("risks", []),
-            summary=analysis_result.get("summary"),  # 新增字段
-            created_at=task_data["created_at"],
-            updated_at=task_data["updated_at"]
+            session_id=str(db_session.id),
+            title=db_session.title or "",
+            start_time=db_session.start_time.isoformat() if db_session.start_time else "",
+            end_time=db_session.end_time.isoformat() if db_session.end_time else None,
+            duration=db_session.duration or 0,
+            tags=db_session.tags or [],
+            status=db_session.status or "unknown",
+            emotion_score=db_session.emotion_score,
+            speaker_count=db_session.speaker_count,
+            dialogues=dialogues,
+            risks=risks,
+            summary=summary,
+            created_at=db_session.created_at.isoformat() if db_session.created_at else "",
+            updated_at=db_session.updated_at.isoformat() if db_session.updated_at else ""
         )
         
         return APIResponse(
@@ -928,28 +1331,43 @@ async def get_task_detail(session_id: str):
         raise
     except Exception as e:
         logger.error(f"获取任务详情失败: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取详情失败: {str(e)}")
 
 
 @app.get("/api/v1/tasks/sessions/{session_id}/status")
-async def get_task_status(session_id: str):
-    """查询任务分析状态"""
+async def get_task_status(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """查询任务分析状态（需要JWT认证，仅能访问自己的任务）"""
     from datetime import datetime
     
     try:
-        task_data = tasks_storage.get(session_id)
-        if not task_data:
+        # 从数据库查询任务，确保属于当前用户
+        result = await db.execute(
+            select(Session).where(
+                Session.id == uuid.UUID(session_id),
+                Session.user_id == uuid.UUID(user_id)
+            )
+        )
+        db_session = result.scalar_one_or_none()
+        
+        if not db_session:
             raise HTTPException(status_code=404, detail="任务不存在")
+        
+        status_value = db_session.status or "unknown"
         
         return APIResponse(
             code=200,
             message="success",
             data={
                 "session_id": session_id,
-                "status": task_data["status"],
-                "progress": 1.0 if task_data["status"] == "archived" else 0.5,
-                "estimated_time_remaining": 0 if task_data["status"] == "archived" else 30,
-                "updated_at": task_data["updated_at"]
+                "status": status_value,
+                "progress": 1.0 if status_value == "archived" else 0.5,
+                "estimated_time_remaining": 0 if status_value == "archived" else 30,
+                "updated_at": db_session.updated_at.isoformat() if db_session.updated_at else ""
             },
             timestamp=datetime.now().isoformat()
         )
@@ -957,25 +1375,74 @@ async def get_task_status(session_id: str):
         raise
     except Exception as e:
         logger.error(f"获取任务状态失败: {e}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取状态失败: {str(e)}")
 
 
-@app.post("/api/v1/tasks/sessions/{session_id}/strategies")
-async def generate_strategies(session_id: str):
-    """生成策略分析（Call #2）- 情商教练"""
+async def generate_strategies_async(session_id: str, user_id: str):
+    """异步生成策略分析（在音频分析完成后自动调用）"""
+    from datetime import datetime
+    from database.connection import AsyncSessionLocal
+    
+    # 创建新的数据库会话
+    async with AsyncSessionLocal() as db:
+        try:
+            logger.info(f"========== 开始异步生成策略分析 ==========")
+            logger.info(f"session_id: {session_id}, user_id: {user_id}")
+            
+            # 验证任务存在且属于当前用户
+            result = await db.execute(
+                select(Session).where(
+                    Session.id == uuid.UUID(session_id),
+                    Session.user_id == uuid.UUID(user_id)
+                )
+            )
+            db_session = result.scalar_one_or_none()
+            
+            if not db_session:
+                logger.error(f"任务不存在: {session_id}")
+                return
+            
+            # 从数据库查询分析结果
+            analysis_result_query = await db.execute(
+                select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+            )
+            analysis_result_db = analysis_result_query.scalar_one_or_none()
+            
+            if not analysis_result_db:
+                logger.error(f"分析结果不存在: {session_id}")
+                return
+            
+            # 获取transcript
+            transcript = []
+            if analysis_result_db.transcript:
+                try:
+                    transcript = json.loads(analysis_result_db.transcript) if isinstance(analysis_result_db.transcript, str) else analysis_result_db.transcript
+                except:
+                    transcript = []
+            
+            # 向后兼容：从内存存储获取（如果数据库中没有）
+            analysis_result = analysis_storage.get(session_id, {})
+            if not transcript and analysis_result:
+                transcript = analysis_result.get("transcript", [])
+            
+            if not transcript:
+                logger.error(f"对话转录数据不存在: {session_id}")
+                return
+            
+            # 调用核心策略生成逻辑
+            await _generate_strategies_core(session_id, user_id, transcript, db)
+            
+        except Exception as e:
+            logger.error(f"异步生成策略分析失败: {e}")
+            logger.error(traceback.format_exc())
+
+
+async def _generate_strategies_core(session_id: str, user_id: str, transcript: list, db: AsyncSession):
+    """策略生成核心逻辑（供异步函数和接口共用）"""
     from datetime import datetime
     
     try:
-        task_data = tasks_storage.get(session_id)
-        if not task_data:
-            raise HTTPException(status_code=404, detail="任务不存在")
-        
-        analysis_result = analysis_storage.get(session_id, {})
-        transcript = analysis_result.get("transcript", [])
-        
-        if not transcript:
-            raise HTTPException(status_code=400, detail="对话转录数据不存在，请先完成音频分析")
-        
         # 构建提示词（使用需求文档中的提示词B）
         prompt = """角色: 你是一位精通博弈论、职场心理学与视觉修辞的深度沟通专家。
 
@@ -984,23 +1451,54 @@ async def generate_strategies(session_id: str):
 核心指令:
 1. **博弈剖析**: 洞察对话文本背后的「权力位阶」与「隐性诉求」。
 2. **自主策略研判**: **请勿使用固定分类**。请根据具体场景（如：需求加塞、情感勒索、沟通僵局），自主研判 3 种最具破局可能性的应对路径。每种策略需给出独特的 `label`（如：借力打力、柔性边界、认知对齐）。
-3. **视觉建模**: 为当前情境设计一张 1:1 的火柴人绘图描述词 (`image_prompt`)。
-   - **构图规则**: 米色背景，极简火柴人线稿，左侧为用户，右侧为对方，专注于展现肢体语言中的情绪（如：耸肩、对峙、闪躲）。
-   - 心理 OS: 分别提炼出双方在此刻「想说但没说出口」的内心暗示语 (my_inner, other_inner)。
+3. **视觉建模**: 识别对话中的关键时刻（如情绪转折、冲突爆发、重要决策等），为每个关键时刻设计详细的火柴人绘图描述词。
+   - **关键时刻识别**: 从对话转录中识别 2-5 个关键时刻，这些时刻应该能代表对话的核心冲突、情绪变化或重要转折点。
+   - **构图规则**: 米色背景，极简火柴人线稿，左侧为用户，右侧为对方。
+   - **详细要求**: 每个 `image_prompt` 必须包含：
+     * 说话人位置和身份标注（明确标注左侧是用户，右侧是对方）
+     * 说话人情绪表现（通过肢体语言、表情、姿态展现，如：耸肩、对峙、闪躲、前倾、后仰等）
+     * 潜台词暗示（通过细微动作体现，如：眼神闪躲、手指敲击、身体转向等）
+     * 当时的情景或心理状态描述（描述对话发生的具体情境和双方的心理状态）
+   - **心理 OS**: 分别提炼出双方在此刻「想说但没说出口」的内心暗示语 (my_inner, other_inner)。
 
 参数定义:
 - **strategies**: 数组，每个策略包含 `id` (策略ID), `label` (风格标签), `emoji`, `title` (策略标题), `content` (Markdown 格式的详细建议与话术)。
-- **visual**: 对象，包含 `image_prompt`, `my_inner`, `other_inner`。
+- **visual**: 数组，包含 2-5 个关键时刻的视觉数据。每个元素包含：
+  * `transcript_index`: 关联的 transcript 数组索引（从 0 开始）
+  * `speaker`: 说话人标识（如 "Speaker_0" 或 "Speaker_1"）
+  * `image_prompt`: 详细的火柴人绘图描述词（必须包含说话人标注、情绪表现、潜台词暗示、情景描述）
+  * `emotion`: 说话人情绪（如：紧张、防御、愤怒、轻松等）
+  * `subtext`: 潜台词（说话人真正想表达但没说出口的意思）
+  * `context`: 当时的情景或心理状态（描述对话发生的具体情境）
+  * `my_inner`: 我的内心OS（用户想说但没说出口的话）
+  * `other_inner`: 对方的内心OS（对方想说但没说出口的话）
 
 要求: 必须以纯 JSON 形式返回，确保结构能直接驱动前端渲染。
 
 返回格式:
 {{
-  "visual": {{
-    "image_prompt": "...",
-    "my_inner": "感到被冒犯但保持礼貌",
-    "other_inner": "试探对方的弹性"
-  }},
+  "visual": [
+    {{
+      "transcript_index": 3,
+      "speaker": "Speaker_1",
+      "image_prompt": "米色背景，极简火柴人线稿。左侧为用户（Speaker_1），标注'我'，身体微微后倾，双手交叉胸前，表情略显紧张，眼神看向右侧但不敢直视，手指在胸前轻敲，显示出内心的不安和防御。右侧为对方（Speaker_0），标注'对方'，身体前倾，右手指向左侧，表情严肃，显示出强势和施压的姿态。整体场景：办公室环境，双方隔着办公桌对峙，氛围紧张。",
+      "emotion": "紧张、防御",
+      "subtext": "感到被冒犯但试图保持礼貌",
+      "context": "对方提出不合理要求，用户内心抗拒但表面配合，处于被动防御状态",
+      "my_inner": "感到被冒犯但保持礼貌",
+      "other_inner": "试探对方的弹性"
+    }},
+    {{
+      "transcript_index": 7,
+      "speaker": "Speaker_0",
+      "image_prompt": "...",
+      "emotion": "...",
+      "subtext": "...",
+      "context": "...",
+      "my_inner": "...",
+      "other_inner": "..."
+    }}
+  ],
   "strategies": [
     {{
       "id": "s1",
@@ -1037,33 +1535,123 @@ async def generate_strategies(session_id: str):
         except Exception as e:
             logger.error(f"解析 Gemini 响应失败: {e}")
             logger.error(f"响应内容: {response.text}")
-            raise HTTPException(status_code=500, detail=f"解析策略分析结果失败: {str(e)}")
+            raise Exception(f"解析策略分析结果失败: {str(e)}")
         
         # 验证解析结果
         if not isinstance(analysis_data, dict):
             logger.error(f"解析结果不是字典类型: {type(analysis_data)}, 内容: {analysis_data}")
-            raise HTTPException(status_code=500, detail="策略分析结果格式错误")
+            raise Exception("策略分析结果格式错误")
         
         if "visual" not in analysis_data:
             logger.error(f"缺少 'visual' 字段，可用字段: {list(analysis_data.keys())}")
             logger.error(f"完整响应: {json.dumps(analysis_data, ensure_ascii=False, indent=2)}")
-            raise HTTPException(status_code=500, detail="策略分析结果缺少 'visual' 字段")
+            raise Exception("策略分析结果缺少 'visual' 字段")
         
         if "strategies" not in analysis_data:
             logger.error(f"缺少 'strategies' 字段，可用字段: {list(analysis_data.keys())}")
-            raise HTTPException(status_code=500, detail="策略分析结果缺少 'strategies' 字段")
+            raise Exception("策略分析结果缺少 'strategies' 字段")
         
-        # 构建Call2Response
+        # 处理 visual 数据（支持数组和单个对象两种格式）
+        visual_raw = analysis_data.get("visual")
+        
+        # 向后兼容：如果返回的是单个对象，转换为数组
+        if isinstance(visual_raw, dict):
+            logger.warning("收到单个 visual 对象，转换为数组格式以保持兼容")
+            visual_raw = [visual_raw]
+        elif not isinstance(visual_raw, list):
+            logger.error(f"visual 字段格式错误，期望数组或对象，实际类型: {type(visual_raw)}")
+            raise Exception("visual 字段必须是数组或对象")
+        
+        # 验证 visual 数组不为空
+        if len(visual_raw) == 0:
+            logger.warning("visual 数组为空，创建默认 visual")
+            # 创建默认 visual（使用第一个 transcript 项）
+            if transcript:
+                first_item = transcript[0]
+                visual_raw = [{
+                    "transcript_index": 0,
+                    "speaker": first_item.get("speaker", "Speaker_0"),
+                    "image_prompt": "米色背景，极简火柴人线稿。左侧为用户，右侧为对方。",
+                    "emotion": "未知",
+                    "subtext": "",
+                    "context": "对话开始",
+                    "my_inner": "",
+                    "other_inner": ""
+                }]
+            else:
+                raise Exception("visual 数组为空且无法创建默认值")
+        
+        # 验证关键时刻数量（2-5 个）
+        if len(visual_raw) > 5:
+            logger.warning(f"关键时刻数量过多 ({len(visual_raw)} 个)，只保留前 5 个")
+            visual_raw = visual_raw[:5]
+        elif len(visual_raw) < 2:
+            logger.warning(f"关键时刻数量较少 ({len(visual_raw)} 个)，建议至少 2 个")
+        
+        # 构建 VisualData 列表
+        visual_list = []
+        transcript_length = len(transcript)
+        
         try:
-            visual_data = VisualData(
-                image_prompt=analysis_data["visual"].get("image_prompt", ""),
-                my_inner=analysis_data["visual"].get("my_inner", ""),
-                other_inner=analysis_data["visual"].get("other_inner", "")
-            )
+            for idx, v in enumerate(visual_raw):
+                # 验证 transcript_index
+                transcript_index = v.get("transcript_index", idx)
+                if transcript_index < 0 or transcript_index >= transcript_length:
+                    logger.warning(f"transcript_index {transcript_index} 超出范围 (0-{transcript_length-1})，使用索引 {idx}")
+                    transcript_index = min(idx, transcript_length - 1) if transcript_length > 0 else 0
+                
+                # 获取对应的 transcript 项以获取 speaker
+                speaker = v.get("speaker", "")
+                if not speaker and transcript_length > 0:
+                    speaker = transcript[transcript_index].get("speaker", "Speaker_0")
+                
+                visual_data = VisualData(
+                    transcript_index=transcript_index,
+                    speaker=speaker,
+                    image_prompt=v.get("image_prompt", ""),
+                    emotion=v.get("emotion", ""),
+                    subtext=v.get("subtext", ""),
+                    context=v.get("context", ""),
+                    my_inner=v.get("my_inner", ""),
+                    other_inner=v.get("other_inner", "")
+                )
+                visual_list.append(visual_data)
         except Exception as e:
-            logger.error(f"构建 VisualData 失败: {e}")
-            logger.error(f"visual 数据: {analysis_data.get('visual')}")
-            raise HTTPException(status_code=500, detail=f"构建视觉数据失败: {str(e)}")
+            logger.error(f"构建 VisualData 列表失败: {e}")
+            logger.error(f"visual 数据: {visual_raw}")
+            logger.error(traceback.format_exc())
+            raise Exception(f"构建视觉数据失败: {str(e)}")
+        
+        # 为每个关键时刻生成图片
+        logger.info(f"========== 开始为 {len(visual_list)} 个关键时刻生成图片 ==========")
+        updated_visual_list = []
+        for idx, visual_data in enumerate(visual_list):
+            try:
+                logger.info(f"生成图片 {idx+1}/{len(visual_list)}: transcript_index={visual_data.transcript_index}, speaker={visual_data.speaker}")
+                image_result = generate_image_from_prompt(visual_data.image_prompt, user_id, session_id, idx)
+                if image_result:
+                    # 判断返回的是 URL 还是 Base64
+                    if image_result.startswith('http://') or image_result.startswith('https://'):
+                        # 是 URL，更新 image_url 字段
+                        updated_visual = visual_data.model_copy(update={"image_url": image_result})
+                        logger.info(f"✅ 图片 {idx+1} 生成成功，URL: {image_result}")
+                    else:
+                        # 是 Base64，更新 image_base64 字段（向后兼容）
+                        updated_visual = visual_data.model_copy(update={"image_base64": image_result})
+                        logger.info(f"✅ 图片 {idx+1} 生成成功，Base64 大小: {len(image_result)} 字符")
+                    updated_visual_list.append(updated_visual)
+                else:
+                    # 即使生成失败，也保留 visual_data
+                    updated_visual_list.append(visual_data)
+                    logger.warning(f"⚠️ 图片 {idx+1} 生成失败，保留 visual_data")
+            except Exception as e:
+                logger.error(f"❌ 生成图片 {idx+1} 时出错: {e}")
+                logger.error(traceback.format_exc())
+                # 即使出错，也保留 visual_data
+                updated_visual_list.append(visual_data)
+        
+        visual_list = updated_visual_list
+        logger.info(f"========== 图片生成完成 ==========")
         
         strategies_list = []
         try:
@@ -1078,19 +1666,139 @@ async def generate_strategies(session_id: str):
         except Exception as e:
             logger.error(f"构建策略列表失败: {e}")
             logger.error(f"strategies 数据: {analysis_data.get('strategies')}")
-            raise HTTPException(status_code=500, detail=f"构建策略列表失败: {str(e)}")
+            raise Exception(f"构建策略列表失败: {str(e)}")
         
         call2_result = Call2Response(
-            visual=visual_data,
+            visual=visual_list,
             strategies=strategies_list
         )
         
-        # 存储策略结果
+        # 保存策略分析到数据库
+        strategy_analysis = StrategyAnalysis(
+            session_id=uuid.UUID(session_id),
+            visual_data=[v.dict() for v in visual_list],
+            strategies=[s.dict() for s in strategies_list]
+        )
+        # 如果已存在则更新，否则创建
+        existing_query = await db.execute(
+            select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
+        )
+        existing = existing_query.scalar_one_or_none()
+        if existing:
+            existing.visual_data = [v.dict() for v in visual_list]
+            existing.strategies = [s.dict() for s in strategies_list]
+            await db.commit()
+            logger.info(f"策略分析已更新到数据库: {session_id}")
+        else:
+            db.add(strategy_analysis)
+            await db.commit()
+            logger.info(f"策略分析已保存到数据库: {session_id}")
+        
+        # 存储策略结果到内存（向后兼容）
+        if session_id not in analysis_storage:
+            analysis_storage[session_id] = {}
         if "call2" not in analysis_storage[session_id]:
             analysis_storage[session_id]["call2"] = {}
         analysis_storage[session_id]["call2"] = call2_result.dict()
         
-        logger.info(f"策略分析生成成功，策略数量: {len(strategies_list)}")
+        logger.info(f"策略分析生成成功")
+        logger.info(f"  - 关键时刻数量: {len(visual_list)}")
+        logger.info(f"  - 策略数量: {len(strategies_list)}")
+        for idx, v in enumerate(visual_list):
+            # 优先检查 image_url，如果没有则检查 image_base64
+            has_image = "✅" if (v.image_url or v.image_base64) else "❌"
+            image_type = "URL" if v.image_url else ("Base64" if v.image_base64 else "None")
+            logger.info(f"  - 关键时刻 {idx+1}: transcript_index={v.transcript_index}, speaker={v.speaker}, emotion={v.emotion}, 图片: {has_image} ({image_type})")
+        
+        return call2_result
+        
+    except Exception as e:
+        logger.error(f"生成策略失败: {e}")
+        logger.error(traceback.format_exc())
+        raise
+
+
+@app.post("/api/v1/tasks/sessions/{session_id}/strategies")
+async def generate_strategies(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """生成策略分析（Call #2）- 情商教练（需要JWT认证，仅能访问自己的任务）"""
+    from datetime import datetime
+    
+    try:
+        # 验证任务存在且属于当前用户
+        result = await db.execute(
+            select(Session).where(
+                Session.id == uuid.UUID(session_id),
+                Session.user_id == uuid.UUID(user_id)
+            )
+        )
+        db_session = result.scalar_one_or_none()
+        
+        if not db_session:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        
+        # 优先从数据库读取已生成的策略分析
+        strategy_query = await db.execute(
+            select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
+        )
+        existing_strategy = strategy_query.scalar_one_or_none()
+        
+        if existing_strategy and existing_strategy.visual_data and existing_strategy.strategies:
+            logger.info(f"从数据库读取已生成的策略分析: {session_id}")
+            # 构建返回数据
+            visual_list = []
+            for v in existing_strategy.visual_data:
+                visual_list.append(VisualData(**v))
+            
+            strategies_list = []
+            for s in existing_strategy.strategies:
+                strategies_list.append(StrategyItem(**s))
+            
+            call2_result = Call2Response(
+                visual=visual_list,
+                strategies=strategies_list
+            )
+            
+            return APIResponse(
+                code=200,
+                message="success",
+                data=call2_result.dict(),
+                timestamp=datetime.now().isoformat()
+            )
+        
+        # 如果数据库中没有，则生成新的策略分析
+        logger.info(f"数据库中没有策略分析，开始生成: {session_id}")
+        
+        # 从数据库查询分析结果
+        analysis_result_query = await db.execute(
+            select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+        )
+        analysis_result_db = analysis_result_query.scalar_one_or_none()
+        
+        if not analysis_result_db:
+            raise HTTPException(status_code=400, detail="分析结果不存在，请先完成音频分析")
+        
+        # 获取transcript
+        transcript = []
+        if analysis_result_db.transcript:
+            try:
+                transcript = json.loads(analysis_result_db.transcript) if isinstance(analysis_result_db.transcript, str) else analysis_result_db.transcript
+            except:
+                transcript = []
+        
+        # 向后兼容：从内存存储获取（如果数据库中没有）
+        analysis_result = analysis_storage.get(session_id, {})
+        if not transcript and analysis_result:
+            transcript = analysis_result.get("transcript", [])
+        
+        if not transcript:
+            raise HTTPException(status_code=400, detail="对话转录数据不存在，请先完成音频分析")
+        
+        # 调用核心策略生成逻辑
+        call2_result = await _generate_strategies_core(session_id, user_id, transcript, db)
         
         return APIResponse(
             code=200,
@@ -1105,6 +1813,143 @@ async def generate_strategies(session_id: str):
         logger.error(f"生成策略失败: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"生成策略失败: {str(e)}")
+
+
+@app.get("/api/v1/images/{session_id}/{image_index}")
+async def get_image(
+    session_id: str,
+    image_index: int,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    获取图片（通过后端 API 访问，支持私有 OSS bucket，需要JWT认证）
+    
+    注意：由于 OSS bucket 设置为私有，不能直接通过 OSS URL 访问图片。
+    必须通过此 API 接口访问，后端会从 OSS 获取图片并返回。
+    仅能访问属于当前用户的图片。
+    
+    Args:
+        session_id: 会话 ID
+        image_index: 图片索引
+        
+    Returns:
+        图片数据（PNG 格式）
+    """
+    try:
+        # 验证任务属于当前用户
+        result = await db.execute(
+            select(Session).where(
+                Session.id == uuid.UUID(session_id),
+                Session.user_id == uuid.UUID(user_id)
+            )
+        )
+        db_session = result.scalar_one_or_none()
+        
+        if not db_session:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        
+        # 如果 OSS 未启用，返回错误
+        if not USE_OSS or oss_bucket is None:
+            logger.warning("OSS 未启用，无法提供图片访问")
+            raise HTTPException(status_code=503, detail="Image service unavailable")
+        
+        # 构建 OSS 文件路径: images/{user_id}/{session_id}/{image_index}.png
+        oss_key = f"images/{user_id}/{session_id}/{image_index}.png"
+        
+        logger.info(f"获取图片: {oss_key}")
+        
+        try:
+            # 从 OSS 获取图片
+            start_time = time.time()
+            image_object = oss_bucket.get_object(oss_key)
+            image_data = image_object.read()
+            fetch_time = time.time() - start_time
+            
+            logger.info(f"✅ 图片获取成功，大小: {len(image_data)} 字节，耗时: {fetch_time:.2f} 秒")
+            
+            # 返回图片数据，设置缓存头
+            return Response(
+                content=image_data,
+                media_type="image/png",
+                headers={
+                    "Cache-Control": "public, max-age=3600",  # 缓存 1 小时
+                    "Content-Disposition": f'inline; filename="image_{image_index}.png"'
+                }
+            )
+            
+        except Exception as e:
+            error_msg = str(e)
+            if "NoSuchKey" in error_msg or "404" in error_msg:
+                logger.warning(f"图片不存在: {oss_key}")
+                raise HTTPException(status_code=404, detail="Image not found")
+            else:
+                logger.error(f"❌ 从 OSS 获取图片失败: {e}")
+                logger.error(traceback.format_exc())
+                raise HTTPException(status_code=500, detail="Failed to fetch image")
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ 获取图片时出错: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+def cleanup_old_images(days: int = 7):
+    """
+    清理过期的图片文件
+    
+    Args:
+        days: 保留天数，默认 7 天
+    """
+    if not USE_OSS or oss_bucket is None:
+        logger.warning("OSS 未启用，无法清理图片")
+        return
+    
+    try:
+        from datetime import datetime, timedelta
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        logger.info(f"开始清理 {days} 天前的图片文件...")
+        
+        # 列出所有图片文件
+        prefix = "images/"
+        deleted_count = 0
+        error_count = 0
+        
+        for obj in oss2.ObjectIterator(oss_bucket, prefix=prefix):
+            # 检查文件修改时间
+            if obj.last_modified < cutoff_date:
+                try:
+                    oss_bucket.delete_object(obj.key)
+                    deleted_count += 1
+                    logger.debug(f"删除文件: {obj.key}")
+                except Exception as e:
+                    error_count += 1
+                    logger.error(f"删除文件失败 {obj.key}: {e}")
+        
+        logger.info(f"✅ 清理完成: 删除 {deleted_count} 个文件，失败 {error_count} 个")
+        
+    except Exception as e:
+        logger.error(f"❌ 清理图片文件失败: {e}")
+        logger.error(traceback.format_exc())
+
+
+@app.get("/api/v1/admin/cleanup-images")
+async def cleanup_images_endpoint(days: int = Query(7, ge=1, le=30)):
+    """
+    清理过期图片的管理接口
+    
+    Args:
+        days: 保留天数，默认 7 天
+    """
+    try:
+        cleanup_old_images(days)
+        return {"message": f"清理完成，保留最近 {days} 天的图片", "status": "success"}
+    except Exception as e:
+        logger.error(f"清理图片失败: {e}")
+        raise HTTPException(status_code=500, detail=f"清理失败: {str(e)}")
 
 
 @app.get("/test-gemini")
@@ -1131,6 +1976,29 @@ async def test_gemini():
             "message": "Gemini 3 Flash API 连接失败",
             "error": error_msg
         }
+
+
+@app.on_event("startup")
+async def startup_event():
+    """应用启动时初始化数据库"""
+    try:
+        logger.info("正在初始化数据库...")
+        await init_db()
+        logger.info("✅ 数据库初始化完成")
+    except Exception as e:
+        logger.error(f"❌ 数据库初始化失败: {e}")
+        logger.error(traceback.format_exc())
+        # 不阻止应用启动，允许在没有数据库的情况下运行（向后兼容）
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时清理数据库连接"""
+    try:
+        await close_db()
+        logger.info("✅ 数据库连接已关闭")
+    except Exception as e:
+        logger.error(f"关闭数据库连接时出错: {e}")
 
 
 if __name__ == "__main__":

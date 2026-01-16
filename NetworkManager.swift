@@ -14,13 +14,13 @@ class NetworkManager {
     // ⚠️ 重要：修改为你的后端 API 地址
     // 如果后端运行在本地，使用：http://localhost:8001/api/v1
     // 如果后端运行在服务器，使用：http://your-server-ip:8001/api/v1
-    private let baseURL = "http://localhost:8001/api/v1"
+    private let baseURL = "http://47.79.254.213:8001/api/v1"
     
     private init() {}
     
-    // 获取认证 Token（暂时返回空字符串，后续实现登录后添加）
+    // 获取认证 Token（从Keychain读取）
     private func getAuthToken() -> String {
-        return UserDefaults.standard.string(forKey: "auth_token") ?? ""
+        return KeychainManager.shared.getToken() ?? ""
     }
     
     // 获取任务列表
@@ -73,8 +73,18 @@ class NetworkManager {
         fileURL: URL,
         sessionId: String? = nil
     ) async throws -> UploadResponse {
-        let response = try await AF.upload(
+        print("🌐 [NetworkManager] ========== 上传音频 ==========")
+        print("🌐 [NetworkManager] 文件路径: \(fileURL.path)")
+        print("🌐 [NetworkManager] 文件是否存在: \(FileManager.default.fileExists(atPath: fileURL.path))")
+        print("🌐 [NetworkManager] 使用真实 API 上传音频")
+        print("🌐 [NetworkManager] API 地址: \(baseURL)/audio/upload")
+        
+        let uploadTask = AF.upload(
             multipartFormData: { multipartFormData in
+                print("📤 [NetworkManager] 添加文件到 multipart form data")
+                print("   - 文件名: \(fileURL.lastPathComponent)")
+                print("   - MIME 类型: audio/m4a")
+                
                 // 添加文件
                 multipartFormData.append(
                     fileURL,
@@ -97,18 +107,82 @@ class NetworkManager {
                 "Authorization": "Bearer \(getAuthToken())"
             ]
         )
-        .serializingDecodable(APIResponse<UploadResponse>.self)
-        .value
         
-        guard response.code == 200, let data = response.data else {
-            throw NSError(
-                domain: "NetworkError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
-            )
+        // 添加上传进度监听
+        uploadTask.uploadProgress { progress in
+            let percentage = Int(progress.fractionCompleted * 100)
+            print("📤 [NetworkManager] 上传进度: \(percentage)%")
         }
         
-        return data
+        // 先获取原始响应数据用于调试
+        let dataTask = uploadTask.serializingData()
+        
+        do {
+            let data = try await dataTask.value
+            let httpResponse = try await dataTask.response
+            
+            print("📥 [NetworkManager] 收到响应")
+            print("📥 [NetworkManager] 状态码: \(httpResponse.statusCode)")
+            print("📥 [NetworkManager] 响应头: \(httpResponse.headers)")
+            print("📥 [NetworkManager] 响应数据长度: \(data.count) 字节")
+            
+            if data.isEmpty {
+                print("❌ [NetworkManager] 响应数据为空")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: -1,
+                    userInfo: [NSLocalizedDescriptionKey: "服务器返回空响应"]
+                )
+            }
+            
+            // 打印原始响应字符串（用于调试）
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📥 [NetworkManager] 响应内容: \(responseString)")
+            }
+            
+            // 尝试解析 JSON
+            let decoder = JSONDecoder()
+            let apiResponse = try decoder.decode(APIResponse<UploadResponse>.self, from: data)
+            
+            print("✅ [NetworkManager] JSON 解析成功")
+            print("✅ [NetworkManager] 响应码: \(apiResponse.code)")
+            print("✅ [NetworkManager] 响应消息: \(apiResponse.message)")
+            
+            guard apiResponse.code == 200, let uploadData = apiResponse.data else {
+                print("❌ [NetworkManager] 响应码不是 200 或 data 为空")
+                print("❌ [NetworkManager] code: \(apiResponse.code), message: \(apiResponse.message)")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: apiResponse.code,
+                    userInfo: [NSLocalizedDescriptionKey: apiResponse.message]
+                )
+            }
+            
+            print("✅ [NetworkManager] 上传成功，session_id: \(uploadData.sessionId)")
+            return uploadData
+            
+        } catch let error as DecodingError {
+            print("❌ [NetworkManager] JSON 解析失败")
+            print("❌ [NetworkManager] 错误类型: DecodingError")
+            print("❌ [NetworkManager] 错误详情: \(error)")
+            
+            // 尝试打印原始响应以便调试
+            if let data = try? await dataTask.value,
+               let responseString = String(data: data, encoding: .utf8) {
+                print("❌ [NetworkManager] 原始响应: \(responseString)")
+            }
+            
+            throw NSError(
+                domain: "NetworkError",
+                code: -2,
+                userInfo: [NSLocalizedDescriptionKey: "响应解析失败: \(error.localizedDescription)"]
+            )
+        } catch {
+            print("❌ [NetworkManager] 上传失败")
+            print("❌ [NetworkManager] 错误类型: \(type(of: error))")
+            print("❌ [NetworkManager] 错误信息: \(error.localizedDescription)")
+            throw error
+        }
     }
 }
 

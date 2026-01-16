@@ -1,0 +1,37 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "Ld123456"
+set host "admin@47.79.254.213"
+
+spawn ssh -o StrictHostKeyChecking=no $host
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Permission denied" {
+        send_user "❌ 密码错误或权限被拒绝\n"
+        exit 1
+    }
+    "$ " {
+        send_user "✅ 连接成功\n"
+    }
+    "# " {
+        send_user "✅ 连接成功\n"
+    }
+    timeout {
+        send_user "❌ 连接超时\n"
+        exit 1
+    }
+}
+
+# 执行命令
+send "cd ~/gemini-audio-service && pwd\r"
+expect {
+    "$ " {}
+    "# " {}
+}
+
+send "exit\r"
+expect eof

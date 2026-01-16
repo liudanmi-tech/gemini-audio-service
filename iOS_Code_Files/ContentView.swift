@@ -1,49 +1,59 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var authManager = AuthManager.shared
     @State private var selectedTab: TabItem = .fragments
     @StateObject private var recordingViewModel = RecordingViewModel()
     
     var body: some View {
-        NavigationStack {
-            ZStack {
-                AppColors.background
-                    .ignoresSafeArea()
-                
-                VStack(spacing: 0) {
-                    // 主内容区域
+        Group {
+            if authManager.isLoggedIn {
+                NavigationStack {
                     ZStack {
-                        // 根据选中的Tab显示不同内容
-                        Group {
-                            switch selectedTab {
-                            case .fragments:
-                                TaskListView()
-                            case .status:
-                                StatusView()
-                            case .mine:
-                                MineView()
-                            }
-                        }
+                        AppColors.background
+                            .ignoresSafeArea()
                         
-                        // 录音按钮（只在碎片页面显示）
-                        if selectedTab == .fragments {
-                            VStack {
-                                Spacer()
-                                HStack {
-                                    Spacer()
-                                    RecordingButtonView(viewModel: recordingViewModel)
-                                        .padding(.trailing, 0)
-                                        .padding(.bottom, 100) // 位于底部导航栏上方
+                        VStack(spacing: 0) {
+                            // 主内容区域
+                            ZStack {
+                                // 根据选中的Tab显示不同内容
+                                Group {
+                                    switch selectedTab {
+                                    case .fragments:
+                                        TaskListView()
+                                    case .status:
+                                        StatusView()
+                                    case .mine:
+                                        MineView()
+                                    }
+                                }
+                                
+                                // 录音按钮（只在碎片页面显示）
+                                if selectedTab == .fragments {
+                                    VStack {
+                                        Spacer()
+                                        HStack {
+                                            Spacer()
+                                            RecordingButtonView(viewModel: recordingViewModel)
+                                                .padding(.trailing, 0)
+                                                .padding(.bottom, 100) // 位于底部导航栏上方
+                                        }
+                                    }
                                 }
                             }
+                            
+                            // 底部导航栏
+                            BottomNavView(selectedTab: $selectedTab)
                         }
                     }
-                    
-                    // 底部导航栏
-                    BottomNavView(selectedTab: $selectedTab)
+                    .navigationBarHidden(true)
                 }
+            } else {
+                LoginView()
             }
-            .navigationBarHidden(true)
+        }
+        .onAppear {
+            authManager.checkLoginStatus()
         }
     }
 }

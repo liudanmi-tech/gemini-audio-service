@@ -1,0 +1,103 @@
+#!/usr/bin/expect -f
+
+set timeout 60
+set password "Ld123456"
+set host "admin@47.79.254.213"
+
+spawn ssh -o StrictHostKeyChecking=no $host
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Permission denied" {
+        send_user "❌ 密码错误或权限被拒绝\n"
+        exit 1
+    }
+    "$ " {
+        send_user "✅ 连接成功\n"
+    }
+    "# " {
+        send_user "✅ 连接成功\n"
+    }
+    timeout {
+        send_user "❌ 连接超时\n"
+        exit 1
+    }
+}
+
+# 切换到项目目录
+send "cd ~/gemini-audio-service && source venv/bin/activate\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+}
+
+# 发送验证码
+send_user "\n=== 步骤1: 发送验证码 ===\n"
+send "curl -s -X POST \"http://localhost:8001/api/v1/auth/send-code\" -H \"Content-Type: application/json\" -d '{\"phone\": \"13800138000\"}' | python3 -m json.tool\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+}
+
+# 等待2秒
+send "sleep 2\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+}
+
+# 登录获取Token
+send_user "\n=== 步骤2: 登录获取Token ===\n"
+send "LOGIN_RESPONSE=\$(curl -s -X POST \"http://localhost:8001/api/v1/auth/login\" -H \"Content-Type: application/json\" -d '{\"phone\": \"13800138000\", \"code\": \"123456\"}') && echo \"\$LOGIN_RESPONSE\" | python3 -m json.tool\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+}
+
+send "TOKEN=\$(echo \"\$LOGIN_RESPONSE\" | python3 -c \"import sys, json; print(json.load(sys.stdin).get('data', {}).get('token', ''))\" 2>/dev/null) && echo \"Token: \${TOKEN:0:20}...\"\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+}
+
+# 获取任务列表
+send_user "\n=== 步骤3: 获取任务列表 ===\n"
+send "TASK_LIST=\$(curl -s -X GET \"http://localhost:8001/api/v1/tasks/sessions?page=1&page_size=1\" -H \"Authorization: Bearer \$TOKEN\") && SESSION_ID=\$(echo \"\$TASK_LIST\" | python3 -c \"import sys, json; data=json.load(sys.stdin); sessions=data.get('data', {}).get('sessions', []); print(sessions[0]['session_id'] if sessions else '')\" 2>/dev/null) && if [ -z \"\$SESSION_ID\" ]; then SESSION_ID=\"6576aab2-e536-4ab8-94b9-50aa86438b21\"; fi && echo \"Session ID: \$SESSION_ID\"\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+}
+
+# 测试任务详情接口
+send_user "\n=== 步骤4: 测试任务详情接口（带超时）===\n"
+send "time curl -s --max-time 30 -X GET \"http://localhost:8001/api/v1/tasks/sessions/\$SESSION_ID\" -H \"Authorization: Bearer \$TOKEN\" | python3 -m json.tool | head -50\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+    timeout {
+        send_user "\n⚠️ 请求超时（30秒）\n"
+    }
+}
+
+# 检查服务器日志
+send_user "\n=== 步骤5: 检查服务器日志 ===\n"
+send "tail -50 ~/gemini-audio-service.log | grep -E \"ERROR|错误|任务详情|get_task_detail\" | tail -10\r"
+expect {
+    "$ " {}
+    "# " {}
+    "(venv)" {}
+}
+
+send "exit\r"
+expect eof
+
+send_user "\n========== 测试完成 ==========\n"

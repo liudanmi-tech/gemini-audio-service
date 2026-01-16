@@ -1,0 +1,23 @@
+# 服务器重启命令（在服务器上执行）
+
+## 步骤 1: SSH 到服务器
+```bash
+ssh admin@47.79.254.213
+```
+
+## 步骤 2: 在服务器上执行重启命令
+```bash
+cd ~/gemini-audio-service && \
+pkill -f 'python.*main.py' && \
+sleep 2 && \
+nohup python3 main.py > ~/gemini-audio-service.log 2>&1 & \
+sleep 3 && \
+ps aux | grep 'python.*main.py' | grep -v grep && \
+echo "✅ 服务已重启" && \
+curl -s http://localhost:8001/health | python3 -m json.tool || echo "健康检查失败"
+```
+
+## 步骤 3: 查看日志确认
+```bash
+tail -30 ~/gemini-audio-service.log
+```

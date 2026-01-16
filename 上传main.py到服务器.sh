@@ -1,27 +1,25 @@
 #!/bin/bash
-# 上传 main.py 到服务器（使用 base64 编码）
 
-echo "📤 开始上传 main.py 到服务器..."
+# 从本地Mac上传main.py到服务器
+# 使用方法: ./上传main.py到服务器.sh
 
-# 读取文件并 base64 编码
-ENCODED=$(python3 -c "import base64; print(base64.b64encode(open('main.py', 'rb').read()).decode('utf-8'))")
+echo "=== 上传main.py到服务器 ==="
+scp main.py admin@47.79.254.213:~/gemini-audio-service/
 
-# 在服务器上解码并写入文件
-ssh admin@47.79.254.213 << EOF
-cd ~/gemini-audio-service
-cp main.py main.py.backup6
-python3 -c "
-import base64
-content = base64.b64decode('$ENCODED').decode('utf-8')
-with open('main.py', 'w', encoding='utf-8') as f:
-    f.write(content)
-print('✅ 文件已写入')
-import py_compile
-py_compile.compile('main.py', doraise=True)
-print('✅ 语法检查通过')
-"
-EOF
-
-echo "✅ 上传完成！"
-
-
+if [ $? -eq 0 ]; then
+    echo "✅ 上传成功"
+    echo ""
+    echo "=== 在服务器上重启服务 ==="
+    echo "请在服务器上执行以下命令："
+    echo ""
+    echo "cd ~/gemini-audio-service"
+    echo "source venv/bin/activate"
+    echo "pkill -f 'python.*main.py'"
+    echo "sleep 2"
+    echo "nohup python3 main.py > ~/gemini-audio-service.log 2>&1 &"
+    echo "sleep 5"
+    echo "ps aux | grep '[p]ython.*main.py'"
+else
+    echo "❌ 上传失败"
+    exit 1
+fi

@@ -1,0 +1,77 @@
+#!/usr/bin/expect -f
+
+set timeout 30
+set password "Ld123456"
+set host "admin@47.79.254.213"
+
+# 上传脚本
+spawn scp 服务器测试脚本.sh $host:~/gemini-audio-service/
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Permission denied" {
+        send_user "❌ 密码错误或权限被拒绝\n"
+        exit 1
+    }
+    "100%" {
+        send_user "✅ 脚本上传成功\n"
+    }
+    eof {
+        send_user "✅ 脚本上传完成\n"
+    }
+    timeout {
+        send_user "❌ 上传超时\n"
+        exit 1
+    }
+}
+
+# 连接服务器并执行测试
+spawn ssh -o StrictHostKeyChecking=no $host
+expect {
+    "password:" {
+        send "$password\r"
+        exp_continue
+    }
+    "Permission denied" {
+        send_user "❌ 密码错误或权限被拒绝\n"
+        exit 1
+    }
+    "$ " {
+        send_user "✅ 连接成功\n"
+    }
+    "# " {
+        send_user "✅ 连接成功\n"
+    }
+    timeout {
+        send_user "❌ 连接超时\n"
+        exit 1
+    }
+}
+
+# 执行测试脚本
+send "cd ~/gemini-audio-service && chmod +x 服务器测试脚本.sh && bash 服务器测试脚本.sh\r"
+expect {
+    "$ " {}
+    "# " {}
+    timeout {
+        send_user "⚠️ 测试执行中...\n"
+    }
+}
+
+# 等待测试完成
+expect {
+    "========== 测试完成 ==========" {
+        send_user "✅ 测试完成\n"
+    }
+    "$ " {
+        send_user "测试脚本执行完成\n"
+    }
+    timeout {
+        send_user "⚠️ 测试可能还在执行中\n"
+    }
+}
+
+send "exit\r"
+expect eof

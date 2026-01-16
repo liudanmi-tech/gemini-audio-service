@@ -56,8 +56,54 @@ struct TaskDetailView: View {
     }
     
     private func loadTaskDetail() {
-        // TODO: 实现加载任务详情的逻辑
-        isLoading = false
+        Task {
+            do {
+                isLoading = true
+                print("📋 [TaskDetailView] 开始加载任务详情，taskId: \(taskId)")
+                
+                let detail = try await NetworkManager.shared.getTaskDetail(sessionId: taskId)
+                
+                print("✅ [TaskDetailView] 任务详情加载成功")
+                print("   标题: \(detail.title)")
+                print("   状态: \(detail.status)")
+                print("   对话数量: \(detail.dialogues.count)")
+                print("   风险点数量: \(detail.risks.count)")
+                
+                // 转换为Task模型（用于显示）
+                let dateFormatter = ISO8601DateFormatter()
+                dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                
+                let startTime = dateFormatter.date(from: detail.startTime) ?? Date()
+                let endTime = detail.endTime != nil ? dateFormatter.date(from: detail.endTime!) : nil
+                
+                let taskStatus = TaskStatus(rawValue: detail.status) ?? .archived
+                
+                await MainActor.run {
+                    self.task = Task(
+                        id: detail.sessionId,
+                        title: detail.title,
+                        startTime: startTime,
+                        endTime: endTime,
+                        duration: detail.duration,
+                        tags: detail.tags,
+                        status: taskStatus,
+                        emotionScore: detail.emotionScore,
+                        speakerCount: detail.speakerCount
+                    )
+                    self.isLoading = false
+                }
+            } catch {
+                print("❌ [TaskDetailView] 加载任务详情失败: \(error.localizedDescription)")
+                if let nsError = error as NSError? {
+                    print("   错误域: \(nsError.domain)")
+                    print("   错误码: \(nsError.code)")
+                }
+                
+                await MainActor.run {
+                    self.isLoading = false
+                }
+            }
+        }
     }
     
     private func emotionColor(for score: Int) -> Color {

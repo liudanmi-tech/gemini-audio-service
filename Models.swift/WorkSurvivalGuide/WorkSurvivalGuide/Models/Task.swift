@@ -225,6 +225,39 @@ struct TaskDetailResponse: Codable {
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
     }
+    
+    // 便利初始化方法（用于创建临时详情）
+    init(
+        sessionId: String,
+        title: String,
+        startTime: Date,
+        endTime: Date?,
+        duration: Int,
+        tags: [String],
+        status: String,
+        emotionScore: Int?,
+        speakerCount: Int?,
+        dialogues: [DialogueItem],
+        risks: [String],
+        summary: String?,
+        createdAt: String,
+        updatedAt: String
+    ) {
+        self.sessionId = sessionId
+        self.title = title
+        self.startTime = startTime
+        self.endTime = endTime
+        self.duration = duration
+        self.tags = tags
+        self.status = status
+        self.emotionScore = emotionScore
+        self.speakerCount = speakerCount
+        self.dialogues = dialogues
+        self.risks = risks
+        self.summary = summary
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 // 对话项（用于详情）

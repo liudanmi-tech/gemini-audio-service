@@ -214,7 +214,7 @@ class RecordingViewModel: ObservableObject {
         
         Task {
             var pollCount = 0
-            let maxPolls = 60  // 最多轮询 60 次（3分钟）
+            let maxPolls = 120  // 最多轮询 120 次（6分钟，因为音频分析可能需要更长时间）
             
             while pollCount < maxPolls {
                 do {
@@ -229,7 +229,8 @@ class RecordingViewModel: ObservableObject {
                     print("   - progress: \(status.progress)")
                     print("   - estimatedTimeRemaining: \(status.estimatedTimeRemaining)")
                     
-                    if status.status == "archived" {
+                    // 处理完成状态
+                    if status.status == "archived" || status.status == "completed" {
                         print("✅ [RecordingViewModel] 分析完成！获取详情...")
                         // 分析完成，获取详情并更新
                         let detail = try await networkManager.getTaskDetail(sessionId: sessionId)
@@ -265,17 +266,43 @@ class RecordingViewModel: ObservableObject {
                         break
                     }
                     
+                    // 处理失败状态
+                    if status.status == "failed" {
+                        print("❌ [RecordingViewModel] 分析失败")
+                        await MainActor.run {
+                            print("📢 [RecordingViewModel] 发送 TaskAnalysisFailed 通知")
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("TaskAnalysisFailed"),
+                                object: sessionId,
+                                userInfo: ["message": "音频分析失败，请重试"]
+                            )
+                        }
+                        break
+                    }
+                    
                     pollCount += 1
                 } catch {
                     print("❌ [RecordingViewModel] 轮询状态失败:")
                     print("   - 错误类型: \(type(of: error))")
                     print("   - 错误信息: \(error.localizedDescription)")
-                    break
+                    // 继续轮询，不要立即退出
+                    pollCount += 1
+                    if pollCount >= maxPolls {
+                        break
+                    }
                 }
             }
             
             if pollCount >= maxPolls {
                 print("⏰ [RecordingViewModel] 轮询超时（已达到最大次数）")
+                await MainActor.run {
+                    print("📢 [RecordingViewModel] 发送 TaskAnalysisTimeout 通知")
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("TaskAnalysisTimeout"),
+                        object: sessionId,
+                        userInfo: ["message": "分析超时，请稍后查看任务状态"]
+                    )
+                }
             }
         }
     }
