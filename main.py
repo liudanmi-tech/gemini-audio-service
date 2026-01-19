@@ -48,12 +48,22 @@ app = FastAPI(title="音频分析服务", description="通过 Gemini API 分析�
 from api.auth import router as auth_router
 app.include_router(auth_router)
 
+# 注册技能管理路由
+from api.skills import router as skills_router
+app.include_router(skills_router)
+
 # 导入数据库相关
 from database.connection import get_db, init_db, close_db
-from database.models import User, Session, AnalysisResult, StrategyAnalysis
+from database.models import User, Session, AnalysisResult, StrategyAnalysis, Skill, SkillExecution
 from auth.jwt_handler import get_current_user_id, get_current_user
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# 导入技能模块
+from skills.router import classify_scene, match_skills
+from skills.registry import get_skill, initialize_skills
+from skills.executor import execute_skill
+from skills.composer import compose_results
 
 # 配置 Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -1439,195 +1449,137 @@ async def generate_strategies_async(session_id: str, user_id: str):
 
 
 async def _generate_strategies_core(session_id: str, user_id: str, transcript: list, db: AsyncSession):
-    """策略生成核心逻辑（供异步函数和接口共用）"""
+    """策略生成核心逻辑（v0.4 技能化架构）"""
     from datetime import datetime
+    import asyncio
     
     try:
-        # 构建提示词（使用需求文档中的提示词B）
-        prompt = """角色: 你是一位精通博弈论、职场心理学与视觉修辞的深度沟通专家。
-
-任务: 基于 Call #1 提供的对话转录音本，深入拆解双方的权力动态，并提供具备实战价值的应对策略与视觉化方案。
-
-核心指令:
-1. **博弈剖析**: 洞察对话文本背后的「权力位阶」与「隐性诉求」。
-2. **自主策略研判**: **请勿使用固定分类**。请根据具体场景（如：需求加塞、情感勒索、沟通僵局），自主研判 3 种最具破局可能性的应对路径。每种策略需给出独特的 `label`（如：借力打力、柔性边界、认知对齐）。
-3. **视觉建模**: 识别对话中的关键时刻（如情绪转折、冲突爆发、重要决策等），为每个关键时刻设计详细的火柴人绘图描述词。
-   - **关键时刻识别**: 从对话转录中识别 2-5 个关键时刻，这些时刻应该能代表对话的核心冲突、情绪变化或重要转折点。
-   - **构图规则**: 米色背景，极简火柴人线稿，左侧为用户，右侧为对方。
-   - **详细要求**: 每个 `image_prompt` 必须包含：
-     * 说话人位置和身份标注（明确标注左侧是用户，右侧是对方）
-     * 说话人情绪表现（通过肢体语言、表情、姿态展现，如：耸肩、对峙、闪躲、前倾、后仰等）
-     * 潜台词暗示（通过细微动作体现，如：眼神闪躲、手指敲击、身体转向等）
-     * 当时的情景或心理状态描述（描述对话发生的具体情境和双方的心理状态）
-   - **心理 OS**: 分别提炼出双方在此刻「想说但没说出口」的内心暗示语 (my_inner, other_inner)。
-
-参数定义:
-- **strategies**: 数组，每个策略包含 `id` (策略ID), `label` (风格标签), `emoji`, `title` (策略标题), `content` (Markdown 格式的详细建议与话术)。
-- **visual**: 数组，包含 2-5 个关键时刻的视觉数据。每个元素包含：
-  * `transcript_index`: 关联的 transcript 数组索引（从 0 开始）
-  * `speaker`: 说话人标识（如 "Speaker_0" 或 "Speaker_1"）
-  * `image_prompt`: 详细的火柴人绘图描述词（必须包含说话人标注、情绪表现、潜台词暗示、情景描述）
-  * `emotion`: 说话人情绪（如：紧张、防御、愤怒、轻松等）
-  * `subtext`: 潜台词（说话人真正想表达但没说出口的意思）
-  * `context`: 当时的情景或心理状态（描述对话发生的具体情境）
-  * `my_inner`: 我的内心OS（用户想说但没说出口的话）
-  * `other_inner`: 对方的内心OS（对方想说但没说出口的话）
-
-要求: 必须以纯 JSON 形式返回，确保结构能直接驱动前端渲染。
-
-返回格式:
-{{
-  "visual": [
-    {{
-      "transcript_index": 3,
-      "speaker": "Speaker_1",
-      "image_prompt": "米色背景，极简火柴人线稿。左侧为用户（Speaker_1），标注'我'，身体微微后倾，双手交叉胸前，表情略显紧张，眼神看向右侧但不敢直视，手指在胸前轻敲，显示出内心的不安和防御。右侧为对方（Speaker_0），标注'对方'，身体前倾，右手指向左侧，表情严肃，显示出强势和施压的姿态。整体场景：办公室环境，双方隔着办公桌对峙，氛围紧张。",
-      "emotion": "紧张、防御",
-      "subtext": "感到被冒犯但试图保持礼貌",
-      "context": "对方提出不合理要求，用户内心抗拒但表面配合，处于被动防御状态",
-      "my_inner": "感到被冒犯但保持礼貌",
-      "other_inner": "试探对方的弹性"
-    }},
-    {{
-      "transcript_index": 7,
-      "speaker": "Speaker_0",
-      "image_prompt": "...",
-      "emotion": "...",
-      "subtext": "...",
-      "context": "...",
-      "my_inner": "...",
-      "other_inner": "..."
-    }}
-  ],
-  "strategies": [
-    {{
-      "id": "s1",
-      "label": "策略标签",
-      "emoji": "⚔️",
-      "title": "策略标题",
-      "content": "### 建议话术\\n1. **心理逻辑**: ...\\n2. **推荐话术**: '...'"
-    }}
-  ]
-}}
-
-对话转录:
-{{transcript_json}}
-"""
-        
-        transcript_json = json.dumps(transcript, ensure_ascii=False, indent=2)
-        prompt = prompt.format(transcript_json=transcript_json)
-        
-        # 调用Gemini模型
-        model_name = 'gemini-3-flash-preview'
-        model = genai.GenerativeModel(model_name)
-        
-        logger.info(f"========== 开始生成策略分析 ==========")
+        logger.info(f"========== 开始生成策略分析（v0.4 技能化架构） ==========")
         logger.info(f"session_id: {session_id}")
-        logger.info(f"模型: {model_name}")
         
-        response = model.generate_content(prompt)
+        # 1. 场景识别（Router Agent）
+        logger.info("========== 步骤 1: 场景识别 ==========")
+        model = genai.GenerativeModel('gemini-3-flash-preview')
+        scene_result = classify_scene(transcript, model)
+        primary_scene = scene_result.get("primary_scene", "other")
+        scenes = scene_result.get("scenes", [])
         
-        logger.info(f"Gemini 响应长度: {len(response.text)} 字符")
-        logger.debug(f"Gemini 响应内容: {response.text[:1000]}...")  # 记录前1000字符
+        logger.info(f"场景识别完成: primary_scene={primary_scene}")
+        for scene in scenes:
+            logger.info(f"  - {scene.get('category')}: {scene.get('confidence', 0):.2f}")
         
-        try:
-            analysis_data = parse_gemini_response(response.text)
-        except Exception as e:
-            logger.error(f"解析 Gemini 响应失败: {e}")
-            logger.error(f"响应内容: {response.text}")
-            raise Exception(f"解析策略分析结果失败: {str(e)}")
+        # 2. 技能匹配
+        logger.info("========== 步骤 2: 技能匹配 ==========")
+        matched_skills = await match_skills(scene_result, db)
         
-        # 验证解析结果
-        if not isinstance(analysis_data, dict):
-            logger.error(f"解析结果不是字典类型: {type(analysis_data)}, 内容: {analysis_data}")
-            raise Exception("策略分析结果格式错误")
-        
-        if "visual" not in analysis_data:
-            logger.error(f"缺少 'visual' 字段，可用字段: {list(analysis_data.keys())}")
-            logger.error(f"完整响应: {json.dumps(analysis_data, ensure_ascii=False, indent=2)}")
-            raise Exception("策略分析结果缺少 'visual' 字段")
-        
-        if "strategies" not in analysis_data:
-            logger.error(f"缺少 'strategies' 字段，可用字段: {list(analysis_data.keys())}")
-            raise Exception("策略分析结果缺少 'strategies' 字段")
-        
-        # 处理 visual 数据（支持数组和单个对象两种格式）
-        visual_raw = analysis_data.get("visual")
-        
-        # 向后兼容：如果返回的是单个对象，转换为数组
-        if isinstance(visual_raw, dict):
-            logger.warning("收到单个 visual 对象，转换为数组格式以保持兼容")
-            visual_raw = [visual_raw]
-        elif not isinstance(visual_raw, list):
-            logger.error(f"visual 字段格式错误，期望数组或对象，实际类型: {type(visual_raw)}")
-            raise Exception("visual 字段必须是数组或对象")
-        
-        # 验证 visual 数组不为空
-        if len(visual_raw) == 0:
-            logger.warning("visual 数组为空，创建默认 visual")
-            # 创建默认 visual（使用第一个 transcript 项）
-            if transcript:
-                first_item = transcript[0]
-                visual_raw = [{
-                    "transcript_index": 0,
-                    "speaker": first_item.get("speaker", "Speaker_0"),
-                    "image_prompt": "米色背景，极简火柴人线稿。左侧为用户，右侧为对方。",
-                    "emotion": "未知",
-                    "subtext": "",
-                    "context": "对话开始",
-                    "my_inner": "",
-                    "other_inner": ""
+        if not matched_skills:
+            logger.warning("未匹配到任何技能，使用默认技能")
+            # 使用 workplace_jungle 作为默认技能
+            default_skill = await get_skill("workplace_jungle", db)
+            if default_skill:
+                matched_skills = [{
+                    "skill_id": "workplace_jungle",
+                    "name": default_skill["name"],
+                    "category": default_skill["category"],
+                    "priority": default_skill["priority"],
+                    "confidence": 0.5
                 }]
             else:
-                raise Exception("visual 数组为空且无法创建默认值")
+                raise Exception("未匹配到技能且默认技能不存在")
         
-        # 验证关键时刻数量（2-5 个）
-        if len(visual_raw) > 5:
-            logger.warning(f"关键时刻数量过多 ({len(visual_raw)} 个)，只保留前 5 个")
-            visual_raw = visual_raw[:5]
-        elif len(visual_raw) < 2:
-            logger.warning(f"关键时刻数量较少 ({len(visual_raw)} 个)，建议至少 2 个")
+        logger.info(f"匹配到 {len(matched_skills)} 个技能")
+        for skill in matched_skills:
+            logger.info(f"  ✅ 技能: {skill['skill_id']} (名称: {skill.get('name', 'N/A')}, priority={skill['priority']}, confidence={skill['confidence']:.2f})")
         
-        # 构建 VisualData 列表
-        visual_list = []
-        transcript_length = len(transcript)
+        # 3. 技能执行（并行执行所有匹配的技能）
+        logger.info("========== 步骤 3: 技能执行 ==========")
+        skill_results = []
+        context = {
+            "session_id": session_id,
+            "user_id": user_id
+        }
         
-        try:
-            for idx, v in enumerate(visual_raw):
-                # 验证 transcript_index
-                transcript_index = v.get("transcript_index", idx)
-                if transcript_index < 0 or transcript_index >= transcript_length:
-                    logger.warning(f"transcript_index {transcript_index} 超出范围 (0-{transcript_length-1})，使用索引 {idx}")
-                    transcript_index = min(idx, transcript_length - 1) if transcript_length > 0 else 0
-                
-                # 获取对应的 transcript 项以获取 speaker
-                speaker = v.get("speaker", "")
-                if not speaker and transcript_length > 0:
-                    speaker = transcript[transcript_index].get("speaker", "Speaker_0")
-                
-                visual_data = VisualData(
-                    transcript_index=transcript_index,
-                    speaker=speaker,
-                    image_prompt=v.get("image_prompt", ""),
-                    emotion=v.get("emotion", ""),
-                    subtext=v.get("subtext", ""),
-                    context=v.get("context", ""),
-                    my_inner=v.get("my_inner", ""),
-                    other_inner=v.get("other_inner", "")
-                )
-                visual_list.append(visual_data)
-        except Exception as e:
-            logger.error(f"构建 VisualData 列表失败: {e}")
-            logger.error(f"visual 数据: {visual_raw}")
-            logger.error(traceback.format_exc())
-            raise Exception(f"构建视觉数据失败: {str(e)}")
-        
-        # 为每个关键时刻生成图片
-        logger.info(f"========== 开始为 {len(visual_list)} 个关键时刻生成图片 ==========")
-        updated_visual_list = []
-        for idx, visual_data in enumerate(visual_list):
+        # 并行执行所有技能
+        execution_tasks = []
+        for matched_skill in matched_skills:
+            skill_id = matched_skill["skill_id"]
             try:
-                logger.info(f"生成图片 {idx+1}/{len(visual_list)}: transcript_index={visual_data.transcript_index}, speaker={visual_data.speaker}")
+                # 获取完整技能信息（包含 prompt_template）
+                skill = await get_skill(skill_id, db)
+                if not skill:
+                    logger.warning(f"技能不存在: {skill_id}")
+                    continue
+                
+                # 添加匹配信息到技能数据
+                skill["priority"] = matched_skill["priority"]
+                skill["confidence"] = matched_skill["confidence"]
+                
+                # 创建执行任务
+                task = execute_skill(skill, transcript, context, model)
+                execution_tasks.append((skill_id, task))
+            except Exception as e:
+                logger.error(f"准备执行技能失败: {skill_id}, 错误: {e}")
+                skill_results.append({
+                    "skill_id": skill_id,
+                    "result": None,
+                    "execution_time_ms": 0,
+                    "success": False,
+                    "error_message": str(e),
+                    "priority": matched_skill.get("priority", 0),
+                    "confidence": matched_skill.get("confidence", 0.5)
+                })
+        
+        # 执行所有任务
+        for skill_id, task in execution_tasks:
+            try:
+                result = await task
+                skill_results.append(result)
+            except Exception as e:
+                logger.error(f"执行技能失败: {skill_id}, 错误: {e}")
+                skill_results.append({
+                    "skill_id": skill_id,
+                    "result": None,
+                    "execution_time_ms": 0,
+                    "success": False,
+                    "error_message": str(e),
+                    "priority": 0,
+                    "confidence": 0.5
+                })
+        
+        # 记录技能执行到数据库
+        for skill_result in skill_results:
+            try:
+                skill_execution = SkillExecution(
+                    session_id=uuid.UUID(session_id),
+                    skill_id=skill_result["skill_id"],
+                    scene_category=primary_scene,
+                    confidence_score=skill_result.get("confidence", 0.5),
+                    execution_time_ms=skill_result.get("execution_time_ms", 0),
+                    success=skill_result.get("success", False),
+                    error_message=skill_result.get("error_message")
+                )
+                db.add(skill_execution)
+            except Exception as e:
+                logger.error(f"记录技能执行失败: {skill_result['skill_id']}, 错误: {e}")
+        
+        await db.commit()
+        
+        # 4. 结果融合（如果多技能）
+        logger.info("========== 步骤 4: 结果融合 ==========")
+        if len(skill_results) == 1 and skill_results[0].get("success"):
+            # 单个技能，直接使用结果
+            call2_result = skill_results[0]["result"]
+        else:
+            # 多技能，需要融合
+            call2_result = compose_results(skill_results)
+        
+        # 5. 为每个关键时刻生成图片
+        logger.info(f"========== 步骤 5: 生成图片 ==========")
+        logger.info(f"开始为 {len(call2_result.visual)} 个关键时刻生成图片")
+        updated_visual_list = []
+        for idx, visual_data in enumerate(call2_result.visual):
+            try:
+                logger.info(f"生成图片 {idx+1}/{len(call2_result.visual)}: transcript_index={visual_data.transcript_index}, speaker={visual_data.speaker}")
                 image_result = generate_image_from_prompt(visual_data.image_prompt, user_id, session_id, idx)
                 if image_result:
                     # 判断返回的是 URL 还是 Base64
@@ -1650,43 +1602,52 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
                 # 即使出错，也保留 visual_data
                 updated_visual_list.append(visual_data)
         
-        visual_list = updated_visual_list
+        call2_result.visual = updated_visual_list
         logger.info(f"========== 图片生成完成 ==========")
         
-        strategies_list = []
-        try:
-            for s in analysis_data.get("strategies", []):
-                strategies_list.append(StrategyItem(
-                    id=s.get("id", ""),
-                    label=s.get("label", ""),
-                    emoji=s.get("emoji", ""),
-                    title=s.get("title", ""),
-                    content=s.get("content", "")
-                ))
-        except Exception as e:
-            logger.error(f"构建策略列表失败: {e}")
-            logger.error(f"strategies 数据: {analysis_data.get('strategies')}")
-            raise Exception(f"构建策略列表失败: {str(e)}")
+        # 6. 保存策略分析到数据库
+        logger.info("========== 步骤 6: 保存到数据库 ==========")
         
-        call2_result = Call2Response(
-            visual=visual_list,
-            strategies=strategies_list
-        )
+        # 构建 applied_skills 列表
+        applied_skills = [
+            {
+                "skill_id": skill_result["skill_id"],
+                "priority": skill_result.get("priority", 0),
+                "confidence": skill_result.get("confidence", 0.5)
+            }
+            for skill_result in skill_results
+            if skill_result.get("success", False)
+        ]
         
-        # 保存策略分析到数据库
+        # 获取主要场景的置信度（存储为 float，不是 JSONB）
+        primary_scene_confidence = None
+        for scene in scenes:
+            if scene.get("category") == primary_scene:
+                primary_scene_confidence = scene.get("confidence", 0.5)
+                break
+        if primary_scene_confidence is None:
+            primary_scene_confidence = 0.5
+        
         strategy_analysis = StrategyAnalysis(
             session_id=uuid.UUID(session_id),
-            visual_data=[v.dict() for v in visual_list],
-            strategies=[s.dict() for s in strategies_list]
+            visual_data=[v.dict() for v in call2_result.visual],
+            strategies=[s.dict() for s in call2_result.strategies],
+            applied_skills=applied_skills,
+            scene_category=primary_scene,
+            scene_confidence=primary_scene_confidence
         )
+        
         # 如果已存在则更新，否则创建
         existing_query = await db.execute(
             select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
         )
         existing = existing_query.scalar_one_or_none()
         if existing:
-            existing.visual_data = [v.dict() for v in visual_list]
-            existing.strategies = [s.dict() for s in strategies_list]
+            existing.visual_data = [v.dict() for v in call2_result.visual]
+            existing.strategies = [s.dict() for s in call2_result.strategies]
+            existing.applied_skills = applied_skills
+            existing.scene_category = primary_scene
+            existing.scene_confidence = primary_scene_confidence
             await db.commit()
             logger.info(f"策略分析已更新到数据库: {session_id}")
         else:
@@ -1701,14 +1662,13 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             analysis_storage[session_id]["call2"] = {}
         analysis_storage[session_id]["call2"] = call2_result.dict()
         
-        logger.info(f"策略分析生成成功")
-        logger.info(f"  - 关键时刻数量: {len(visual_list)}")
-        logger.info(f"  - 策略数量: {len(strategies_list)}")
-        for idx, v in enumerate(visual_list):
-            # 优先检查 image_url，如果没有则检查 image_base64
-            has_image = "✅" if (v.image_url or v.image_base64) else "❌"
-            image_type = "URL" if v.image_url else ("Base64" if v.image_base64 else "None")
-            logger.info(f"  - 关键时刻 {idx+1}: transcript_index={v.transcript_index}, speaker={v.speaker}, emotion={v.emotion}, 图片: {has_image} ({image_type})")
+        logger.info(f"策略分析生成成功（v0.4 技能化架构）")
+        logger.info(f"  - 场景类别: {primary_scene} (置信度: {primary_scene_confidence:.2f})")
+        logger.info(f"  - 应用技能: {len(applied_skills)} 个")
+        for skill in applied_skills:
+            logger.info(f"    - {skill['skill_id']}: priority={skill['priority']}, confidence={skill['confidence']:.2f}")
+        logger.info(f"  - 关键时刻数量: {len(call2_result.visual)}")
+        logger.info(f"  - 策略数量: {len(call2_result.strategies)}")
         
         return call2_result
         
@@ -1718,13 +1678,88 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         raise
 
 
+@app.post("/api/v1/tasks/sessions/{session_id}/classify-scene")
+async def classify_scene_endpoint(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """场景识别接口（仅进行场景识别，不生成策略）"""
+    from datetime import datetime
+    
+    try:
+        # 验证任务存在且属于当前用户
+        result = await db.execute(
+            select(Session).where(
+                Session.id == uuid.UUID(session_id),
+                Session.user_id == uuid.UUID(user_id)
+            )
+        )
+        db_session = result.scalar_one_or_none()
+        
+        if not db_session:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        
+        # 从数据库查询分析结果
+        analysis_result_query = await db.execute(
+            select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+        )
+        analysis_result_db = analysis_result_query.scalar_one_or_none()
+        
+        if not analysis_result_db:
+            raise HTTPException(status_code=400, detail="分析结果不存在，请先完成音频分析")
+        
+        # 获取transcript
+        transcript = []
+        if analysis_result_db.transcript:
+            try:
+                transcript = json.loads(analysis_result_db.transcript) if isinstance(analysis_result_db.transcript, str) else analysis_result_db.transcript
+            except:
+                transcript = []
+        
+        if not transcript:
+            raise HTTPException(status_code=400, detail="对话转录数据不存在，请先完成音频分析")
+        
+        # 场景识别
+        model = genai.GenerativeModel('gemini-3-flash-preview')
+        scene_result = classify_scene(transcript, model)
+        
+        # 技能匹配
+        matched_skills = await match_skills(scene_result, db)
+        
+        return APIResponse(
+            code=200,
+            message="success",
+            data={
+                "scenes": scene_result.get("scenes", []),
+                "primary_scene": scene_result.get("primary_scene", "other"),
+                "matched_skills": [
+                    {
+                        "skill_id": skill["skill_id"],
+                        "name": skill["name"],
+                        "priority": skill["priority"]
+                    }
+                    for skill in matched_skills
+                ]
+            },
+            timestamp=datetime.now().isoformat()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"场景识别失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"场景识别失败: {str(e)}")
+
+
 @app.post("/api/v1/tasks/sessions/{session_id}/strategies")
 async def generate_strategies(
     session_id: str,
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """生成策略分析（Call #2）- 情商教练（需要JWT认证，仅能访问自己的任务）"""
+    """生成策略分析（Call #2）- 情商教练（v0.4 技能化架构，需要JWT认证，仅能访问自己的任务）"""
     from datetime import datetime
     
     try:
@@ -1762,10 +1797,22 @@ async def generate_strategies(
                 strategies=strategies_list
             )
             
+            # 添加技能信息
+            result_dict = call2_result.dict()
+            applied_skills = existing_strategy.applied_skills or []
+            scene_category = existing_strategy.scene_category
+            scene_confidence = existing_strategy.scene_confidence
+            
+            logger.info(f"技能信息: applied_skills={applied_skills}, scene_category={scene_category}, scene_confidence={scene_confidence}")
+            
+            result_dict["applied_skills"] = applied_skills
+            result_dict["scene_category"] = scene_category
+            result_dict["scene_confidence"] = scene_confidence
+            
             return APIResponse(
                 code=200,
                 message="success",
-                data=call2_result.dict(),
+                data=result_dict,
                 timestamp=datetime.now().isoformat()
             )
         
@@ -1800,10 +1847,34 @@ async def generate_strategies(
         # 调用核心策略生成逻辑
         call2_result = await _generate_strategies_core(session_id, user_id, transcript, db)
         
+        # 从数据库读取技能信息
+        strategy_query_after = await db.execute(
+            select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
+        )
+        strategy_after = strategy_query_after.scalar_one_or_none()
+        
+        # 添加技能信息到返回数据
+        result_dict = call2_result.dict()
+        if strategy_after:
+            applied_skills = strategy_after.applied_skills or []
+            scene_category = strategy_after.scene_category
+            scene_confidence = strategy_after.scene_confidence
+            
+            logger.info(f"技能信息: applied_skills={applied_skills}, scene_category={scene_category}, scene_confidence={scene_confidence}")
+            
+            result_dict["applied_skills"] = applied_skills
+            result_dict["scene_category"] = scene_category
+            result_dict["scene_confidence"] = scene_confidence
+        else:
+            logger.warning(f"未找到策略分析数据，无法返回技能信息: {session_id}")
+            result_dict["applied_skills"] = []
+            result_dict["scene_category"] = None
+            result_dict["scene_confidence"] = None
+        
         return APIResponse(
             code=200,
             message="success",
-            data=call2_result.dict(),
+            data=result_dict,
             timestamp=datetime.now().isoformat()
         )
         
@@ -1980,11 +2051,30 @@ async def test_gemini():
 
 @app.on_event("startup")
 async def startup_event():
-    """应用启动时初始化数据库"""
+    """应用启动时初始化数据库和技能"""
     try:
         logger.info("正在初始化数据库...")
         await init_db()
         logger.info("✅ 数据库初始化完成")
+        
+        # 初始化技能（v0.4 技能化架构）
+        try:
+            logger.info("正在初始化技能...")
+            from database.connection import async_session_maker
+            async with async_session_maker() as db:
+                try:
+                    registered_skills = await initialize_skills(db)
+                    logger.info(f"✅ 技能初始化完成，共注册 {len(registered_skills)} 个技能")
+                    for skill in registered_skills:
+                        logger.info(f"  - {skill['skill_id']}: {skill['name']}")
+                except Exception as e:
+                    logger.error(f"❌ 技能初始化失败: {e}")
+                    logger.error(traceback.format_exc())
+                    await db.rollback()
+        except Exception as e:
+            logger.error(f"❌ 技能初始化失败: {e}")
+            logger.error(traceback.format_exc())
+            # 不阻止应用启动，允许在没有技能的情况下运行（向后兼容）
     except Exception as e:
         logger.error(f"❌ 数据库初始化失败: {e}")
         logger.error(traceback.format_exc())

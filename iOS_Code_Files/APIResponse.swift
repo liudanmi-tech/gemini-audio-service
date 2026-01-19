@@ -1,5 +1,10 @@
 import Foundation
 
+// FastAPI 错误响应格式
+struct FastAPIErrorResponse: Codable {
+    let detail: String
+}
+
 // API 通用响应结构
 struct APIResponse<T: Codable>: Codable {
     let code: Int

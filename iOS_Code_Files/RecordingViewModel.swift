@@ -50,7 +50,16 @@ class RecordingViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isUploading = false
-                    print("上传失败: \(error)")
+                    print("❌ [RecordingViewModel] ========== 上传/分析失败 ==========")
+                    print("❌ [RecordingViewModel] 错误类型: \(type(of: error))")
+                    print("❌ [RecordingViewModel] 错误信息: \(error.localizedDescription)")
+                    
+                    // 检查是否是 401 错误
+                    if let nsError = error as NSError?, nsError.code == 401 {
+                        print("🔐 [RecordingViewModel] 检测到 401 错误，应该已自动清除登录状态")
+                        // 确保在主线程上清除登录状态（虽然 NetworkManager 已经处理了，但这里再确认一次）
+                        AuthManager.shared.logout()
+                    }
                 }
             }
         }

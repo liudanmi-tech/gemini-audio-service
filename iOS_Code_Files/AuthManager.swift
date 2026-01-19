@@ -51,8 +51,26 @@ class AuthManager: ObservableObject {
     
     // 登出
     func logout() {
+        print("🔐 [AuthManager] ========== 开始执行登出操作 ==========")
+        print("🔐 [AuthManager] 当前线程: \(Thread.isMainThread ? "主线程" : "后台线程")")
+        print("🔐 [AuthManager] 当前 isLoggedIn 状态: \(isLoggedIn)")
+        
+        // 清除 Keychain 中的 token
         AuthService.shared.logout()
-        isLoggedIn = false
-        currentUser = nil
+        
+        // 确保在主线程上更新状态
+        if Thread.isMainThread {
+            isLoggedIn = false
+            currentUser = nil
+            print("🔐 [AuthManager] ✅ 已在主线程更新状态: isLoggedIn = \(isLoggedIn)")
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.isLoggedIn = false
+                self?.currentUser = nil
+                print("🔐 [AuthManager] ✅ 已在主线程更新状态: isLoggedIn = \(self?.isLoggedIn ?? false)")
+            }
+        }
+        
+        print("🔐 [AuthManager] ========== 登出操作完成 ==========")
     }
 }

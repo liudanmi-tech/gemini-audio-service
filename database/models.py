@@ -76,11 +76,52 @@ class StrategyAnalysis(Base):
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
     visual_data = Column(JSONB, nullable=False)  # VisualData数组
     strategies = Column(JSONB, nullable=False)  # StrategyItem数组
+    applied_skills = Column(JSONB, default=[])  # 应用的技能列表 [{"skill_id": "workplace_jungle", "priority": 100}]
+    scene_category = Column(String(50))  # 识别的场景类别
+    scene_confidence = Column(JSONB)  # 场景识别置信度（存储为 float 值，兼容 JSONB 类型）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     # 关系
     session = relationship("Session", back_populates="strategy_analysis")
+
+
+class Skill(Base):
+    """技能库表"""
+    __tablename__ = "skills"
+
+    skill_id = Column(String(100), primary_key=True)
+    name = Column(String(200), nullable=False)
+    description = Column(Text)
+    category = Column(String(50), nullable=False, index=True)  # workplace/family/education/brainstorm
+    skill_path = Column(String(500), nullable=False)  # 技能目录路径，如 "skills/workplace_jungle"
+    priority = Column(Integer, default=0)
+    enabled = Column(Boolean, default=True, index=True)
+    version = Column(String(50))
+    metadata = Column(JSONB, default={})  # 元数据：keywords、scenarios等
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # 关系
+    executions = relationship("SkillExecution", back_populates="skill", cascade="all, delete-orphan")
+
+
+class SkillExecution(Base):
+    """技能执行记录表"""
+    __tablename__ = "skill_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    skill_id = Column(String(100), ForeignKey("skills.skill_id"), nullable=False, index=True)
+    scene_category = Column(String(50))  # 识别的场景类别
+    confidence_score = Column(JSONB)  # 场景识别置信度
+    execution_time_ms = Column(Integer)  # 执行耗时（毫秒）
+    success = Column(Boolean, default=True)
+    error_message = Column(Text)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # 关系
+    skill = relationship("Skill", back_populates="executions")
 
 
 class VerificationCode(Base):

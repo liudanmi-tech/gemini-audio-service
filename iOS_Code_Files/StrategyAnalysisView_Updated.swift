@@ -38,33 +38,47 @@ struct StrategyAnalysisView_Updated: View {
                 .frame(maxWidth: .infinity, minHeight: 200)
                 .padding()
             } else if let analysis = strategyAnalysis {
-                VStack(alignment: .leading, spacing: 16) {
-                    // 关键时刻图片轮播
-                    VisualMomentCarouselView(
-                        visualMoments: analysis.visual,
-                        baseURL: NetworkManager.shared.getBaseURL()  // 使用 NetworkManager 的 baseURL
-                    )
-                    
-                    // AI策略建议标题
-                    Text("AI 策略建议")
-                        .font(.system(size: 12, weight: .regular, design: .rounded))
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    
-                    // 策略列表
-                    VStack(spacing: 8) {
-                        ForEach(Array(analysis.strategies.enumerated()), id: \.element.id) { index, strategy in
-                            StrategyCardView(
-                                strategy: strategy,
-                                isSelected: selectedStrategyIndex == index,
-                                action: {
-                                    selectedStrategyIndex = selectedStrategyIndex == index ? nil : index
-                                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        // 技能信息（如果有）
+                        if let appliedSkills = analysis.appliedSkills, !appliedSkills.isEmpty {
+                            SkillInfoView(
+                                appliedSkills: appliedSkills,
+                                sceneCategory: analysis.sceneCategory,
+                                sceneConfidence: analysis.sceneConfidence
                             )
+                            .padding(.bottom, 8)
+                            
+                            Divider()
+                        }
+                        
+                        // 关键时刻图片轮播
+                        VisualMomentCarouselView(
+                            visualMoments: analysis.visual,
+                            baseURL: NetworkManager.shared.getBaseURL()  // 使用 NetworkManager 的 baseURL
+                        )
+                        
+                        // AI策略建议标题
+                        Text("AI 策略建议")
+                            .font(.system(size: 12, weight: .regular, design: .rounded))
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                        
+                        // 策略列表
+                        VStack(spacing: 8) {
+                            ForEach(Array(analysis.strategies.enumerated()), id: \.element.id) { index, strategy in
+                                StrategyCardView(
+                                    strategy: strategy,
+                                    isSelected: selectedStrategyIndex == index,
+                                    action: {
+                                        selectedStrategyIndex = selectedStrategyIndex == index ? nil : index
+                                    }
+                                )
+                            }
                         }
                     }
+                    .padding(16)
                 }
-                .padding(16)
             }
         }
         .background(Color.white)
@@ -92,6 +106,31 @@ struct StrategyAnalysisView_Updated: View {
                 print("✅ [StrategyAnalysisView] 策略分析加载成功")
                 print("  关键时刻数量: \(response.visual.count)")
                 print("  策略数量: \(response.strategies.count)")
+                
+                // 打印技能信息
+                if let appliedSkills = response.appliedSkills {
+                    print("  🎯 应用的技能数量: \(appliedSkills.count)")
+                    for (index, skill) in appliedSkills.enumerated() {
+                        print("    技能 \(index + 1):")
+                        print("      - skillId: \(skill.skillId)")
+                        print("      - priority: \(skill.priority)")
+                        print("      - confidence: \(skill.confidence ?? 0)")
+                    }
+                } else {
+                    print("  ⚠️ 未找到应用的技能信息")
+                }
+                
+                if let sceneCategory = response.sceneCategory {
+                    print("  📍 场景类别: \(sceneCategory)")
+                } else {
+                    print("  ⚠️ 未找到场景类别")
+                }
+                
+                if let sceneConfidence = response.sceneConfidence {
+                    print("  📊 场景置信度: \(String(format: "%.2f", sceneConfidence))")
+                } else {
+                    print("  ⚠️ 未找到场景置信度")
+                }
                 
                 for (index, visual) in response.visual.enumerated() {
                     print("  关键时刻 \(index):")

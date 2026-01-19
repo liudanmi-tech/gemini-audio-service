@@ -1,13 +1,15 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var authManager = AuthManager.shared
+    @ObservedObject private var authManager = AuthManager.shared
     @State private var selectedTab: TabItem = .fragments
     @StateObject private var recordingViewModel = RecordingViewModel()
     
     var body: some View {
         Group {
             if authManager.isLoggedIn {
+                // 调试日志
+                let _ = print("🖥️ [ContentView] 显示主界面，isLoggedIn = \(authManager.isLoggedIn)")
                 NavigationStack {
                     ZStack {
                         AppColors.background
@@ -49,6 +51,8 @@ struct ContentView: View {
                     .navigationBarHidden(true)
                 }
             } else {
+                // 调试日志
+                let _ = print("🖥️ [ContentView] 显示登录页面，isLoggedIn = \(authManager.isLoggedIn)")
                 LoginView()
             }
         }

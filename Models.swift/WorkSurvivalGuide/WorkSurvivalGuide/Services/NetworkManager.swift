@@ -8,6 +8,11 @@
 import Foundation
 import Alamofire
 
+// FastAPI 错误响应格式
+struct FastAPIErrorResponse: Codable {
+    let detail: String
+}
+
 class NetworkManager {
     static let shared = NetworkManager()
     
@@ -77,6 +82,34 @@ class NetworkManager {
             requestModifier: { $0.timeoutInterval = 120 } // 设置超时时间为120秒
         )
         
+        // 先获取响应用于检查状态码
+        let dataResponse = await dataTask.serializingData().response
+        let httpResponse = dataResponse.response
+        
+        // 检查 HTTP 状态码
+        if let statusCode = httpResponse?.statusCode, statusCode == 401 {
+            print("🔐 [NetworkManager] 🔴 检测到 401 状态码，立即清除登录状态")
+            DispatchQueue.main.async {
+                AuthManager.shared.logout()
+            }
+            
+            // 尝试解析 FastAPI 错误格式
+            if let responseData = dataResponse.data,
+               let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+                throw NSError(
+                    domain: "NetworkError",
+                    code: 401,
+                    userInfo: [NSLocalizedDescriptionKey: errorResponse.detail]
+                )
+            } else {
+                throw NSError(
+                    domain: "NetworkError",
+                    code: 401,
+                    userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                )
+            }
+        }
+        
         // 先获取原始响应数据用于调试
         let responseData = try await dataTask.serializingData().value
         print("📥 [NetworkManager] 收到原始响应数据:")
@@ -95,26 +128,49 @@ class NetworkManager {
             )
         }
         
-        // 尝试解析 JSON
-        let response = try await dataTask.serializingDecodable(APIResponse<TaskListResponse>.self).value
+        // 尝试解析 JSON（如果失败，可能是 FastAPI 错误格式）
+        do {
+            let response = try await dataTask.serializingDecodable(APIResponse<TaskListResponse>.self).value
         
-        print("📥 [NetworkManager] 解析后的响应:")
-        print("   - code: \(response.code)")
-        print("   - message: \(response.message)")
-        
-        guard response.code == 200, let data = response.data else {
-            print("❌ [NetworkManager] 响应错误:")
+            print("📥 [NetworkManager] 解析后的响应:")
             print("   - code: \(response.code)")
             print("   - message: \(response.message)")
-            throw NSError(
-                domain: "NetworkError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
-            )
+            
+            guard response.code == 200, let data = response.data else {
+                print("❌ [NetworkManager] 响应错误:")
+                print("   - code: \(response.code)")
+                print("   - message: \(response.message)")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: response.code,
+                    userInfo: [NSLocalizedDescriptionKey: response.message]
+                )
+            }
+            
+            print("✅ [NetworkManager] 任务列表获取成功，任务数量: \(data.sessions.count)")
+            return data
+        } catch let error as DecodingError {
+            // 解码失败，可能是 FastAPI 错误格式
+            print("⚠️ [NetworkManager] JSON 解码失败，尝试解析 FastAPI 错误格式")
+            if let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+                let statusCode = httpResponse?.statusCode ?? 400
+                print("🔐 [NetworkManager] ✅ 成功解析 FastAPI 错误: \(errorResponse.detail), 状态码: \(statusCode)")
+                
+                if statusCode == 401 {
+                    print("🔐 [NetworkManager] 🔴 收到 401 错误，立即清除登录状态")
+                    DispatchQueue.main.async {
+                        AuthManager.shared.logout()
+                    }
+                }
+                
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: errorResponse.detail]
+                )
+            }
+            throw error
         }
-        
-        print("✅ [NetworkManager] 任务列表获取成功，任务数量: \(data.sessions.count)")
-        return data
     }
     
     // 上传音频文件（支持 Mock 和真实 API）
@@ -177,6 +233,38 @@ class NetworkManager {
         }
         
         // 先获取原始响应数据用于调试
+        let dataResponse = await uploadTask.serializingData().response
+        let httpResponse = dataResponse.response
+        
+        // 检查 HTTP 状态码
+        if let statusCode = httpResponse?.statusCode {
+            print("📥 [NetworkManager] HTTP 状态码: \(statusCode)")
+            
+            // 如果是 401，立即清除登录状态
+            if statusCode == 401 {
+                print("🔐 [NetworkManager] 🔴 检测到 401 状态码，立即清除登录状态")
+                DispatchQueue.main.async {
+                    AuthManager.shared.logout()
+                }
+                
+                // 尝试解析 FastAPI 错误格式
+                if let responseData = dataResponse.data,
+                   let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+                    throw NSError(
+                        domain: "NetworkError",
+                        code: 401,
+                        userInfo: [NSLocalizedDescriptionKey: errorResponse.detail]
+                    )
+                } else {
+                    throw NSError(
+                        domain: "NetworkError",
+                        code: 401,
+                        userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                    )
+                }
+            }
+        }
+        
         let responseData = try await uploadTask.serializingData().value
         print("📥 [NetworkManager] 收到原始响应数据:")
         print("   - 数据长度: \(responseData.count) 字节")
@@ -194,30 +282,53 @@ class NetworkManager {
             )
         }
         
-        // 尝试解析 JSON
-        let response = try await uploadTask.serializingDecodable(APIResponse<UploadResponse>.self).value
+        // 尝试解析 JSON（如果失败，可能是 FastAPI 错误格式）
+        do {
+            let response = try await uploadTask.serializingDecodable(APIResponse<UploadResponse>.self).value
         
-        print("📥 [NetworkManager] 解析后的响应:")
-        print("   - code: \(response.code)")
-        print("   - message: \(response.message)")
-        
-        guard response.code == 200, let data = response.data else {
-            print("❌ [NetworkManager] 上传失败:")
+            print("📥 [NetworkManager] 解析后的响应:")
             print("   - code: \(response.code)")
             print("   - message: \(response.message)")
-            throw NSError(
-                domain: "NetworkError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
-            )
+            
+            guard response.code == 200, let data = response.data else {
+                print("❌ [NetworkManager] 上传失败:")
+                print("   - code: \(response.code)")
+                print("   - message: \(response.message)")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: response.code,
+                    userInfo: [NSLocalizedDescriptionKey: response.message]
+                )
+            }
+            
+            print("✅ [NetworkManager] 上传成功:")
+            print("   - sessionId: \(data.sessionId)")
+            print("   - title: \(data.title)")
+            print("   - status: \(data.status)")
+            
+            return data
+        } catch let error as DecodingError {
+            // 解码失败，可能是 FastAPI 错误格式
+            print("⚠️ [NetworkManager] JSON 解码失败，尝试解析 FastAPI 错误格式")
+            if let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+                let statusCode = httpResponse?.statusCode ?? 400
+                print("🔐 [NetworkManager] ✅ 成功解析 FastAPI 错误: \(errorResponse.detail), 状态码: \(statusCode)")
+                
+                if statusCode == 401 {
+                    print("🔐 [NetworkManager] 🔴 收到 401 错误，立即清除登录状态")
+                    DispatchQueue.main.async {
+                        AuthManager.shared.logout()
+                    }
+                }
+                
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: errorResponse.detail]
+                )
+            }
+            throw error
         }
-        
-        print("✅ [NetworkManager] 上传成功:")
-        print("   - sessionId: \(data.sessionId)")
-        print("   - title: \(data.title)")
-        print("   - status: \(data.status)")
-        
-        return data
     }
     
     // 获取任务详情
