@@ -1666,7 +1666,16 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         logger.info(f"  - 场景类别: {primary_scene} (置信度: {primary_scene_confidence:.2f})")
         logger.info(f"  - 应用技能: {len(applied_skills)} 个")
         for skill in applied_skills:
-            logger.info(f"    - {skill['skill_id']}: priority={skill['priority']}, confidence={skill['confidence']:.2f}")
+            skill_id = skill['skill_id']
+            # 从技能结果中获取名称，如果没有则从数据库查询
+            skill_name = skill.get('name', 'N/A')
+            if skill_name == 'N/A':
+                try:
+                    skill_info = await get_skill(skill_id, db)
+                    skill_name = skill_info.get('name', skill_id) if skill_info else skill_id
+                except:
+                    skill_name = skill_id
+            logger.info(f"    ✅ 技能: {skill_id} (名称: {skill_name}, priority={skill['priority']}, confidence={skill['confidence']:.2f})")
         logger.info(f"  - 关键时刻数量: {len(call2_result.visual)}")
         logger.info(f"  - 策略数量: {len(call2_result.strategies)}")
         
