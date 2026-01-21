@@ -35,6 +35,28 @@ class TaskListViewModel: ObservableObject {
         loadTasks()
     }
     
+    // 异步刷新任务列表（用于 refreshable）
+    func refreshTasksAsync() async {
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
+        }
+        
+        do {
+            let response = try await networkManager.getTaskList(date: nil)
+            await MainActor.run {
+                self.tasks = response.sessions
+                self.isLoading = false
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = error.localizedDescription
+                self.isLoading = false
+                print("刷新任务失败: \(error)")
+            }
+        }
+    }
+    
     // 按天分组任务
     var groupedTasks: [String: [Task]] {
         Dictionary(grouping: tasks) { task in

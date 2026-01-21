@@ -15,21 +15,26 @@ struct TaskDetailView: View {
     @State private var moodStats: [MoodStat] = []
     
     var body: some View {
-        ZStack {
-            // 背景色
-            AppColors.background
-                .ignoresSafeArea()
-            
-            ScrollView {
-                VStack(spacing: 16) {
+        GeometryReader { geometry in
+            ZStack {
+                // 背景色（底层）
+                AppColors.background
+                    .ignoresSafeArea()
+                
+                // 信纸网格底纹（在背景色上方）
+                PaperGridBackground()
+                    .ignoresSafeArea()
+                
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 23.99) { // 卡片间距改为 23.99px
                     // Header（返回按钮 + 标题）
                     DetailHeaderView()
+                        .padding(.top, 10) // 进一步减少顶部间距，让内容更靠近顶部
                     
-                    // 今日心情模块
-                    TodayMoodView(
-                        emotionScore: task.emotionScore ?? detail?.emotionScore,
-                        moodStats: moodStats.isEmpty ? nil : moodStats
-                    )
+                    // 顶部日期/时间信息栏
+                    DateTimeInfoBar(task: task)
+                    
+                    // 移除今日心情模块（Figma中没有对应设计）
                     
                     // 错误提示
                     if let errorMessage = errorMessage {
@@ -116,101 +121,104 @@ struct TaskDetailView: View {
                             baseURL: NetworkManager.shared.getBaseURL()
                         )
                     }
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 88)
-                .padding(.bottom, 20)
-            }
-            
-            if isLoading {
-                ZStack {
-                    Color.black.opacity(0.3)
-                        .ignoresSafeArea()
-                    VStack(spacing: 16) {
-                        ProgressView()
-                            .scaleEffect(1.5)
-                            .tint(AppColors.headerText)
-                        Text("加载详情中...")
-                            .font(.system(size: 16, design: .rounded))
-                            .foregroundColor(AppColors.headerText)
                     }
-                    .padding(24)
-                    .background(Color.white)
-                    .cornerRadius(12)
+                    .frame(width: geometry.size.width - 19.99 * 2, alignment: .leading) // 明确限制宽度：屏幕宽度 - 左右padding
+                    .padding(.horizontal, 19.99) // 根据Figma: padding horizontal 19.99px（左右各19.99px）
+                    .padding(.top, 0) // Header已有padding.top
+                    .padding(.bottom, 20)
+                }
+                .contentShape(Rectangle()) // 确保可滚动区域正确
+                
+                if isLoading {
+                    ZStack {
+                        Color.black.opacity(0.3)
+                            .ignoresSafeArea()
+                        VStack(spacing: 16) {
+                            ProgressView()
+                                .scaleEffect(1.5)
+                                .tint(AppColors.headerText)
+                            Text("加载详情中...")
+                                .font(.system(size: 16, design: .rounded))
+                                .foregroundColor(AppColors.headerText)
+                        }
+                        .padding(24)
+                        .background(Color.white)
+                        .cornerRadius(12)
+                    }
                 }
             }
-        }
-        .navigationBarHidden(true)
-        .onAppear {
-            // #region agent log
-            let logData: [String: Any] = [
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "A",
-                "location": "TaskDetailView.swift:102",
-                "message": "onAppear called",
-                "data": [
-                    "taskId": task.id,
-                    "taskStatus": task.status.rawValue,
-                    "detailIsNil": detail == nil,
-                    "isLoading": isLoading,
-                    "hasEmotionScore": task.emotionScore != nil
-                ],
-                "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-            ]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: logData),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                let logPath = "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log"
-                if let fileHandle = FileHandle(forWritingAtPath: logPath) {
-                    fileHandle.seekToEndOfFile()
-                    fileHandle.write("\n".data(using: .utf8)!)
-                    fileHandle.write(jsonString.data(using: .utf8)!)
-                    fileHandle.closeFile()
-                } else {
-                    try? jsonString.write(toFile: logPath, atomically: true, encoding: .utf8)
-                }
-            }
-            // #endregion
-            
-            // 如果任务已完成，立即显示基本信息，然后后台加载完整详情
-            if task.status == .archived {
+            .navigationBarHidden(true)
+            .onAppear {
                 // #region agent log
-                let logData2: [String: Any] = [
+                let logData: [String: Any] = [
                     "sessionId": "debug-session",
                     "runId": "run1",
-                    "hypothesisId": "B",
-                    "location": "TaskDetailView.swift:115",
-                    "message": "Task is archived, checking detail",
+                    "hypothesisId": "A",
+                    "location": "TaskDetailView.swift:102",
+                    "message": "onAppear called",
                     "data": [
+                        "taskId": task.id,
+                        "taskStatus": task.status.rawValue,
                         "detailIsNil": detail == nil,
-                        "willCreateTemp": detail == nil
+                        "isLoading": isLoading,
+                        "hasEmotionScore": task.emotionScore != nil
                     ],
                     "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
                 ]
-                if let jsonData = try? JSONSerialization.data(withJSONObject: logData2),
+                if let jsonData = try? JSONSerialization.data(withJSONObject: logData),
                    let jsonString = String(data: jsonData, encoding: .utf8) {
-                    if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
+                    let logPath = "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log"
+                    if let fileHandle = FileHandle(forWritingAtPath: logPath) {
                         fileHandle.seekToEndOfFile()
                         fileHandle.write("\n".data(using: .utf8)!)
                         fileHandle.write(jsonString.data(using: .utf8)!)
                         fileHandle.closeFile()
+                    } else {
+                        try? jsonString.write(toFile: logPath, atomically: true, encoding: .utf8)
                     }
                 }
                 // #endregion
                 
-                // 先使用任务基本信息创建临时详情，让用户立即看到内容
-                // 使用 Task 确保在主线程上执行，避免状态更新延迟
-                Task { @MainActor in
-                    if self.detail == nil {
-                        // 创建临时详情对象，使用任务基本信息
-                        self.createTemporaryDetail()
+                // 如果任务已完成，立即显示基本信息，然后后台加载完整详情
+                if task.status == .archived {
+                    // #region agent log
+                    let logData2: [String: Any] = [
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "B",
+                        "location": "TaskDetailView.swift:115",
+                        "message": "Task is archived, checking detail",
+                        "data": [
+                            "detailIsNil": detail == nil,
+                            "willCreateTemp": detail == nil
+                        ],
+                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
+                    ]
+                    if let jsonData = try? JSONSerialization.data(withJSONObject: logData2),
+                       let jsonString = String(data: jsonData, encoding: .utf8) {
+                        if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
+                            fileHandle.seekToEndOfFile()
+                            fileHandle.write("\n".data(using: .utf8)!)
+                            fileHandle.write(jsonString.data(using: .utf8)!)
+                            fileHandle.closeFile()
+                        }
                     }
-                    // 后台加载完整详情（不显示加载提示，因为已有临时详情）
-                    self.loadTaskDetail(silent: true)
+                    // #endregion
+                    
+                    // 先使用任务基本信息创建临时详情，让用户立即看到内容
+                    // 使用 Task 确保在主线程上执行，避免状态更新延迟
+                    Task { @MainActor in
+                        if self.detail == nil {
+                            // 创建临时详情对象，使用任务基本信息
+                            self.createTemporaryDetail()
+                        }
+                        // 后台加载完整详情（不显示加载提示，因为已有临时详情）
+                        self.loadTaskDetail(silent: true)
+                    }
+                } else {
+                    // 如果已有详情，生成情绪统计数据
+                    generateMoodStats()
                 }
-            } else {
-                // 如果已有详情，生成情绪统计数据
-                generateMoodStats()
             }
         }
     }
@@ -528,7 +536,8 @@ struct DetailHeaderView: View {
                 ZStack {
                     Circle()
                         .fill(Color.white.opacity(0.5))
-                        .frame(width: 40, height: 40)
+                        .frame(width: 39.98, height: 39.98)
+                        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1)
                     
                     Image(systemName: "chevron.left")
                         .font(.system(size: 16, weight: .bold))
@@ -538,17 +547,86 @@ struct DetailHeaderView: View {
             
             Spacer()
             
-            Text("总结")
-                .font(.system(size: 20, weight: .bold, design: .rounded))
+            Text("详情")
+                .font(.system(size: 20, weight: .black, design: .rounded))
                 .foregroundColor(AppColors.headerText)
+                .tracking(0.5) // letterSpacing 2.5% of 20px = 0.5pt
             
             Spacer()
             
             // 占位，保持居中
             Color.clear
-                .frame(width: 40, height: 40)
+                .frame(width: 39.98, height: 39.98)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, 15.99)
         .padding(.vertical, 0)
+    }
+}
+
+// 顶部日期/时间信息栏
+struct DateTimeInfoBar: View {
+    let task: TaskItem
+    
+    var body: some View {
+        HStack(alignment: .center, spacing: 0) {
+            // 左侧：时间组件（自适应宽度，不固定）
+            HStack(alignment: .center, spacing: 7.996843338012695) { // 根据Figma: gap 7.99px
+                // 日历图标
+                Image(systemName: "calendar")
+                    .font(.system(size: 18))
+                    .foregroundColor(AppColors.headerText.opacity(0.8))
+                    .frame(width: 18, height: 18)
+                
+                // 日期文本（格式：2026/01/20 星期一）
+                Text(dateTimeString)
+                    .font(.system(size: 14, weight: .bold, design: .rounded)) // Nunito 700, 14px
+                    .foregroundColor(AppColors.headerText.opacity(0.8)) // rgba(94, 75, 53, 0.8)
+                    .tracking(0.35) // letterSpacing 2.5% of 14px = 0.35pt
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false) // 自适应宽度
+            }
+            .padding(.leading, 15.99) // 根据Figma: padding left 15.99px
+            .padding(.trailing, 8) // 添加右侧padding
+            .frame(height: 37.37) // 根据Figma: height 37.37px，宽度自适应
+            .background(
+                RoundedRectangle(cornerRadius: 23144300) // 根据Figma: borderRadius: 23144300px (极大值，实际为胶囊形状)
+                    .fill(Color.white.opacity(0.3)) // rgba(255, 255, 255, 0.3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 23144300)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 0.69) // rgba(255, 255, 255, 0.2), strokeWeight 0.69px
+                    )
+            )
+            
+            Spacer(minLength: 8) // 最小间距，确保左右元素不贴得太近
+            
+            // 右侧：表情图标（播放按钮，圆形，白色半透明背景）
+            Button(action: {
+                // TODO: 实现播放功能
+            }) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white.opacity(0.8)) // rgba(255, 255, 255, 0.8)
+                        .frame(width: 49.37, height: 49.37) // 根据Figma: 49.37 x 49.37px
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white.opacity(0.4), lineWidth: 0.69) // rgba(255, 255, 255, 0.4), strokeWeight 0.69px
+                        )
+                        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
+                    
+                    // 使用表情图标或播放图标
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(AppColors.headerText.opacity(0.8))
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading) // 确保不超出父容器
+    }
+    
+    private var dateTimeString: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy/MM/dd EEEE"
+        return formatter.string(from: task.startTime)
     }
 }

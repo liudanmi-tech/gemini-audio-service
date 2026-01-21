@@ -27,6 +27,7 @@ struct TaskItem: Codable, Identifiable {
     let status: TaskStatus            // 状态
     let emotionScore: Int?            // 情绪分数 (0-100)
     let speakerCount: Int?            // 说话人数
+    let summary: String?              // 对话总结（可选）
     
     // 自定义 CodingKeys 用于处理 API 返回的字段名
     enum CodingKeys: String, CodingKey {
@@ -39,6 +40,7 @@ struct TaskItem: Codable, Identifiable {
         case status
         case emotionScore = "emotion_score"
         case speakerCount = "speaker_count"
+        case summary
     }
     
     // 便利初始化器（用于直接创建 Task，不通过 JSON 解码）
@@ -51,7 +53,8 @@ struct TaskItem: Codable, Identifiable {
         tags: [String],
         status: TaskStatus,
         emotionScore: Int? = nil,
-        speakerCount: Int? = nil
+        speakerCount: Int? = nil,
+        summary: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -62,6 +65,7 @@ struct TaskItem: Codable, Identifiable {
         self.status = status
         self.emotionScore = emotionScore
         self.speakerCount = speakerCount
+        self.summary = summary
     }
     
     // 自定义日期解码器
@@ -88,6 +92,7 @@ struct TaskItem: Codable, Identifiable {
         status = try container.decode(TaskStatus.self, forKey: .status)
         emotionScore = try? container.decode(Int.self, forKey: .emotionScore)
         speakerCount = try? container.decode(Int.self, forKey: .speakerCount)
+        summary = try? container.decode(String.self, forKey: .summary)
     }
     
     // 格式化时长显示
@@ -111,6 +116,50 @@ struct TaskItem: Codable, Identifiable {
             return "\(start) - \(end)"
         }
         return start
+    }
+    
+    // 精炼summary为标题，控制在30字以内
+    var refinedTitle: String {
+        guard let summary = summary, !summary.isEmpty else {
+            // 如果没有summary，使用原始title
+            return title
+        }
+        
+        // 移除多余的空白字符
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // 如果trimmed后为空，使用原始title
+        guard !trimmed.isEmpty else {
+            return title
+        }
+        
+        // 如果已经小于等于30字，直接返回
+        if trimmed.count <= 30 {
+            return trimmed
+        }
+        
+        // 截取前30字
+        let index = trimmed.index(trimmed.startIndex, offsetBy: 30, limitedBy: trimmed.endIndex) ?? trimmed.endIndex
+        var result = String(trimmed[..<index])
+        
+        // 尝试在最后一个标点符号或空格处截断，使文本更自然
+        if let lastPunctuation = result.lastIndex(where: { "。！？，；：".contains($0) }) {
+            let punctuationIndex = result.index(after: lastPunctuation)
+            result = String(result[..<punctuationIndex])
+        } else if let lastSpace = result.lastIndex(of: " ") {
+            result = String(result[..<lastSpace])
+        } else if let lastSpace = result.lastIndex(of: "　") {
+            result = String(result[..<lastSpace])
+        }
+        
+        // 如果截断后仍然超过30字，强制截取
+        if result.count > 30 {
+            let forceIndex = result.index(result.startIndex, offsetBy: 30, limitedBy: result.endIndex) ?? result.endIndex
+            result = String(result[..<forceIndex])
+        }
+        
+        // 确保返回的字符串不为空，如果为空则使用原始title
+        return result.isEmpty ? title : result
     }
 }
 

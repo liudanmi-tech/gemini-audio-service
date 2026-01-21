@@ -10,13 +10,21 @@ import SwiftUI
 /// Figma设计稿的颜色配置
 struct AppColors {
     // 背景色
-    static let background = Color(hex: "#FDF6E3") // 米黄色背景
-    static let cardBackground = Color(hex: "#FFFDF5") // 卡片背景
+    static let background = Color(hex: "#F2E6D6") // App底色（根据设计稿）
+    static let cardBackground = Color(hex: "#FFFAF5") // 卡片背景（根据设计稿）
     
     // 文字颜色
-    static let primaryText = Color(hex: "#2C3E50") // 主文字颜色
+    static let primaryText = Color(hex: "#4A4A4A") // 主文字颜色（根据设计稿）
     static let secondaryText = Color(hex: "#6A7282") // 次文字颜色
-    static let headerText = Color(hex: "#5E7C8B") // Header文字颜色
+    static let headerText = Color(hex: "#5E4B35") // Header文字颜色（根据设计稿）
+    
+    // 日期颜色
+    static let dateNumber = Color(hex: "#FF5733") // 日期大号数字颜色
+    static let timeText = Color(hex: "#CFCACA").opacity(0.9) // 时间文字颜色 rgba(207, 202, 202, 0.9)
+    static let statusText = Color(hex: "#F59E0B") // 状态文字颜色
+    
+    // Header 背景
+    static let headerBackground = Color(hex: "#F2E6D6").opacity(0.9) // Header背景（根据设计稿）
     
     // 边框和分割线
     static let border = Color(hex: "#5E7C8B") // 边框颜色
@@ -50,7 +58,11 @@ struct AppColors {
         static let activeText = Color(hex: "#5E7C8B") // 激活文字
         static let inactiveText = Color(hex: "#5E7C8B").opacity(0.6) // 非激活文字
         static let activeIconBg = Color(hex: "#FFD59E") // 激活图标背景
+        static let borderLine = Color(hex: "#8FA5B0") // 边缘线颜色
     }
+    
+    // 信纸网格
+    static let gridLine = Color(hex: "#D4C4AF").opacity(0.8) // 网格线条颜色（比背景色稍深，半透明）
 }
 
 extension Color {

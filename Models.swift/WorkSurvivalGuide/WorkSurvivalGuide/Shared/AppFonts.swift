@@ -14,10 +14,17 @@ struct AppFonts {
     static let headerTitle = Font.system(size: 24, weight: .black, design: .rounded)
     
     // 卡片标题字体（Nunito 700, 18px）
-    static let cardTitle = Font.system(size: 18, weight: .bold, design: .rounded)
+    static let cardTitle = Font.system(size: 18, weight: .medium, design: .rounded)
     
     // 时间字体（Nunito 400, 14px）
     static let time = Font.system(size: 14, weight: .regular, design: .rounded)
+    
+    // 日期相关字体
+    static let dateNumber = Font.system(size: 35, weight: .bold, design: .rounded) // 日期大号数字
+    static let weekday = Font.system(size: 14, weight: .bold, design: .rounded) // 星期
+    static let yearMonth = Font.system(size: 12, weight: .medium, design: .rounded) // 年月
+    static let timeRange = Font.custom("Inter-Bold", size: 14) // 时间范围 (Inter Bold, 14px, letterSpacing: -5%)
+    static let statusText = Font.system(size: 18, weight: .medium, design: .rounded) // 状态文字
     
     // 状态标签字体（Nunito 700, 12px）
     static let statusLabel = Font.system(size: 12, weight: .bold, design: .rounded)

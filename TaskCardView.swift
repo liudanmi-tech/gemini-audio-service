@@ -1,150 +1,156 @@
-//
-//  TaskCardView.swift
-//  WorkSurvivalGuide
-//
-//  任务卡片组件
-//
-
 import SwiftUI
 
 struct TaskCardView: View {
     let task: Task
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // 标题和状态
-            HStack {
-                Text(task.title)
-                    .font(.headline)
-                    .foregroundColor(.primary)
+        VStack(alignment: .leading, spacing: 24) {
+            // 顶部行：日期和时间
+            HStack(alignment: .top, spacing: 0) {
+                // 左侧：日期信息
+                HStack(alignment: .top, spacing: 8) {
+                    // 日期大号数字
+                    Text(dayNumber)
+                        .font(AppFonts.dateNumber)
+                        .foregroundColor(AppColors.dateNumber)
+                        .frame(width: 41, height: 35, alignment: .leading)
+                    
+                    // 星期和年月
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(weekday)
+                            .font(AppFonts.weekday)
+                            .foregroundColor(AppColors.dateNumber)
+                            .frame(height: 20)
+                        
+                        Text(yearMonth)
+                            .font(AppFonts.yearMonth)
+                            .foregroundColor(AppColors.dateNumber.opacity(0.7))
+                            .frame(height: 16)
+                            .padding(.top, 4)
+                    }
+                }
                 
                 Spacer()
                 
-                // 状态指示器
-                StatusIndicator(status: task.status)
-            }
-            
-            // 时间和时长
-            HStack {
-                Text(task.timeRangeString)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-                
-                Text("•")
-                    .foregroundColor(.secondary)
-                
-                Text(task.durationString)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-            
-            // 标签
-            if !task.tags.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(task.tags, id: \.self) { tag in
-                            TagView(text: tag)
-                        }
+                // 右侧：时间范围（仅已完成状态显示）
+                if task.status == .archived {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(task.timeRangeString)
+                            .font(AppFonts.timeRange)
+                            .foregroundColor(AppColors.timeText)
+                            .frame(height: 20)
+                        
+                        // 时钟图标
+                        Image(systemName: "clock")
+                            .font(.system(size: 20))
+                            .foregroundColor(AppColors.timeText)
+                            .frame(width: 20, height: 20)
                     }
+                    .frame(width: 85, alignment: .trailing)
                 }
             }
             
-            // 情绪分数
-            if let score = task.emotionScore {
-                HStack {
-                    Text("情绪分数:")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text("\(score)分")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(emotionColor(for: score))
+            // 底部：状态标签或标题
+            HStack(alignment: .top, spacing: 16) {
+                // 状态图标
+                StatusIcon(status: task.status)
+                    .frame(width: 24, height: 24)
+                    .padding(.top, 4)
+                
+                // 状态文字或标题文本
+                if task.status == .archived {
+                    // 已完成：显示标题
+                    Text(task.title)
+                        .font(AppFonts.cardTitle)
+                        .foregroundColor(AppColors.primaryText)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    // 其他状态：显示状态文字
+                    Text(statusText)
+                        .font(AppFonts.statusText)
+                        .foregroundColor(AppColors.statusText)
+                        .opacity(0.637)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
-        .padding()
-        .background(Color(.systemBackground))
-        .cornerRadius(12)
-        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+        .padding(.top, 24)
+        .padding(.horizontal, 24)
+        .padding(.bottom, 0)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(AppColors.cardBackground)
+        .cornerRadius(24)
     }
     
-    // 根据情绪分数返回颜色
-    private func emotionColor(for score: Int) -> Color {
-        if score >= 70 {
-            return .green
-        } else if score >= 40 {
-            return .orange
-        } else {
-            return .red
-        }
-    }
-}
-
-// 状态指示器
-struct StatusIndicator: View {
-    let status: TaskStatus
-    
-    var body: some View {
-        HStack(spacing: 4) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-            
-            Text(statusText)
-                .font(.caption)
-                .foregroundColor(.secondary)
-        }
+    // 获取日期数字
+    private var dayNumber: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "d"
+        return formatter.string(from: task.startTime)
     }
     
-    private var statusColor: Color {
-        switch status {
-        case .recording:
-            return .red
-        case .analyzing:
-            return .orange
-        case .archived:
-            return .green
-        case .burned:
-            return .gray
-        }
+    // 获取星期几
+    private var weekday: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "EEEE"
+        let weekday = formatter.string(from: task.startTime)
+        return weekday
     }
     
+    // 获取年月
+    private var yearMonth: String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy/M"
+        return formatter.string(from: task.startTime)
+    }
+    
+    // 获取状态文字
     private var statusText: String {
-        switch status {
+        switch task.status {
         case .recording:
-            return "录制中"
+            return "正在转录语音..."
         case .analyzing:
             return "分析中"
         case .archived:
-            return "已归档"
+            return ""
         case .burned:
             return "已焚毁"
         }
     }
 }
 
-// 标签视图
-struct TagView: View {
-    let text: String
+// 状态图标
+struct StatusIcon: View {
+    let status: TaskStatus
     
     var body: some View {
-        Text(text)
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(tagColor)
-            .foregroundColor(.white)
-            .cornerRadius(8)
-    }
-    
-    private var tagColor: Color {
-        if text.contains("PUA") || text.contains("风险") {
-            return .red
-        } else if text.contains("急躁") || text.contains("焦虑") {
-            return .orange
-        } else {
-            return .blue
+        Group {
+            switch status {
+            case .recording, .analyzing:
+                // 分析中/录制中的图标（圆形进度指示器）
+                ZStack {
+                    Circle()
+                        .stroke(AppColors.statusText.opacity(0.5), lineWidth: 2)
+                        .frame(width: 24, height: 24)
+                    
+                    Circle()
+                        .trim(from: 0, to: 0.7)
+                        .stroke(AppColors.statusText, lineWidth: 2)
+                        .frame(width: 24, height: 24)
+                        .rotationEffect(.degrees(-90))
+                }
+            case .archived:
+                // 已完成：显示勾选图标
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(AppColors.Status.completedText)
+            case .burned:
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.gray)
+            }
         }
     }
 }
-

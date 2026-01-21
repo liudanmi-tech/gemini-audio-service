@@ -17,6 +17,7 @@ class RecordingViewModel: ObservableObject {
     private let audioRecorder = AudioRecorderService.shared
     private let networkManager = NetworkManager.shared
     private var timer: Timer?
+    private var currentRecordingTaskId: String? // 当前录音任务的 ID
     
     // 开始录音
     func startRecording() {
@@ -26,6 +27,42 @@ class RecordingViewModel: ObservableObject {
         isRecording = true
         recordingTime = 0
         print("🎤 [RecordingViewModel] ✅ 录制状态已设置为 true")
+        
+        // 立即创建本地录音卡片，状态为"正在转录语音..."
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        let timeString = formatter.string(from: startTime)
+        
+        let taskId = UUID().uuidString
+        currentRecordingTaskId = taskId // 保存当前录音任务 ID
+        
+        let newTask = TaskItem(
+            id: taskId,
+            title: "录音 \(timeString)",
+            startTime: startTime,
+            endTime: nil,
+            duration: 0,
+            tags: [],
+            status: .recording, // 状态为"正在转录语音..."
+            emotionScore: nil,
+            speakerCount: nil
+        )
+        
+        print("📝 [RecordingViewModel] 立即创建本地录音卡片:")
+        print("   - ID: \(newTask.id)")
+        print("   - 标题: \(newTask.title)")
+        print("   - 状态: \(newTask.status)")
+        
+        // 通知 TaskListViewModel 添加新任务
+        Task { @MainActor in
+            print("📢 [RecordingViewModel] 发送 NewTaskCreated 通知（录音开始）")
+            NotificationCenter.default.post(
+                name: NSNotification.Name("NewTaskCreated"),
+                object: newTask
+            )
+        }
         
         // 监听录音时长
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -65,6 +102,39 @@ class RecordingViewModel: ObservableObject {
         timer = nil
         isUploading = true
         
+        // 更新卡片状态为"分析中"（在 Real API 模式下，后续会用服务器 ID 替换）
+        if let taskId = currentRecordingTaskId {
+            let formatter = DateFormatter()
+            formatter.dateStyle = .none
+            formatter.timeStyle = .short
+            let timeString = formatter.string(from: startTime)
+            
+            let updatedTask = TaskItem(
+                id: taskId,
+                title: "录音 \(timeString)",
+                startTime: startTime,
+                endTime: nil,
+                duration: recordingDuration,
+                tags: [],
+                status: .analyzing, // 状态改为"分析中"
+                emotionScore: nil,
+                speakerCount: nil
+            )
+            
+            print("🔄 [RecordingViewModel] 更新卡片状态为'分析中':")
+            print("   - ID: \(updatedTask.id)")
+            print("   - 状态: \(updatedTask.status)")
+            
+            // 通知 TaskListViewModel 更新任务状态
+            Task { @MainActor in
+                print("📢 [RecordingViewModel] 发送 TaskStatusUpdated 通知（录音停止）")
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("TaskStatusUpdated"),
+                    object: updatedTask
+                )
+            }
+        }
+        
         print("📤 [RecordingViewModel] 上传状态已设置为 true")
         print("📤 [RecordingViewModel] 当前环境: \(AppConfig.shared.useMockData ? "Mock" : "Real API")")
         
@@ -74,36 +144,21 @@ class RecordingViewModel: ObservableObject {
                 // 如果是 Mock 模式，直接调用 Gemini API 分析
                 if AppConfig.shared.useMockData {
                     print("📦 [RecordingViewModel] ========== Mock 模式流程 ==========")
-                    // 创建新任务，状态为"分析中"
+                    // 使用现有的任务 ID，不创建新任务
+                    guard let taskId = self.currentRecordingTaskId else {
+                        print("❌ [RecordingViewModel] currentRecordingTaskId 为 nil")
+                        await MainActor.run {
+                            self.isUploading = false
+                        }
+                        return
+                    }
+                    
                     let formatter = DateFormatter()
                     formatter.dateStyle = .none
                     formatter.timeStyle = .short
                     let timeString = formatter.string(from: startTime)
                     
-                    let newTask = TaskItem(
-                        id: UUID().uuidString,
-                        title: "录音 \(timeString)",
-                        startTime: startTime,
-                        endTime: endTime,
-                        duration: recordingDuration,
-                        tags: [],
-                        status: .analyzing,
-                        emotionScore: nil,
-                        speakerCount: nil
-                    )
-                    
-                    print("📝 [RecordingViewModel] 创建新任务:")
-                    print("   - ID: \(newTask.id)")
-                    print("   - 标题: \(newTask.title)")
-                    print("   - 状态: \(newTask.status)")
-                    
-                    // 通知 TaskListViewModel 添加新任务
                     await MainActor.run {
-                        print("📢 [RecordingViewModel] 发送 NewTaskCreated 通知")
-                        NotificationCenter.default.post(
-                            name: NSNotification.Name("NewTaskCreated"),
-                            object: newTask
-                        )
                         self.isUploading = false
                         print("✅ [RecordingViewModel] 上传状态已设置为 false")
                     }
@@ -111,21 +166,24 @@ class RecordingViewModel: ObservableObject {
                     // 调用 Gemini API 分析
                     let analysisResult = try await GeminiAnalysisService.shared.analyzeAudio(fileURL: audioURL)
                     
-                    // 分析完成，更新任务状态
+                    // 分析完成，更新现有任务状态
+                    // 注意：Mock模式下，analysisResult可能没有summary，使用nil
                     let completedTask = TaskItem(
-                        id: newTask.id,
-                        title: newTask.title,
-                        startTime: newTask.startTime,
-                        endTime: newTask.endTime,
-                        duration: newTask.duration,
+                        id: taskId, // 使用现有的任务 ID
+                        title: "录音 \(timeString)",
+                        startTime: startTime,
+                        endTime: endTime,
+                        duration: recordingDuration,
                         tags: analysisResult.risks.map { "#\($0)" },
                         status: .archived,
                         emotionScore: calculateEmotionScore(from: analysisResult),
-                        speakerCount: analysisResult.speakerCount
+                        speakerCount: analysisResult.speakerCount,
+                        summary: nil // Mock模式下暂时为nil，后续可以从analysisResult中提取
                     )
                     
                     // 通知 TaskListViewModel 更新任务
                     await MainActor.run {
+                        print("📢 [RecordingViewModel] 发送 TaskAnalysisCompleted 通知")
                         NotificationCenter.default.post(
                             name: NSNotification.Name("TaskAnalysisCompleted"),
                             object: completedTask
@@ -149,7 +207,20 @@ class RecordingViewModel: ObservableObject {
                     print("   - title: \(response.title)")
                     print("   - status: \(response.status)")
                     
-                    // 创建新任务，状态为"分析中"
+                    // 更新现有任务，使用服务器返回的 sessionId 和 title
+                    // 先删除本地创建的卡片，然后创建新的（使用服务器 ID）
+                    if let oldTaskId = self.currentRecordingTaskId {
+                        await MainActor.run {
+                            // 删除旧卡片
+                            print("🗑️ [RecordingViewModel] 删除本地创建的卡片: \(oldTaskId)")
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("TaskDeleted"),
+                                object: oldTaskId
+                            )
+                        }
+                    }
+                    
+                    // 使用服务器返回的 sessionId 创建新任务，状态为"分析中"
                     let newTask = TaskItem(
                         id: response.sessionId,
                         title: response.title,
@@ -162,14 +233,17 @@ class RecordingViewModel: ObservableObject {
                         speakerCount: nil
                     )
                     
-                    print("📝 [RecordingViewModel] 创建新任务:")
+                    print("📝 [RecordingViewModel] 使用服务器 ID 创建任务:")
                     print("   - ID: \(newTask.id)")
                     print("   - 标题: \(newTask.title)")
                     print("   - 状态: \(newTask.status)")
                     
+                    // 更新 currentRecordingTaskId 为服务器返回的 ID
+                    self.currentRecordingTaskId = response.sessionId
+                    
                     await MainActor.run {
                         // 添加新任务到列表
-                        print("📢 [RecordingViewModel] 发送 NewTaskCreated 通知")
+                        print("📢 [RecordingViewModel] 发送 NewTaskCreated 通知（使用服务器 ID）")
                         NotificationCenter.default.post(
                             name: NSNotification.Name("NewTaskCreated"),
                             object: newTask
@@ -242,7 +316,7 @@ class RecordingViewModel: ObservableObject {
                         print("   - dialogues count: \(detail.dialogues.count)")
                         print("   - risks count: \(detail.risks.count)")
                         
-                        // 转换为 TaskItem
+                        // 转换为 TaskItem，包含summary字段
                         let completedTask = TaskItem(
                             id: detail.sessionId,
                             title: detail.title,
@@ -252,7 +326,8 @@ class RecordingViewModel: ObservableObject {
                             tags: detail.tags,
                             status: .archived,
                             emotionScore: detail.emotionScore,
-                            speakerCount: detail.speakerCount
+                            speakerCount: detail.speakerCount,
+                            summary: detail.summary
                         )
                         
                         await MainActor.run {

@@ -13,41 +13,70 @@ struct DialogueReviewView: View {
     @State private var isExpanded: Bool = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // 标题
-            Text("对话复盘")
-                .font(AppFonts.cardTitle)
-                .foregroundColor(AppColors.headerText)
-                .padding(.horizontal, 21.5)
-                .padding(.top, 21.5)
-            
-            // 总结文本
-            if let summary = summary, !summary.isEmpty {
-                Text(summary)
-                    .font(.system(size: 14, weight: .regular, design: .rounded))
-                    .foregroundColor(AppColors.headerText.opacity(0.8))
-                    .lineSpacing(4)
-                    .padding(.horizontal, 21.5)
-                    .padding(.bottom, 8)
-            }
-            
-            // 显示详情按钮
-            HStack {
-                Spacer()
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        isExpanded.toggle()
-                    }
-                }) {
-                    Text("显示详情")
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
+        VStack(alignment: .leading, spacing: 15.99368667602539) { // 根据Figma: gap 15.99px
+            // 标题区域
+            HStack(alignment: .center, spacing: 11.99526596069336) { // 根据Figma: gap 11.99px
+                // 图标背景
+                ZStack {
+                    Circle()
+                        .fill(Color(hex: "#FFD59E")) // 根据Figma: #FFD59E
+                        .frame(width: 39.99, height: 39.99) // 根据Figma: 39.99 x 39.99px
+                    
+                    Image(systemName: "quote.bubble.fill")
+                        .font(.system(size: 19.99))
                         .foregroundColor(AppColors.headerText)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                Spacer()
+                
+                // 标题文字
+                Text("对话总结")
+                    .font(.system(size: 18, weight: .black, design: .rounded)) // Nunito 900, 18px
+                    .foregroundColor(AppColors.headerText) // #5E4B35
             }
-            .padding(.bottom, isExpanded ? 0 : 21.5)
+            .padding(.top, 24.68) // 根据Figma: padding top 24.68px
+            .padding(.horizontal, 24.68) // 根据Figma: padding horizontal 24.68px
+            
+            // 总结文本容器
+            if let summary = summary, !summary.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(summary)
+                        .font(.system(size: 16, weight: .medium, design: .rounded)) // Nunito 500, 16px
+                        .foregroundColor(AppColors.headerText.opacity(0.9)) // rgba(94, 75, 53, 0.9)
+                        .lineSpacing(10) // 行间距改为 10px
+                        .tracking(0) // 字间距设为 0
+                        .frame(maxWidth: .infinity, alignment: .topLeading) // 自适应宽度
+                        .fixedSize(horizontal: false, vertical: true) // 允许垂直扩展
+                }
+                .padding(.horizontal, 24.68)
+            }
+            
+            // 底部按钮："查看详情 & 录音"
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack(spacing: 0) {
+                    Spacer()
+                    Text("查看详情 & 录音")
+                        .font(.system(size: 14, weight: .bold, design: .rounded)) // Nunito 700, 14px
+                        .foregroundColor(AppColors.headerText.opacity(0.7)) // rgba(94, 75, 53, 0.7)
+                    
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 15.99))
+                        .foregroundColor(AppColors.headerText.opacity(0.7))
+                        .padding(.leading, 8)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity)
+                .frame(height: 44.67) // 根据Figma: height 44.67px
+                .overlay(
+                    Rectangle()
+                        .frame(height: 0.69)
+                        .foregroundColor(AppColors.headerText.opacity(0.1)) // rgba(94, 75, 53, 0.1)
+                        .offset(y: -22.335) // 顶部边框
+                )
+            }
+            .padding(.bottom, isExpanded ? 0 : 0.69) // 根据Figma: padding bottom 0.69px
             
             // 对话列表（展开时显示）
             if isExpanded {
@@ -59,18 +88,19 @@ struct DialogueReviewView: View {
                     )
                 }
                 }
-                .padding(.horizontal, 21.5)
-                .padding(.bottom, 21.5)
+                .padding(.horizontal, 24.68)
+                .padding(.bottom, 24.68)
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .background(AppColors.cardBackground)
+        .frame(maxWidth: .infinity, alignment: .leading) // 确保填充宽度但不超出父容器
+        .background(Color(hex: "#FFFAF5")) // 根据Figma: #FFFAF5
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(AppColors.border, lineWidth: 1.51)
+            RoundedRectangle(cornerRadius: 24) // 根据Figma: borderRadius 24px
+                .stroke(Color(hex: "#E8DCC6"), lineWidth: 0.69) // 根据Figma: #E8DCC6, strokeWeight 0.69px
         )
-        .cornerRadius(12)
-        .shadow(color: AppColors.border, radius: 0, x: 3, y: 3)
+        .cornerRadius(24)
+        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
     }
 }
 

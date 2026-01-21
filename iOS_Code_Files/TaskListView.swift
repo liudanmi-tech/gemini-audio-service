@@ -36,18 +36,25 @@ struct TaskListView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 16) {
-                            ForEach(viewModel.tasks) { task in
-                                NavigationLink(destination: TaskDetailView(taskId: task.id)) {
-                                    TaskCardView(task: task)
+                            // 按天分组显示（卡片间距 15.99px，四舍五入为 16px）
+                            ForEach(Array(viewModel.groupedTasks.keys.sorted(by: >)), id: \.self) { dateKey in
+                                VStack(alignment: .leading, spacing: 0) {
+                                    // 该分组下的任务卡片
+                                    ForEach(viewModel.groupedTasks[dateKey] ?? []) { task in
+                                        NavigationLink(destination: TaskDetailView(taskId: task.id)) {
+                                            TaskCardView(task: task)
+                                        }
+                                        .buttonStyle(PlainButtonStyle())
+                                        .padding(.horizontal, 20)
+                                    }
                                 }
-                                .buttonStyle(PlainButtonStyle())
                             }
                         }
-                        .padding(.horizontal, 24)
                         .padding(.top, 0)
+                        .padding(.bottom, 100) // 为底部悬浮按钮留出空间
                     }
                     .refreshable {
-                        viewModel.refreshTasks()
+                        await viewModel.refreshTasksAsync()
                     }
                 }
             }
@@ -58,13 +65,19 @@ struct TaskListView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TaskUploaded"))) { _ in
             viewModel.refreshTasks()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("NewTaskCreated"))) { _ in
+            viewModel.refreshTasks()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TaskAnalysisCompleted"))) { _ in
+            viewModel.refreshTasks()
+        }
     }
 }
 
 // Header视图
 struct HeaderView: View {
     var body: some View {
-        HStack {
+        HStack(alignment: .center, spacing: 0) {
             Text("碎片")
                 .font(AppFonts.headerTitle)
                 .foregroundColor(AppColors.headerText)
@@ -72,16 +85,17 @@ struct HeaderView: View {
             Spacer()
             
             Button(action: {
-                // TODO: 添加按钮功能
+                // TODO: 添加更多功能菜单
             }) {
                 Image(systemName: "ellipsis.circle")
-                    .font(.system(size: 32))
+                    .font(.system(size: 28))
                     .foregroundColor(AppColors.headerText)
+                    .frame(width: 44, height: 44)
             }
         }
         .padding(.horizontal, 24)
-        .padding(.vertical, 0)
-        .background(AppColors.background.opacity(0.9))
+        .padding(.vertical, 12)
+        .background(AppColors.headerBackground)
     }
 }
 

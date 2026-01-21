@@ -28,31 +28,37 @@ struct BottomNavView: View {
     @Binding var selectedTab: TabItem
     
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(TabItem.allCases, id: \.self) { tab in
-                BottomNavItem(
-                    tab: tab,
-                    isSelected: selectedTab == tab,
-                    action: {
-                        selectedTab = tab
-                    }
+        ZStack {
+            // 背景层
+            Color(hex: "#F2E6D6") // 根据要求：填充色值 #F2E6D6
+                .clipShape(RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight]))
+                .overlay(
+                    // 顶部边缘线（Stroke）
+                    RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight])
+                        .stroke(AppColors.BottomNav.borderLine, lineWidth: 1.38) // 根据 Figma: Stroke weight 1.38, color #8FA5B0
                 )
-                .frame(maxWidth: .infinity)
+                .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: -4) // Drop shadow 效果
+            
+            // 内容层
+            HStack(spacing: 0) {
+                ForEach(TabItem.allCases, id: \.self) { tab in
+                    BottomNavItem(
+                        tab: tab,
+                        isSelected: selectedTab == tab,
+                        action: {
+                            selectedTab = tab
+                        }
+                    )
+                    .frame(maxWidth: .infinity)
+                }
             }
+            .padding(.leading, 23.99) // 根据 Figma: Padding Left 23.99
+            .padding(.trailing, 23.99) // 根据 Figma: Padding Right 23.99
+            .padding(.top, 0) // 根据 Figma: Padding Top 0
+            .padding(.bottom, 0) // 根据 Figma: Padding Bottom 0
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 0)
-        .frame(height: 80)
-        .background(AppColors.background)
-        .overlay(
-            Rectangle()
-                .frame(height: 1.38)
-                .foregroundColor(AppColors.border)
-                .offset(y: -40),
-            alignment: .top
-        )
-        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: -4)
-        .clipShape(RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight]))
+        .frame(width: 380.74, height: 79.99) // 根据 Figma: Width 380.74, Height 79.99
+        .ignoresSafeArea(edges: .bottom) // 延伸到安全区域底部
     }
 }
 

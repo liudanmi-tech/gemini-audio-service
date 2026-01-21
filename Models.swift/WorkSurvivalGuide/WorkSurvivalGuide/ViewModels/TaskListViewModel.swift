@@ -25,8 +25,12 @@ class TaskListViewModel: ObservableObject {
             do {
                 let response = try await self.networkManager.getTaskList(date: date)
                 await MainActor.run {
-                    self.tasks = response.sessions
+                    // 合并任务列表，保留已有任务的 summary 字段（如果 API 返回的任务没有 summary）
+                    self.tasks = self.mergeTasks(apiTasks: response.sessions)
                     self.isLoading = false
+                    
+                    // 对于archived状态且没有summary的任务，异步获取详情补充summary
+                    self.loadMissingSummaries()
                 }
             } catch {
                 await MainActor.run {
@@ -41,6 +45,32 @@ class TaskListViewModel: ObservableObject {
     // 刷新任务列表
     func refreshTasks() {
         loadTasks()
+    }
+    
+    // 异步刷新任务列表（用于 refreshable）
+    func refreshTasksAsync() async {
+        await MainActor.run {
+            isLoading = true
+            errorMessage = nil
+        }
+        
+        do {
+            let response = try await networkManager.getTaskList(date: nil)
+            await MainActor.run {
+                // 合并任务列表，保留已有任务的 summary 字段（如果 API 返回的任务没有 summary）
+                self.tasks = self.mergeTasks(apiTasks: response.sessions)
+                self.isLoading = false
+                
+                // 对于archived状态且没有summary的任务，异步获取详情补充summary
+                self.loadMissingSummaries()
+            }
+        } catch {
+            await MainActor.run {
+                self.errorMessage = error.localizedDescription
+                self.isLoading = false
+                print("刷新任务失败: \(error)")
+            }
+        }
     }
     
     // 添加新任务（用于录制后创建）
@@ -72,6 +102,36 @@ class TaskListViewModel: ObservableObject {
         }
     }
     
+    // 更新任务状态（用于录音停止后更新状态）
+    func updateTaskStatus(_ updatedTask: TaskItem) {
+        print("🔄 [TaskListViewModel] ========== 更新任务状态 ==========")
+        print("🔄 [TaskListViewModel] 任务ID: \(updatedTask.id)")
+        print("🔄 [TaskListViewModel] 任务状态: \(updatedTask.status)")
+        
+        if let index = tasks.firstIndex(where: { $0.id == updatedTask.id }) {
+            print("✅ [TaskListViewModel] 找到任务，索引: \(index)")
+            tasks[index] = updatedTask
+            print("✅ [TaskListViewModel] 任务状态已更新")
+        } else {
+            print("⚠️ [TaskListViewModel] 未找到要更新的任务")
+        }
+    }
+    
+    // 删除任务（用于替换本地创建的卡片）
+    func deleteTask(taskId: String) {
+        print("🗑️ [TaskListViewModel] ========== 删除任务 ==========")
+        print("🗑️ [TaskListViewModel] 任务ID: \(taskId)")
+        print("🗑️ [TaskListViewModel] 当前任务数量: \(tasks.count)")
+        
+        if let index = tasks.firstIndex(where: { $0.id == taskId }) {
+            print("✅ [TaskListViewModel] 找到任务，索引: \(index)")
+            tasks.remove(at: index)
+            print("✅ [TaskListViewModel] 任务已删除，当前任务数量: \(tasks.count)")
+        } else {
+            print("⚠️ [TaskListViewModel] 未找到要删除的任务")
+        }
+    }
+    
     // 按天分组任务
     var groupedTasks: [String: [TaskItem]] {
         let formatter = DateFormatter()
@@ -98,6 +158,75 @@ class TaskListViewModel: ObservableObject {
         } else {
             formatter.dateFormat = "yyyy年MM月dd日"
             return formatter.string(from: date)
+        }
+    }
+    
+    // 合并任务列表，保留已有任务的 summary 字段
+    private func mergeTasks(apiTasks: [TaskItem]) -> [TaskItem] {
+        // 创建已有任务的 summary 映射表（以 task.id 为 key）
+        let existingSummaries = Dictionary(uniqueKeysWithValues: tasks.compactMap { task in
+            task.summary != nil ? (task.id, task.summary) : nil
+        })
+        
+        // 更新 API 返回的任务，如果 API 任务没有 summary 但本地有，则保留本地的 summary
+        return apiTasks.map { apiTask in
+            if apiTask.summary == nil || apiTask.summary?.isEmpty == true,
+               let existingSummary = existingSummaries[apiTask.id] {
+                // API 任务没有 summary，但本地有，创建新任务保留 summary
+                return TaskItem(
+                    id: apiTask.id,
+                    title: apiTask.title,
+                    startTime: apiTask.startTime,
+                    endTime: apiTask.endTime,
+                    duration: apiTask.duration,
+                    tags: apiTask.tags,
+                    status: apiTask.status,
+                    emotionScore: apiTask.emotionScore,
+                    speakerCount: apiTask.speakerCount,
+                    summary: existingSummary
+                )
+            } else {
+                // API 任务有 summary 或本地也没有，直接使用 API 任务
+                return apiTask
+            }
+        }
+    }
+    
+    // 为archived状态且没有summary的任务异步加载summary
+    private func loadMissingSummaries() {
+        // 找出所有archived状态且没有summary的任务
+        let tasksNeedingSummary = tasks.filter { task in
+            task.status == .archived && (task.summary == nil || task.summary?.isEmpty == true)
+        }
+        
+        // 异步获取每个任务的详情
+        for task in tasksNeedingSummary {
+            Task {
+                do {
+                    let detail = try await networkManager.getTaskDetail(sessionId: task.id)
+                    // 更新任务的summary
+                    await MainActor.run {
+                        if let index = self.tasks.firstIndex(where: { $0.id == task.id }) {
+                            let updatedTask = TaskItem(
+                                id: task.id,
+                                title: task.title,
+                                startTime: task.startTime,
+                                endTime: task.endTime,
+                                duration: task.duration,
+                                tags: task.tags,
+                                status: task.status,
+                                emotionScore: task.emotionScore,
+                                speakerCount: task.speakerCount,
+                                summary: detail.summary
+                            )
+                            self.tasks[index] = updatedTask
+                            print("✅ [TaskListViewModel] 已为任务 \(task.id) 补充summary")
+                        }
+                    }
+                } catch {
+                    print("⚠️ [TaskListViewModel] 获取任务 \(task.id) 的summary失败: \(error)")
+                }
+            }
         }
     }
 }

@@ -17,7 +17,12 @@ struct ContentView: View {
             if authManager.isLoggedIn {
                 NavigationStack {
                     ZStack {
+                        // 背景色（底层）
                         AppColors.background
+                            .ignoresSafeArea()
+                        
+                        // 信纸网格底纹（在背景色上方，但不覆盖底部导航栏）
+                        PaperGridBackground()
                             .ignoresSafeArea()
                         
                         VStack(spacing: 0) {
@@ -48,11 +53,15 @@ struct ContentView: View {
                                     }
                                 }
                             }
-                            
-                            // 底部导航栏
+                        }
+                        
+                        // 底部导航栏（最顶层，不被网格覆盖）
+                        VStack {
+                            Spacer()
                             BottomNavView(selectedTab: $selectedTab)
                         }
                     }
+                    .ignoresSafeArea(edges: .bottom) // 整个 ZStack 延伸到安全区域底部
                     .navigationBarHidden(true)
                 }
             } else {
