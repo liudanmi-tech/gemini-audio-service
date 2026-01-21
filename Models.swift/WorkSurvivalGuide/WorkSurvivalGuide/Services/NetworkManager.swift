@@ -443,5 +443,54 @@ class NetworkManager {
         
         return data
     }
+    
+    // 获取技能列表
+    func getSkillsList(
+        category: String? = nil,
+        enabled: Bool = true
+    ) async throws -> SkillListResponse {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据获取技能列表")
+            // Mock 模式下返回空列表
+            return SkillListResponse(skills: [])
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 获取技能列表")
+        var parameters: [String: Any] = [
+            "enabled": enabled
+        ]
+        
+        if let category = category {
+            parameters["category"] = category
+        }
+        
+        let response = try await AF.request(
+            "\(baseURL)/skills",
+            method: .get,
+            parameters: parameters,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 30 }
+        )
+        .serializingDecodable(APIResponse<SkillListResponse>.self)
+        .value
+        
+        guard response.code == 200, let data = response.data else {
+            throw NSError(
+                domain: "NetworkError",
+                code: response.code,
+                userInfo: [NSLocalizedDescriptionKey: response.message]
+            )
+        }
+        
+        print("✅ [NetworkManager] 技能列表获取成功")
+        print("  技能数量: \(data.skills.count)")
+        
+        return data
+    }
 }
 

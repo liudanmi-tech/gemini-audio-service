@@ -9,15 +9,15 @@ import SwiftUI
 
 enum TabItem: String, CaseIterable {
     case fragments = "碎片"
-    case status = "状态"
+    case skills = "技能"
     case mine = "我的"
     
     var iconName: String {
         switch self {
         case .fragments:
             return "square.grid.2x2.fill"
-        case .status:
-            return "chart.bar.fill"
+        case .skills:
+            return "sparkles" // 技能图标
         case .mine:
             return "person.fill"
         }

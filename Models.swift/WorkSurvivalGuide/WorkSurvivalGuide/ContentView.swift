@@ -33,8 +33,8 @@ struct ContentView: View {
                                     switch selectedTab {
                                     case .fragments:
                                         TaskListView()
-                                    case .status:
-                                        StatusView()
+                                    case .skills:
+                                        SkillsView()
                                     case .mine:
                                         MineView()
                                     }
