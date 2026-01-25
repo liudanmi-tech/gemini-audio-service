@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct TaskListView: View {
-    @StateObject private var viewModel = TaskListViewModel()
+    @ObservedObject private var viewModel = TaskListViewModel.shared
     
     var body: some View {
         ZStack {
@@ -64,7 +64,10 @@ struct TaskListView: View {
             }
         }
         .onAppear {
-            viewModel.loadTasks()
+            // 只在数据为空且不在加载中时才加载
+            if viewModel.tasks.isEmpty && !viewModel.isLoading {
+                viewModel.loadTasks()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TaskUploaded"))) { _ in
             viewModel.refreshTasks()

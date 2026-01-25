@@ -33,7 +33,16 @@ class NetworkManager {
     
     // 获取认证 Token（从Keychain读取）
     private func getAuthToken() -> String {
-        return KeychainManager.shared.getToken() ?? ""
+        let token = KeychainManager.shared.getToken() ?? ""
+        if token.isEmpty {
+            print("⚠️ [NetworkManager] Token为空，请先登录")
+        }
+        return token
+    }
+    
+    // 检查是否有有效的认证token
+    func hasValidToken() -> Bool {
+        return !(KeychainManager.shared.getToken() ?? "").isEmpty
     }
     
     // 获取任务列表（支持 Mock 和真实 API）
@@ -56,6 +65,8 @@ class NetworkManager {
         
         // 使用真实 API
         print("🌐 [Real] 使用真实 API 获取任务列表")
+        let requestStartTime = Date()
+        
         var parameters: [String: Any] = [
             "page": page,
             "page_size": pageSize
@@ -71,52 +82,85 @@ class NetworkManager {
             parameters["status"] = status
         }
         
+        let requestURL = "\(baseURL)/tasks/sessions"
+        print("📡 [NetworkManager] 请求URL: \(requestURL)")
+        print("📡 [NetworkManager] 请求参数: \(parameters)")
+        print("📡 [NetworkManager] 请求开始时间: \(requestStartTime)")
+        
         let dataTask = AF.request(
-            "\(baseURL)/tasks/sessions",
+            requestURL,
             method: .get,
             parameters: parameters,
             headers: [
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 120 } // 设置超时时间为120秒
+            requestModifier: { request in
+                request.timeoutInterval = 10 // 优化超时时间为10秒
+                // 添加请求开始时间戳（用于诊断）
+                request.setValue("\(requestStartTime.timeIntervalSince1970)", forHTTPHeaderField: "X-Request-Start")
+            }
         )
         
         // 先获取响应用于检查状态码
+        let responseStartTime = Date()
         let dataResponse = await dataTask.serializingData().response
+        let responseTime = Date().timeIntervalSince(responseStartTime)
+        let totalRequestTime = Date().timeIntervalSince(requestStartTime)
+        
+        print("⏱️ [NetworkManager] 请求耗时统计:")
+        print("   - 响应时间: \(String(format: "%.3f", responseTime))秒")
+        print("   - 总耗时: \(String(format: "%.3f", totalRequestTime))秒")
+        
         let httpResponse = dataResponse.response
+        let responseData = dataResponse.data ?? Data()
         
         // 检查 HTTP 状态码
-        if let statusCode = httpResponse?.statusCode, statusCode == 401 {
-            print("🔐 [NetworkManager] 🔴 检测到 401 状态码，立即清除登录状态")
-            DispatchQueue.main.async {
-                AuthManager.shared.logout()
-            }
-            
-            // 尝试解析 FastAPI 错误格式
-            if let responseData = dataResponse.data,
-               let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+        if let statusCode = httpResponse?.statusCode {
+            if statusCode == 401 {
+                print("🔐 [NetworkManager] 🔴 检测到 401 状态码，立即清除登录状态")
+                DispatchQueue.main.async {
+                    AuthManager.shared.logout()
+                }
+                
+                // 尝试解析 FastAPI 错误格式
+                if !responseData.isEmpty,
+                   let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+                    throw NSError(
+                        domain: "NetworkError",
+                        code: 401,
+                        userInfo: [NSLocalizedDescriptionKey: errorResponse.detail]
+                    )
+                } else {
+                    throw NSError(
+                        domain: "NetworkError",
+                        code: 401,
+                        userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                    )
+                }
+            } else if statusCode != 200 {
+                // 其他非200状态码
+                print("❌ [NetworkManager] HTTP 状态码: \(statusCode)")
+                if !responseData.isEmpty, let responseString = String(data: responseData, encoding: .utf8) {
+                    print("   响应内容: \(responseString)")
+                }
                 throw NSError(
                     domain: "NetworkError",
-                    code: 401,
-                    userInfo: [NSLocalizedDescriptionKey: errorResponse.detail]
-                )
-            } else {
-                throw NSError(
-                    domain: "NetworkError",
-                    code: 401,
-                    userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode) 错误"]
                 )
             }
         }
         
-        // 先获取原始响应数据用于调试
-        let responseData = try await dataTask.serializingData().value
         print("📥 [NetworkManager] 收到原始响应数据:")
         print("   - 数据长度: \(responseData.count) 字节")
-        if let responseString = String(data: responseData, encoding: .utf8) {
+        
+        // 只在调试模式下打印完整响应内容（避免日志过多）
+        #if DEBUG
+        if responseData.count < 1000, let responseString = String(data: responseData, encoding: .utf8) {
             print("   - 响应内容: \(responseString)")
         }
+        #endif
         
         // 检查响应是否为空
         guard !responseData.isEmpty else {
@@ -128,9 +172,11 @@ class NetworkManager {
             )
         }
         
-        // 尝试解析 JSON（如果失败，可能是 FastAPI 错误格式）
+        // 尝试解析 JSON（使用已获取的响应数据）
         do {
-            let response = try await dataTask.serializingDecodable(APIResponse<TaskListResponse>.self).value
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let response = try decoder.decode(APIResponse<TaskListResponse>.self, from: responseData)
         
             print("📥 [NetworkManager] 解析后的响应:")
             print("   - code: \(response.code)")
@@ -348,7 +394,7 @@ class NetworkManager {
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 120 } // 设置超时时间为120秒
+            requestModifier: { $0.timeoutInterval = 10 } // 优化超时时间为10秒
         )
         .serializingDecodable(APIResponse<TaskDetailResponse>.self)
         .value
@@ -466,7 +512,16 @@ class NetworkManager {
             parameters["category"] = category
         }
         
-        let response = try await AF.request(
+        // 检查token是否为空
+        guard hasValidToken() else {
+            throw NSError(
+                domain: "NetworkError",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "请先登录"]
+            )
+        }
+        
+        let dataTask = AF.request(
             "\(baseURL)/skills",
             method: .get,
             parameters: parameters,
@@ -474,10 +529,45 @@ class NetworkManager {
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 30 }
+            requestModifier: { $0.timeoutInterval = 10 } // 优化超时时间为10秒
         )
-        .serializingDecodable(APIResponse<SkillListResponse>.self)
-        .value
+        
+        // 先检查HTTP状态码
+        let dataResponse = await dataTask.serializingData().response
+        let responseData = dataResponse.data ?? Data()
+        
+        if let statusCode = dataResponse.response?.statusCode {
+            if statusCode == 401 {
+                print("🔐 [NetworkManager] 技能列表请求返回 401，认证失败")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: 401,
+                    userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                )
+            } else if statusCode != 200 {
+                print("❌ [NetworkManager] 技能列表 HTTP 状态码: \(statusCode)")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode) 错误"]
+                )
+            }
+        }
+        
+        // 检查响应数据是否为空
+        guard !responseData.isEmpty else {
+            print("❌ [NetworkManager] 技能列表响应数据为空")
+            throw NSError(
+                domain: "NetworkError",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "服务端返回空响应"]
+            )
+        }
+        
+        // 使用已获取的响应数据解析
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let response = try decoder.decode(APIResponse<SkillListResponse>.self, from: responseData)
         
         guard response.code == 200, let data = response.data else {
             throw NSError(
@@ -492,5 +582,487 @@ class NetworkManager {
         
         return data
     }
+    
+    // MARK: - 档案管理API
+    
+    // 获取档案列表
+    func getProfilesList() async throws -> ProfileListResponse {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据获取档案列表")
+            return ProfileListResponse(profiles: [])
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 获取档案列表")
+        
+        // 检查token是否为空
+        guard hasValidToken() else {
+            throw NSError(
+                domain: "NetworkError",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "请先登录"]
+            )
+        }
+        
+        let dataTask = AF.request(
+            "\(baseURL)/profiles",
+            method: .get,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 10 }
+        )
+        
+        // 先检查HTTP状态码
+        let dataResponse = await dataTask.serializingData().response
+        let responseData = dataResponse.data ?? Data()
+        
+        if let statusCode = dataResponse.response?.statusCode {
+            if statusCode == 401 {
+                print("🔐 [NetworkManager] 档案列表请求返回 401，认证失败")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: 401,
+                    userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                )
+            } else if statusCode != 200 {
+                print("❌ [NetworkManager] 档案列表 HTTP 状态码: \(statusCode)")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode) 错误"]
+                )
+            }
+        }
+        
+        // 检查响应数据是否为空
+        guard !responseData.isEmpty else {
+            print("❌ [NetworkManager] 档案列表响应数据为空")
+            throw NSError(
+                domain: "NetworkError",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "服务端返回空响应"]
+            )
+        }
+        
+        // 打印原始响应用于调试
+        if let responseString = String(data: responseData, encoding: .utf8) {
+            print("📥 [NetworkManager] 档案列表响应: \(responseString.prefix(500))...") // 只打印前500字符
+        }
+        
+        // 使用已获取的响应数据解析
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let profiles = try decoder.decode([Profile].self, from: responseData)
+        
+        // 打印每个档案的photoUrl
+        for profile in profiles {
+            print("📷 [NetworkManager] 档案 \(profile.id) photoUrl: \(profile.photoUrl ?? "nil")")
+        }
+        
+        let response = ProfileListResponse(profiles: profiles)
+        print("✅ [NetworkManager] 档案列表获取成功，数量: \(response.profiles.count)")
+        return response
+    }
+    
+    // 创建档案
+    func createProfile(_ profile: Profile) async throws -> Profile {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据创建档案")
+            return profile
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 创建档案")
+        
+        // 构建请求参数（只包含服务器需要的字段）
+        let parameters: [String: Any] = [
+            "name": profile.name,
+            "relationship": profile.relationship,
+            "photo_url": profile.photoUrl as Any,
+            "notes": profile.notes as Any,
+            "audio_session_id": profile.audioSessionId as Any,
+            "audio_segment_id": profile.audioSegmentId as Any,
+            "audio_start_time": profile.audioStartTime as Any,
+            "audio_end_time": profile.audioEndTime as Any,
+            "audio_url": profile.audioUrl as Any
+        ]
+        
+        let response = try await AF.request(
+            "\(baseURL)/profiles",
+            method: .post,
+            parameters: parameters,
+            encoding: JSONEncoding.default,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 10 }
+        )
+        .serializingData()
+        .response
+        
+        // 检查状态码
+        if let statusCode = response.response?.statusCode {
+            print("📊 [NetworkManager] 创建档案 HTTP 状态码: \(statusCode)")
+            if statusCode != 201 && statusCode != 200 {
+                if let data = response.data, let errorString = String(data: data, encoding: .utf8) {
+                    print("❌ [NetworkManager] 创建档案错误响应: \(errorString)")
+                }
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode)"]
+                )
+            }
+        }
+        
+        guard let data = response.data else {
+            throw NSError(
+                domain: "NetworkError",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "响应数据为空"]
+            )
+        }
+        
+        // 打印原始响应用于调试
+        if let responseString = String(data: data, encoding: .utf8) {
+            print("📥 [NetworkManager] 创建档案响应: \(responseString)")
+        }
+        
+        // 尝试解析响应
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let profile = try decoder.decode(Profile.self, from: data)
+        
+        print("✅ [NetworkManager] 档案创建成功，ID: \(profile.id)")
+        return profile
+    }
+    
+    // 更新档案
+    func updateProfile(_ profile: Profile) async throws -> Profile {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据更新档案")
+            return profile
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 更新档案")
+        
+        // 构建请求参数（只包含服务器需要的字段）
+        var parameters: [String: Any] = [:]
+        if !profile.name.isEmpty {
+            parameters["name"] = profile.name
+        }
+        if !profile.relationship.isEmpty {
+            parameters["relationship"] = profile.relationship
+        }
+        if let photoUrl = profile.photoUrl {
+            parameters["photo_url"] = photoUrl
+        }
+        if let notes = profile.notes {
+            parameters["notes"] = notes
+        }
+        if let audioSessionId = profile.audioSessionId {
+            parameters["audio_session_id"] = audioSessionId
+        }
+        if let audioSegmentId = profile.audioSegmentId {
+            parameters["audio_segment_id"] = audioSegmentId
+        }
+        if let audioStartTime = profile.audioStartTime {
+            parameters["audio_start_time"] = audioStartTime
+        }
+        if let audioEndTime = profile.audioEndTime {
+            parameters["audio_end_time"] = audioEndTime
+        }
+        if let audioUrl = profile.audioUrl {
+            parameters["audio_url"] = audioUrl
+        }
+        
+        // 检查token是否为空
+        guard hasValidToken() else {
+            throw NSError(
+                domain: "NetworkError",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "请先登录"]
+            )
+        }
+        
+        print("📤 [NetworkManager] 更新档案请求:")
+        print("   URL: \(baseURL)/profiles/\(profile.id)")
+        print("   参数: \(parameters)")
+        
+        let dataTask = AF.request(
+            "\(baseURL)/profiles/\(profile.id)",
+            method: .put,
+            parameters: parameters,
+            encoding: JSONEncoding.default,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 30 } // 增加超时时间到30秒
+        )
+        
+        // 先检查HTTP状态码
+        let dataResponse = await dataTask.serializingData().response
+        let responseData = dataResponse.data ?? Data()
+        
+        if let statusCode = dataResponse.response?.statusCode {
+            if statusCode == 401 {
+                print("🔐 [NetworkManager] 更新档案返回 401，认证失败")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: 401,
+                    userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                )
+            } else if statusCode != 200 {
+                print("❌ [NetworkManager] 更新档案 HTTP 状态码: \(statusCode)")
+                if !responseData.isEmpty, let responseString = String(data: responseData, encoding: .utf8) {
+                    print("   响应内容: \(responseString)")
+                }
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode) 错误"]
+                )
+            }
+        }
+        
+        // 检查响应数据是否为空
+        guard !responseData.isEmpty else {
+            print("❌ [NetworkManager] 更新档案响应数据为空")
+            throw NSError(
+                domain: "NetworkError",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "服务端返回空响应"]
+            )
+        }
+        
+        // 打印原始响应用于调试
+        if let responseString = String(data: responseData, encoding: .utf8) {
+            print("📥 [NetworkManager] 更新档案响应: \(responseString)")
+        }
+        
+        // 使用已获取的响应数据解析
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        let updatedProfile = try decoder.decode(Profile.self, from: responseData)
+        
+        print("✅ [NetworkManager] 档案更新成功，ID: \(updatedProfile.id)")
+        print("📷 [NetworkManager] 更新后的photoUrl: \(updatedProfile.photoUrl ?? "nil")")
+        return updatedProfile
+    }
+    
+    // 删除档案
+    func deleteProfile(_ profileId: String) async throws {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据删除档案")
+            return
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 删除档案")
+        let response = try await AF.request(
+            "\(baseURL)/profiles/\(profileId)",
+            method: .delete,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 10 }
+        )
+        .validate(statusCode: 200..<300)
+        .serializingData()
+        .value
+        
+        print("✅ [NetworkManager] 档案删除成功")
+    }
+    
+    // MARK: - 图片上传API
+    
+    // 上传档案照片
+    func uploadProfilePhoto(imageData: Data) async throws -> String {
+        // 检查token是否为空
+        guard hasValidToken() else {
+            throw NSError(
+                domain: "NetworkError",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "请先登录"]
+            )
+        }
+        
+        print("🌐 [NetworkManager] 上传档案照片")
+        print("  图片大小: \(imageData.count) 字节")
+        
+        let uploadTask = AF.upload(
+            multipartFormData: { multipartFormData in
+                // 添加图片文件
+                multipartFormData.append(
+                    imageData,
+                    withName: "file",
+                    fileName: "profile_photo.jpg",
+                    mimeType: "image/jpeg"
+                )
+            },
+            to: "\(baseURL)/profiles/upload-photo",
+            method: .post,
+            headers: [
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 60 } // 图片上传到OSS需要更长时间，增加到60秒
+        )
+        
+        // 监听上传进度
+        uploadTask.uploadProgress { progress in
+            print("📤 [NetworkManager] 图片上传进度: \(Int(progress.fractionCompleted * 100))%")
+        }
+        
+        // 先获取响应数据用于检查状态码和解析
+        let dataResponse = await uploadTask.serializingData().response
+        let responseData = dataResponse.data ?? Data()
+        
+        if let statusCode = dataResponse.response?.statusCode {
+            if statusCode == 401 {
+                print("🔐 [NetworkManager] 图片上传返回 401，认证失败")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: 401,
+                    userInfo: [NSLocalizedDescriptionKey: "认证失败，请重新登录"]
+                )
+            } else if statusCode != 200 {
+                print("❌ [NetworkManager] 图片上传 HTTP 状态码: \(statusCode)")
+                if !responseData.isEmpty, let responseString = String(data: responseData, encoding: .utf8) {
+                    print("   响应内容: \(responseString)")
+                }
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode) 错误"]
+                )
+            }
+        }
+        
+        // 检查响应数据是否为空
+        guard !responseData.isEmpty else {
+            print("❌ [NetworkManager] 图片上传响应数据为空")
+            throw NSError(
+                domain: "NetworkError",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "服务端返回空响应"]
+            )
+        }
+        
+        // 打印原始响应用于调试
+        if let responseString = String(data: responseData, encoding: .utf8) {
+            print("📥 [NetworkManager] 图片上传响应: \(responseString)")
+        }
+        
+        // 解析响应
+        struct PhotoUploadResponse: Codable {
+            let photo_url: String
+        }
+        
+        let decoder = JSONDecoder()
+        let response = try decoder.decode(PhotoUploadResponse.self, from: responseData)
+        
+        print("✅ [NetworkManager] 图片上传成功")
+        print("  图片URL: \(response.photo_url)")
+        
+        return response.photo_url
+    }
+    
+    // MARK: - 音频片段API
+    
+    // 获取对话的音频片段列表
+    func getAudioSegments(sessionId: String) async throws -> AudioSegmentListResponse {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据获取音频片段列表")
+            return AudioSegmentListResponse(segments: [])
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 获取音频片段列表")
+        let dataResponse = try await AF.request(
+            "\(baseURL)/tasks/sessions/\(sessionId)/audio-segments",
+            method: .get,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 10 }
+        )
+        .serializingData()
+        .value
+        
+        // 打印原始响应用于调试
+        if let responseString = String(data: dataResponse, encoding: .utf8) {
+            print("📥 [NetworkManager] 音频片段列表响应: \(responseString)")
+        }
+        
+        // 尝试解析响应（服务器直接返回数组）
+        let decoder = JSONDecoder()
+        let segments = try decoder.decode([AudioSegment].self, from: dataResponse)
+        let response = AudioSegmentListResponse(segments: segments)
+        
+        print("✅ [NetworkManager] 音频片段列表获取成功，数量: \(response.segments.count)")
+        return response
+    }
+    
+    // 提取音频片段
+    func extractAudioSegment(sessionId: String, startTime: Double, endTime: Double, speaker: String) async throws -> AudioSegmentExtractResponse {
+        // 如果使用 Mock 数据
+        if config.useMockData {
+            print("📦 [Mock] 使用 Mock 数据提取音频片段")
+            return AudioSegmentExtractResponse(
+                segmentId: UUID().uuidString,
+                audioUrl: "",
+                duration: endTime - startTime
+            )
+        }
+        
+        // 使用真实 API
+        print("🌐 [Real] 使用真实 API 提取音频片段")
+        let parameters: [String: Any] = [
+            "start_time": startTime,
+            "end_time": endTime,
+            "speaker": speaker
+        ]
+        
+        let response = try await AF.request(
+            "\(baseURL)/tasks/sessions/\(sessionId)/extract-segment",
+            method: .post,
+            parameters: parameters,
+            encoding: JSONEncoding.default,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 30 } // 音频提取可能需要更长时间
+        )
+        .serializingDecodable(APIResponse<AudioSegmentExtractResponse>.self)
+        .value
+        
+        guard response.code == 200, let data = response.data else {
+            throw NSError(
+                domain: "NetworkError",
+                code: response.code,
+                userInfo: [NSLocalizedDescriptionKey: response.message]
+            )
+        }
+        
+        print("✅ [NetworkManager] 音频片段提取成功")
+        return data
+    }
+}
+
+// 空响应类型（用于DELETE等不需要返回数据的请求）
+struct EmptyResponse: Codable {
 }
 

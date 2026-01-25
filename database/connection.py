@@ -23,9 +23,18 @@ DATABASE_URL = os.getenv(
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,  # 设置为True可以看到SQL日志
-    pool_size=10,
-    max_overflow=20,
+    pool_size=20,  # 增加连接池大小
+    max_overflow=30,  # 增加溢出连接数
     pool_pre_ping=True,  # 连接前检查连接是否有效
+    pool_recycle=3600,  # 连接回收时间（秒），避免连接过期
+    connect_args={
+        "server_settings": {
+            "application_name": "gemini_audio_service",
+            "tcp_keepalives_idle": "600",  # TCP keepalive设置，减少连接断开
+            "tcp_keepalives_interval": "30",
+            "tcp_keepalives_count": "3",
+        }
+    }
 )
 
 # 创建异步会话工厂

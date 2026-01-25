@@ -149,64 +149,22 @@ struct TaskDetailView: View {
             }
             .navigationBarHidden(true)
             .onAppear {
-                // #region agent log
-                let logData: [String: Any] = [
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": "A",
-                    "location": "TaskDetailView.swift:102",
-                    "message": "onAppear called",
-                    "data": [
-                        "taskId": task.id,
-                        "taskStatus": task.status.rawValue,
-                        "detailIsNil": detail == nil,
-                        "isLoading": isLoading,
-                        "hasEmotionScore": task.emotionScore != nil
-                    ],
-                    "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                ]
-                if let jsonData = try? JSONSerialization.data(withJSONObject: logData),
-                   let jsonString = String(data: jsonData, encoding: .utf8) {
-                    let logPath = "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log"
-                    if let fileHandle = FileHandle(forWritingAtPath: logPath) {
-                        fileHandle.seekToEndOfFile()
-                        fileHandle.write("\n".data(using: .utf8)!)
-                        fileHandle.write(jsonString.data(using: .utf8)!)
-                        fileHandle.closeFile()
-                    } else {
-                        try? jsonString.write(toFile: logPath, atomically: true, encoding: .utf8)
-                    }
+                // 优先使用缓存
+                let cacheManager = DetailCacheManager.shared
+                
+                // 先检查缓存
+                if let cachedDetail = cacheManager.getCachedDetail(sessionId: task.id) {
+                    print("✅ [TaskDetailView] 使用缓存的详情数据: \(task.id)")
+                    self.detail = cachedDetail
+                    self.isLoading = false
+                    self.errorMessage = nil
+                    generateMoodStats()
+                    return
                 }
-                // #endregion
                 
                 // 如果任务已完成，立即显示基本信息，然后后台加载完整详情
                 if task.status == .archived {
-                    // #region agent log
-                    let logData2: [String: Any] = [
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "B",
-                        "location": "TaskDetailView.swift:115",
-                        "message": "Task is archived, checking detail",
-                        "data": [
-                            "detailIsNil": detail == nil,
-                            "willCreateTemp": detail == nil
-                        ],
-                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                    ]
-                    if let jsonData = try? JSONSerialization.data(withJSONObject: logData2),
-                       let jsonString = String(data: jsonData, encoding: .utf8) {
-                        if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
-                            fileHandle.seekToEndOfFile()
-                            fileHandle.write("\n".data(using: .utf8)!)
-                            fileHandle.write(jsonString.data(using: .utf8)!)
-                            fileHandle.closeFile()
-                        }
-                    }
-                    // #endregion
-                    
                     // 先使用任务基本信息创建临时详情，让用户立即看到内容
-                    // 使用 Task 确保在主线程上执行，避免状态更新延迟
                     Task { @MainActor in
                         if self.detail == nil {
                             // 创建临时详情对象，使用任务基本信息
@@ -302,142 +260,56 @@ struct TaskDetailView: View {
     }
     
     private func loadTaskDetail(silent: Bool = false) {
-        // #region agent log
-        let logData: [String: Any] = [
-            "sessionId": "debug-session",
-            "runId": "run1",
-            "hypothesisId": "D",
-            "location": "TaskDetailView.swift:144",
-            "message": "loadTaskDetail called",
-            "data": [
-                "detailIsNil": detail == nil,
-                "hasDetail": detail != nil,
-                "detailDialoguesCount": detail?.dialogues.count ?? -1,
-                "isLoadingBefore": isLoading,
-                "silent": silent,
-                "willSkip": (detail != nil && !(detail?.dialogues.isEmpty ?? true))
-            ],
-            "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-        ]
-        if let jsonData = try? JSONSerialization.data(withJSONObject: logData),
-           let jsonString = String(data: jsonData, encoding: .utf8) {
-            if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
-                fileHandle.seekToEndOfFile()
-                fileHandle.write("\n".data(using: .utf8)!)
-                fileHandle.write(jsonString.data(using: .utf8)!)
-                fileHandle.closeFile()
+        let cacheManager = DetailCacheManager.shared
+        
+        // 先检查缓存
+        if let cachedDetail = cacheManager.getCachedDetail(sessionId: task.id) {
+            print("✅ [TaskDetailView] 使用缓存的详情数据: \(task.id)")
+            Task { @MainActor in
+                self.detail = cachedDetail
+                self.isLoading = false
+                self.errorMessage = nil
+                generateMoodStats()
             }
+            return
         }
-        // #endregion
         
         // 如果已经有完整详情，不重复加载
         if let existingDetail = detail, !existingDetail.dialogues.isEmpty {
-            // #region agent log
-            let logData2: [String: Any] = [
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "D",
-                "location": "TaskDetailView.swift:148",
-                "message": "Skipping load - detail already complete",
-                "data": ["dialoguesCount": existingDetail.dialogues.count],
-                "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-            ]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: logData2),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
-                    fileHandle.seekToEndOfFile()
-                    fileHandle.write("\n".data(using: .utf8)!)
-                    fileHandle.write(jsonString.data(using: .utf8)!)
-                    fileHandle.closeFile()
-                }
-            }
-            // #endregion
+            return
+        }
+        
+        // 如果正在加载中，跳过重复请求
+        if cacheManager.isLoadingDetail(for: task.id) {
+            print("⚠️ [TaskDetailView] 详情正在加载中，跳过重复请求")
             return
         }
         
         // 只在没有详情且不是静默模式时显示加载提示
         // 如果已有临时详情（silent=true），不显示加载提示
         if !silent && detail == nil {
-            // #region agent log
-            let logData3: [String: Any] = [
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "E",
-                "location": "TaskDetailView.swift:151",
-                "message": "Setting isLoading=true (detail is nil and not silent)",
-                "data": ["isLoadingBefore": isLoading],
-                "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-            ]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: logData3),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
-                    fileHandle.seekToEndOfFile()
-                    fileHandle.write("\n".data(using: .utf8)!)
-                    fileHandle.write(jsonString.data(using: .utf8)!)
-                    fileHandle.closeFile()
-                }
-            }
-            // #endregion
             isLoading = true
-        } else {
-            // #region agent log
-            let logData4: [String: Any] = [
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": "E",
-                "location": "TaskDetailView.swift:154",
-                "message": "Not setting isLoading (silent mode or detail exists)",
-                "data": [
-                    "isLoading": isLoading,
-                    "silent": silent,
-                    "detailDialoguesCount": detail?.dialogues.count ?? -1
-                ],
-                "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-            ]
-            if let jsonData = try? JSONSerialization.data(withJSONObject: logData4),
-               let jsonString = String(data: jsonData, encoding: .utf8) {
-                if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
-                    fileHandle.seekToEndOfFile()
-                    fileHandle.write("\n".data(using: .utf8)!)
-                    fileHandle.write(jsonString.data(using: .utf8)!)
-                    fileHandle.closeFile()
-                }
-            }
-            // #endregion
         }
         errorMessage = nil
         
+        // 设置加载状态
+        cacheManager.setLoadingDetail(true, for: task.id)
+        
         Task {
+            defer {
+                // 清除加载状态
+                cacheManager.setLoadingDetail(false, for: task.id)
+            }
+            
             do {
                 print("📋 [TaskDetailView] 开始加载任务详情，sessionId: \(task.id)")
                 let taskDetail = try await NetworkManager.shared.getTaskDetail(sessionId: task.id)
                 print("✅ [TaskDetailView] 任务详情加载成功")
+                
+                // 缓存详情
+                cacheManager.cacheDetail(taskDetail, for: task.id)
+                
                 await MainActor.run {
-                    // #region agent log
-                    let logData: [String: Any] = [
-                        "sessionId": "debug-session",
-                        "runId": "run1",
-                        "hypothesisId": "F",
-                        "location": "TaskDetailView.swift:161",
-                        "message": "Task detail loaded successfully",
-                        "data": [
-                            "isLoadingBefore": self.isLoading,
-                            "detailDialoguesCount": taskDetail.dialogues.count,
-                            "willSetIsLoadingFalse": true
-                        ],
-                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                    ]
-                    if let jsonData = try? JSONSerialization.data(withJSONObject: logData),
-                       let jsonString = String(data: jsonData, encoding: .utf8) {
-                        if let fileHandle = FileHandle(forWritingAtPath: "/Users/liudan/Desktop/AI军师/gemini-audio-service/.cursor/debug.log") {
-                            fileHandle.seekToEndOfFile()
-                            fileHandle.write("\n".data(using: .utf8)!)
-                            fileHandle.write(jsonString.data(using: .utf8)!)
-                            fileHandle.closeFile()
-                        }
-                    }
-                    // #endregion
-                    
                     self.detail = taskDetail
                     self.isLoading = false
                     self.errorMessage = nil

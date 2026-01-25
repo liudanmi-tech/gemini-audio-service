@@ -361,6 +361,46 @@ class NetworkManager {
     // MARK: - 技能相关 API
     
     /// 获取技能详情（包含 SKILL.md 内容）
+    // 获取技能列表
+    func getSkillsList(
+        category: String? = nil,
+        enabled: Bool = true
+    ) async throws -> SkillListResponse {
+        // 检查是否有 token
+        let token = getAuthToken()
+        guard !token.isEmpty else {
+            print("⚠️ [NetworkManager] 未登录，无法获取技能列表")
+            throw NSError(
+                domain: "NetworkError",
+                code: 401,
+                userInfo: [NSLocalizedDescriptionKey: "未登录，请先登录"]
+            )
+        }
+        
+        var parameters: [String: Any] = [
+            "enabled": enabled
+        ]
+        
+        if let category = category {
+            parameters["category"] = category
+        }
+        
+        let response = await AF.request(
+            "\(baseURL)/skills",
+            method: .get,
+            parameters: parameters,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(token)"
+            ],
+            requestModifier: { $0.timeoutInterval = 30 }
+        )
+        .serializingDecodable(APIResponse<SkillListResponse>.self)
+        .response
+        
+        return try handleResponse(response, expectedType: SkillListResponse.self)
+    }
+    
     func getSkillDetail(skillId: String, includeContent: Bool = true) async throws -> SkillDetailResponse {
         // 检查是否有 token
         let token = getAuthToken()

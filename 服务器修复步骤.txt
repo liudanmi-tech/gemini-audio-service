@@ -1,0 +1,38 @@
+# 在服务器上执行的完整修复步骤
+
+# ========== 步骤 1: 上传 database/models.py ==========
+# 在本地终端执行（不是服务器）：
+scp database/models.py admin@47.79.254.213:~/gemini-audio-service/database/
+
+# ========== 步骤 2: 在服务器上验证和重启 ==========
+# 在服务器终端执行：
+
+cd ~/gemini-audio-service
+
+# 2.1 验证 Profile 模型可以导入
+source venv/bin/activate
+python3 -c "from database.models import Profile; print('✅ Profile 模型导入成功')"
+
+# 2.2 检查 main.py 中是否注册了 profiles_router
+grep "profiles_router" main.py
+
+# 2.3 停止旧服务
+pkill -f "python.*main.py"
+sleep 2
+
+# 2.4 启动服务
+nohup python3 main.py > ~/gemini-audio-service.log 2>&1 &
+sleep 5
+
+# 2.5 检查服务状态
+ps aux | grep "[p]ython.*main.py"
+
+# 2.6 查看日志
+tail -30 ~/gemini-audio-service.log | grep -E "启动|Uvicorn|Application startup|profiles|ERROR"
+
+# 2.7 测试路由
+curl http://localhost:8001/api/v1/profiles
+
+# ========== 如果还有问题，检查数据库迁移 ==========
+# 如果 Profile 表不存在，需要创建：
+# python3 -c "from database.connection import engine; from database.models import Profile; Profile.__table__.create(engine, checkfirst=True)"

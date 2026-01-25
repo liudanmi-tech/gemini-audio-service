@@ -2,7 +2,7 @@
 技能管理API接口
 包括获取技能列表、技能详情、重新加载技能等
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
 from typing import List, Optional
@@ -51,7 +51,7 @@ class SkillDetailResponse(BaseModel):
 @router.get("", summary="获取所有可用技能")
 async def get_all_skills(
     category: Optional[str] = None,
-    enabled: bool = True,
+    enabled: Optional[bool] = Query(default=True, description="是否只返回启用的技能"),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
@@ -62,7 +62,9 @@ async def get_all_skills(
     - **enabled**: 是否只返回启用的技能（默认 true）
     """
     try:
-        skills = await list_skills(category=category, enabled=enabled, db=db)
+        # 确保 enabled 是布尔值
+        enabled_bool = bool(enabled) if enabled is not None else True
+        skills = await list_skills(category=category, enabled=enabled_bool, db=db)
         
         skill_responses = [
             SkillResponse(

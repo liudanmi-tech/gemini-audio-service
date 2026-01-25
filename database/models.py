@@ -98,7 +98,7 @@ class Skill(Base):
     priority = Column(Integer, default=0)
     enabled = Column(Boolean, default=True, index=True)
     version = Column(String(50))
-    metadata = Column(JSONB, default={})  # 元数据：keywords、scenarios等
+    meta_data = Column("metadata", JSONB, default={})  # 元数据：keywords、scenarios等（使用 Column name 参数避免与 SQLAlchemy 保留字段冲突）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -134,3 +134,26 @@ class VerificationCode(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
     used = Column(Boolean, default=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class Profile(Base):
+    """档案表"""
+    __tablename__ = "profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    name = Column(String(100), nullable=False)
+    relationship_type = Column("relationship", String(50), nullable=False)  # 自己、死党、领导等（使用 Column name 参数避免与 SQLAlchemy relationship 函数冲突）
+    photo_url = Column(String(500))  # 照片URL
+    notes = Column(Text)  # 备注
+    audio_session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="SET NULL"), nullable=True)  # 关联的对话session_id
+    audio_segment_id = Column(String(100))  # 音频片段ID
+    audio_start_time = Column(Integer)  # 音频片段开始时间（秒）
+    audio_end_time = Column(Integer)  # 音频片段结束时间（秒）
+    audio_url = Column(String(500))  # 音频片段URL
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # 关系
+    user = relationship("User", backref="profiles")
+    audio_session = relationship("Session", foreign_keys=[audio_session_id])

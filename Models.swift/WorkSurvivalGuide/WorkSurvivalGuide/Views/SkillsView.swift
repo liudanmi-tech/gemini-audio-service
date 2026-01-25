@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SkillsView: View {
-    @StateObject private var viewModel = SkillsViewModel()
+    @ObservedObject private var viewModel = SkillsViewModel.shared
     
     var body: some View {
         ZStack {
@@ -65,7 +65,10 @@ struct SkillsView: View {
             }
         }
         .onAppear {
-            viewModel.loadSkills()
+            // 只在数据为空且不在加载中时才加载
+            if viewModel.skills.isEmpty && !viewModel.isLoading {
+                viewModel.loadSkills()
+            }
         }
     }
 }

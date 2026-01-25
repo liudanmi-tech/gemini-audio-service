@@ -35,8 +35,8 @@ struct ContentView: View {
                                         TaskListView()
                                     case .skills:
                                         SkillsView()
-                                    case .mine:
-                                        MineView()
+                                    case .profile:
+                                        ProfileListView()
                                     }
                                 }
                                 

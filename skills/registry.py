@@ -59,7 +59,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
             existing_skill.priority = frontmatter.get("priority", 0)
             existing_skill.enabled = frontmatter.get("enabled", True)
             existing_skill.version = frontmatter.get("version", "1.0.0")
-            existing_skill.metadata = metadata
+            existing_skill.meta_data = metadata
             existing_skill.updated_at = datetime.utcnow()
             
             await db.commit()
@@ -73,7 +73,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
                 "priority": existing_skill.priority,
                 "enabled": existing_skill.enabled,
                 "version": existing_skill.version,
-                "metadata": existing_skill.metadata
+                "metadata": existing_skill.meta_data
             }
         else:
             # 创建新技能
@@ -86,7 +86,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
                 priority=frontmatter.get("priority", 0),
                 enabled=frontmatter.get("enabled", True),
                 version=frontmatter.get("version", "1.0.0"),
-                metadata=metadata
+                meta_data=metadata
             )
             
             db.add(new_skill)
@@ -101,7 +101,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
                 "priority": new_skill.priority,
                 "enabled": new_skill.enabled,
                 "version": new_skill.version,
-                "metadata": new_skill.metadata
+                "metadata": new_skill.meta_data
             }
     except Exception as e:
         logger.error(f"注册技能失败: {skill_id}, 错误: {e}")
@@ -139,7 +139,7 @@ async def get_skill(skill_id: str, db: AsyncSession) -> Optional[Dict]:
                 "priority": db_skill.priority,
                 "enabled": db_skill.enabled,
                 "version": db_skill.version,
-                "metadata": db_skill.metadata,
+                "metadata": db_skill.meta_data,
                 "prompt_template": skill_data["prompt_template"],
                 "knowledge_base": skill_data.get("knowledge_base")
             }
@@ -218,7 +218,7 @@ async def list_skills(category: Optional[str] = None, enabled: bool = True, db: 
                 "priority": db_skill.priority,
                 "enabled": db_skill.enabled,
                 "version": db_skill.version,
-                "metadata": db_skill.metadata
+                "metadata": db_skill.meta_data
             })
         
         return sorted(skills, key=lambda x: x["priority"], reverse=True)

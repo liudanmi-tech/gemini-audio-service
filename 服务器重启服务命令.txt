@@ -1,0 +1,30 @@
+# 在服务器终端执行以下命令重启服务
+
+cd ~/gemini-audio-service
+
+# 停止旧服务
+pkill -f "python.*main.py"
+sleep 2
+
+# 启动服务
+source venv/bin/activate
+nohup python3 main.py > ~/gemini-audio-service.log 2>&1 &
+sleep 5
+
+# 检查服务状态
+ps aux | grep "[p]ython.*main.py"
+
+# 查看启动日志
+tail -30 ~/gemini-audio-service.log | grep -E "启动|Uvicorn|Application startup|ERROR"
+
+# 测试API
+echo "=== 测试任务API ==="
+curl -s "http://localhost:8001/api/v1/tasks/sessions?page=1&page_size=20" -H "Authorization: Bearer test" | head -10
+
+echo ""
+echo "=== 测试技能API ==="
+curl -s "http://localhost:8001/api/v1/skills?enabled=true" -H "Authorization: Bearer test" | head -10
+
+echo ""
+echo "=== 测试档案API ==="
+curl -s "http://localhost:8001/api/v1/profiles" -H "Authorization: Bearer test" | head -10

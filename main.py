@@ -52,6 +52,14 @@ app.include_router(auth_router)
 from api.skills import router as skills_router
 app.include_router(skills_router)
 
+# 注册档案管理路由
+from api.profiles import router as profiles_router
+app.include_router(profiles_router)
+
+# 注册音频片段路由
+from api.audio_segments import router as audio_segments_router
+app.include_router(audio_segments_router)
+
 # 导入数据库相关
 from database.connection import get_db, init_db, close_db
 from database.models import User, Session, AnalysisResult, StrategyAnalysis, Skill, SkillExecution
@@ -313,12 +321,17 @@ def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image
         logger.info(f"上传图片到 OSS: {oss_key}")
         logger.info(f"图片大小: {len(image_bytes)} 字节")
         
-        # 上传图片到 OSS
+        # 上传图片到 OSS，设置ACL为公共读，允许客户端直接访问
         start_time = time.time()
-        oss_bucket.put_object(oss_key, image_bytes, headers={'Content-Type': 'image/png'})
+        headers = {
+            'Content-Type': 'image/png',
+            'x-oss-object-acl': 'public-read'  # 设置对象为公共读
+        }
+        oss_bucket.put_object(oss_key, image_bytes, headers=headers)
         upload_time = time.time() - start_time
         
         logger.info(f"✅ 图片上传成功，耗时: {upload_time:.2f} 秒")
+        logger.info(f"✅ 图片已设置为公共读权限")
         
         # 构建图片 URL
         if OSS_CDN_DOMAIN:

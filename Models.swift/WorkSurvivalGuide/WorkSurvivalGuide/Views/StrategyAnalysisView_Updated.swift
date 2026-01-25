@@ -183,19 +183,57 @@ struct StrategyAnalysisView_Updated: View {
         .cornerRadius(24)
         .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
         .onAppear {
+            // 优先使用缓存
+            let cacheManager = DetailCacheManager.shared
+            
+            if let cachedStrategy = cacheManager.getCachedStrategy(sessionId: sessionId) {
+                print("✅ [StrategyAnalysisView] 使用缓存的策略分析数据: \(sessionId)")
+                strategyAnalysis = cachedStrategy
+                isLoading = false
+                errorMessage = nil
+                return
+            }
+            
             loadStrategyAnalysis()
         }
     }
     
     private func loadStrategyAnalysis() {
+        let cacheManager = DetailCacheManager.shared
+        
+        // 先检查缓存
+        if let cachedStrategy = cacheManager.getCachedStrategy(sessionId: sessionId) {
+            print("✅ [StrategyAnalysisView] 使用缓存的策略分析数据: \(sessionId)")
+            Task { @MainActor in
+                strategyAnalysis = cachedStrategy
+                isLoading = false
+                errorMessage = nil
+            }
+            return
+        }
+        
+        // 如果正在加载中，跳过重复请求
+        if cacheManager.isLoadingStrategy(for: sessionId) {
+            print("⚠️ [StrategyAnalysisView] 策略分析正在加载中，跳过重复请求")
+            return
+        }
+        
         // 延迟一点加载，让详情先显示
         Task {
+            defer {
+                // 清除加载状态
+                cacheManager.setLoadingStrategy(false, for: sessionId)
+            }
+            
             // 等待 0.3 秒，让详情页面先渲染
             try? await Task.sleep(nanoseconds: 300_000_000)
             
             do {
                 isLoading = true
                 errorMessage = nil
+                
+                // 设置加载状态
+                cacheManager.setLoadingStrategy(true, for: sessionId)
                 
                 print("📊 [StrategyAnalysisView] 开始加载策略分析，sessionId: \(sessionId)")
                 
@@ -205,11 +243,8 @@ struct StrategyAnalysisView_Updated: View {
                 print("  关键时刻数量: \(response.visual.count)")
                 print("  策略数量: \(response.strategies.count)")
                 
-                for (index, visual) in response.visual.enumerated() {
-                    print("  关键时刻 \(index):")
-                    print("    imageUrl: \(visual.imageUrl ?? "nil")")
-                    print("    imageBase64: \(visual.imageBase64 != nil ? "有数据 (\(visual.imageBase64!.count) 字符)" : "nil")")
-                }
+                // 缓存策略分析
+                cacheManager.cacheStrategy(response, for: sessionId)
                 
                 await MainActor.run {
                     strategyAnalysis = response
