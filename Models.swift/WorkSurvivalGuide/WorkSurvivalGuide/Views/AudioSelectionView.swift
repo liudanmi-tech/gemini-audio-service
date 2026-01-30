@@ -22,6 +22,8 @@ struct AudioSelectionView: View {
     @State private var audioSegments: [AudioSegment] = []
     @State private var isLoadingSegments = false
     @State private var currentStep: SelectionStep = .session
+    @State private var isExtractingSegment = false
+    @State private var extractError: String?
     
     enum SelectionStep {
         case session    // 第一步：选择对话记录
@@ -136,21 +138,7 @@ struct AudioSelectionView: View {
                                     
                                     ForEach(audioSegments.filter { $0.speaker == selectedSpeaker }) { segment in
                                         Button(action: {
-                                            selectedSessionId = segment.sessionId
-                                            selectedSegmentId = segment.id
-                                            selectedStartTime = segment.startTime
-                                            selectedEndTime = segment.endTime
-                                            selectedAudioUrl = segment.audioUrl
-                                            
-                                            onSelectionComplete(
-                                                segment.sessionId,
-                                                segment.id,
-                                                segment.startTime,
-                                                segment.endTime,
-                                                segment.audioUrl
-                                            )
-                                            
-                                            presentationMode.wrappedValue.dismiss()
+                                            selectSegment(segment)
                                         }) {
                                             VStack(alignment: .leading, spacing: 8) {
                                                 HStack {
@@ -175,6 +163,7 @@ struct AudioSelectionView: View {
                                             .cornerRadius(12)
                                         }
                                         .padding(.horizontal, 24)
+                                        .disabled(isExtractingSegment)
                                     }
                                 }
                             }
@@ -183,8 +172,23 @@ struct AudioSelectionView: View {
                         .padding(.bottom, 40)
                     }
                 }
+                if isExtractingSegment {
+                    Color.black.opacity(0.3)
+                        .ignoresSafeArea()
+                    ProgressView("正在提取音频...")
+                        .tint(.white)
+                        .scaleEffect(1.2)
+                }
             }
             .navigationTitle("选择音频")
+            .alert("提取失败", isPresented: Binding(
+                get: { extractError != nil },
+                set: { if !$0 { extractError = nil } }
+            )) {
+                Button("确定") { extractError = nil }
+            } message: {
+                if let msg = extractError { Text(msg) }
+            }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -211,6 +215,54 @@ struct AudioSelectionView: View {
             .onAppear {
                 if taskListViewModel.tasks.isEmpty {
                     taskListViewModel.loadTasks()
+                }
+            }
+        }
+    }
+    
+    /// 选择片段：若尚无 audioUrl 则先调用后端提取，再回传并关闭
+    private func selectSegment(_ segment: AudioSegment) {
+        let hasValidUrl = segment.audioUrl.map { $0.hasPrefix("http") } ?? false
+        if hasValidUrl, let url = segment.audioUrl {
+            selectedSessionId = segment.sessionId
+            selectedSegmentId = segment.id
+            selectedStartTime = segment.startTime
+            selectedEndTime = segment.endTime
+            selectedAudioUrl = url
+            onSelectionComplete(segment.sessionId, segment.id, segment.startTime, segment.endTime, url)
+            presentationMode.wrappedValue.dismiss()
+            return
+        }
+        isExtractingSegment = true
+        extractError = nil
+        Task {
+            do {
+                let response = try await NetworkManager.shared.extractAudioSegment(
+                    sessionId: segment.sessionId,
+                    startTime: segment.startTime,
+                    endTime: segment.endTime,
+                    speaker: segment.speaker
+                )
+                await MainActor.run {
+                    selectedSessionId = segment.sessionId
+                    selectedSegmentId = response.segmentId
+                    selectedStartTime = segment.startTime
+                    selectedEndTime = segment.endTime
+                    selectedAudioUrl = response.audioUrl
+                    onSelectionComplete(
+                        segment.sessionId,
+                        response.segmentId,
+                        segment.startTime,
+                        segment.endTime,
+                        response.audioUrl
+                    )
+                    isExtractingSegment = false
+                    presentationMode.wrappedValue.dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isExtractingSegment = false
+                    extractError = (error as NSError).localizedDescription
                 }
             }
         }

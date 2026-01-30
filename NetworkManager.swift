@@ -12,9 +12,8 @@ class NetworkManager {
     static let shared = NetworkManager()
     
     // ⚠️ 重要：修改为你的后端 API 地址
-    // 如果后端运行在本地，使用：http://localhost:8001/api/v1
-    // 如果后端运行在服务器，使用：http://your-server-ip:8001/api/v1
-    private let baseURL = "http://47.79.254.213:8001/api/v1"
+    // 本地：http://localhost:8000/api/v1  服务器：80 端口经 Nginx 转发
+    private let baseURL = "http://47.79.254.213/api/v1"
     
     private init() {}
     

@@ -32,6 +32,8 @@ def parse_skill_markdown(skill_path: str) -> Dict:
     try:
         with open(skill_path, 'r', encoding='utf-8') as f:
             content = f.read()
+        # 统一换行，避免 CRLF 导致 frontmatter / 代码块正则不匹配
+        content = content.replace('\r\n', '\n').replace('\r', '\n')
         
         # 解析 YAML frontmatter
         frontmatter_pattern = r'^---\s*\n(.*?)\n---\s*\n(.*)$'
@@ -79,28 +81,41 @@ def extract_prompt_template(markdown_content: str) -> str:
     Returns:
         str: Prompt 模板内容
     """
-    # 查找 "## Prompt模板" 部分
-    prompt_section_pattern = r'##\s*Prompt模板\s*\n(.*?)(?=##|$)'
+    # 查找 "## Prompt模板" 部分（只在「新行开头的 ## 标题」处结束，避免被内容里的 ### 等截断）
+    prompt_section_pattern = r'##\s*Prompt模板\s*\n(.*?)(?=\n##\s|\n##$|$)'
     match = re.search(prompt_section_pattern, markdown_content, re.DOTALL | re.IGNORECASE)
     
     if not match:
         raise ValueError("SKILL.md 中未找到 '## Prompt模板' 部分")
     
     prompt_section = match.group(1)
+    # 统一换行为 \n，避免 CRLF 导致正则不匹配
+    prompt_section = prompt_section.replace('\r\n', '\n').replace('\r', '\n')
     
-    # 提取 ```prompt 代码块中的内容
-    prompt_block_pattern = r'```prompt\s*\n(.*?)```'
-    match = re.search(prompt_block_pattern, prompt_section, re.DOTALL)
+    # 1) 正则提取 ```prompt 或 ``` 代码块
+    for pattern in [
+        r'```prompt\s*\n(.*?)```',
+        r'```\s*\n(.*?)```',
+    ]:
+        match = re.search(pattern, prompt_section, re.DOTALL)
+        if match:
+            prompt_template = match.group(1).strip()
+            if prompt_template:
+                return prompt_template
     
-    if not match:
-        # 如果没有找到 ```prompt 代码块，尝试查找 ``` 代码块
-        code_block_pattern = r'```\s*\n(.*?)```'
-        match = re.search(code_block_pattern, prompt_section, re.DOTALL)
-        if not match:
-            raise ValueError("Prompt模板部分未找到代码块")
+    # 2) 兜底：按第一个 ``` 到下一个 ``` 截取（不依赖正则细节）
+    start = prompt_section.find('```')
+    if start >= 0:
+        start = prompt_section.find('\n', start) + 1
+        if start > 0:
+            end = prompt_section.find('```', start)
+            if end > start:
+                prompt_template = prompt_section[start:end].strip()
+                if prompt_template:
+                    return prompt_template
     
-    prompt_template = match.group(1).strip()
-    return prompt_template
+    logger.debug("Prompt模板节内容长度=%s 前200字=%s", len(prompt_section), repr(prompt_section[:200]))
+    raise ValueError("Prompt模板部分未找到代码块")
 
 
 def load_knowledge_base(skill_id: str) -> Optional[str]:
@@ -164,5 +179,98 @@ def load_skill_from_file(skill_id: str) -> Dict:
     
     if knowledge_base:
         result["knowledge_base"] = knowledge_base
-    
+
     return result
+
+
+def create_skill_file(
+    skill_id: str,
+    name: str,
+    description: str = "",
+    category: str = "other",
+    priority: int = 0,
+    enabled: bool = True,
+    version: str = "1.0.0",
+) -> str:
+    """
+    在文件系统创建技能目录和最小 SKILL.md（供 API 创建技能使用）
+
+    Args:
+        skill_id: 技能 ID（仅允许字母、数字、下划线）
+        name: 技能名称
+        description: 描述
+        category: 分类
+        priority: 优先级
+        enabled: 是否启用
+        version: 版本号
+
+    Returns:
+        创建的 SKILL.md 路径
+    """
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9_]*$", skill_id):
+        raise ValueError("skill_id 仅允许字母开头，字母、数字、下划线")
+    skill_dir = SKILLS_ROOT / skill_id
+    if skill_dir.exists():
+        raise FileExistsError(f"技能目录已存在: {skill_id}")
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_md_path = skill_dir / "SKILL.md"
+    frontmatter = {
+        "name": name,
+        "description": description,
+        "category": category,
+        "priority": priority,
+        "enabled": enabled,
+        "version": version,
+        "keywords": [],
+        "scenarios": [],
+    }
+    fm_text = yaml.dump(frontmatter, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    prompt_placeholder = "角色: 策略分析助手。\n任务: 根据对话转录生成策略与视觉描述。\n\n对话转录:\n{transcript_json}"
+    content = f"---\n{fm_text}---\n\n# {name}\n\n## Prompt模板\n\n```prompt\n{prompt_placeholder}\n```\n"
+    skill_md_path.write_text(content, encoding="utf-8")
+    logger.info(f"已创建技能文件: {skill_md_path}")
+    return str(skill_md_path)
+
+
+def update_skill_file(
+    skill_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    category: Optional[str] = None,
+    priority: Optional[int] = None,
+    enabled: Optional[bool] = None,
+    version: Optional[str] = None,
+) -> str:
+    """
+    更新 SKILL.md 的 frontmatter 字段（供 API 更新技能使用）
+
+    Args:
+        skill_id: 技能 ID
+        其余: 要更新的字段，None 表示不更新
+
+    Returns:
+        更新后的 SKILL.md 路径
+    """
+    skill_md_path = SKILLS_ROOT / skill_id / "SKILL.md"
+    if not skill_md_path.exists():
+        raise FileNotFoundError(f"技能文件不存在: {skill_id}")
+    parsed = parse_skill_markdown(str(skill_md_path))
+    frontmatter = parsed["frontmatter"] or {}
+    markdown_content = parsed["content"]
+    if name is not None:
+        frontmatter["name"] = name
+    if description is not None:
+        frontmatter["description"] = description
+    if category is not None:
+        frontmatter["category"] = category
+    if priority is not None:
+        frontmatter["priority"] = priority
+    if enabled is not None:
+        frontmatter["enabled"] = enabled
+    if version is not None:
+        frontmatter["version"] = version
+    fm_text = yaml.dump(frontmatter, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    content = f"---\n{fm_text}---\n{markdown_content}"
+    skill_md_path.write_text(content, encoding="utf-8")
+    logger.info(f"已更新技能文件: {skill_md_path}")
+    return str(skill_md_path)

@@ -127,7 +127,7 @@ async def login(
     
     # 生成JWT Token
     token = create_access_token(str(user.id))
-    expires_in = int(os.getenv("JWT_EXPIRATION_HOURS", "24")) * 3600
+    expires_in = int(os.getenv("JWT_EXPIRATION_HOURS", "168")) * 3600
     
     return {
         "code": 200,

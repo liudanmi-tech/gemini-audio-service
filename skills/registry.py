@@ -51,7 +51,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
         existing_skill = result.scalar_one_or_none()
         
         if existing_skill:
-            # 更新现有技能
+            # 更新现有技能（含 prompt_template 落表）
             existing_skill.name = frontmatter.get("name", skill_id)
             existing_skill.description = frontmatter.get("description", "")
             existing_skill.category = frontmatter.get("category", "other")
@@ -59,6 +59,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
             existing_skill.priority = frontmatter.get("priority", 0)
             existing_skill.enabled = frontmatter.get("enabled", True)
             existing_skill.version = frontmatter.get("version", "1.0.0")
+            existing_skill.prompt_template = skill_data.get("prompt_template")
             existing_skill.meta_data = metadata
             existing_skill.updated_at = datetime.utcnow()
             
@@ -76,7 +77,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
                 "metadata": existing_skill.meta_data
             }
         else:
-            # 创建新技能
+            # 创建新技能（含 prompt_template 落表）
             new_skill = Skill(
                 skill_id=skill_id,
                 name=frontmatter.get("name", skill_id),
@@ -86,6 +87,7 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
                 priority=frontmatter.get("priority", 0),
                 enabled=frontmatter.get("enabled", True),
                 version=frontmatter.get("version", "1.0.0"),
+                prompt_template=skill_data.get("prompt_template"),
                 meta_data=metadata
             )
             
@@ -127,25 +129,35 @@ async def get_skill(skill_id: str, db: AsyncSession) -> Optional[Dict]:
     db_skill = result.scalar_one_or_none()
     
     if db_skill:
-        # 从文件系统加载完整信息（包括 prompt_template）
-        try:
-            skill_data = load_skill_from_file(skill_id)
-            return {
-                "skill_id": db_skill.skill_id,
-                "name": db_skill.name,
-                "description": db_skill.description,
-                "category": db_skill.category,
-                "skill_path": db_skill.skill_path,
-                "priority": db_skill.priority,
-                "enabled": db_skill.enabled,
-                "version": db_skill.version,
-                "metadata": db_skill.meta_data,
-                "prompt_template": skill_data["prompt_template"],
-                "knowledge_base": skill_data.get("knowledge_base")
-            }
-        except FileNotFoundError:
-            logger.warning(f"技能文件不存在，但数据库中有记录: {skill_id}")
-            return None
+        # 优先用表里的 prompt_template（落表后查表即可，不依赖文件）
+        prompt_template = getattr(db_skill, "prompt_template", None) or ""
+        knowledge_base = None
+        if not (prompt_template and prompt_template.strip()):
+            try:
+                skill_data = load_skill_from_file(skill_id)
+                prompt_template = skill_data.get("prompt_template") or ""
+                knowledge_base = skill_data.get("knowledge_base")
+            except Exception as e:
+                logger.warning(f"技能文件加载失败且表内无 prompt_template: {skill_id}, {e}")
+                return None
+        else:
+            try:
+                knowledge_base = load_skill_from_file(skill_id).get("knowledge_base")
+            except Exception:
+                pass
+        return {
+            "skill_id": db_skill.skill_id,
+            "name": db_skill.name,
+            "description": db_skill.description,
+            "category": db_skill.category,
+            "skill_path": db_skill.skill_path,
+            "priority": db_skill.priority,
+            "enabled": db_skill.enabled,
+            "version": db_skill.version,
+            "metadata": db_skill.meta_data,
+            "prompt_template": prompt_template,
+            "knowledge_base": knowledge_base
+        }
     else:
         # 数据库中没有，尝试从文件系统加载并注册
         try:
@@ -156,7 +168,7 @@ async def get_skill(skill_id: str, db: AsyncSession) -> Optional[Dict]:
             return None
 
 
-async def list_skills(category: Optional[str] = None, enabled: bool = True, db: AsyncSession = None) -> List[Dict]:
+async def list_skills(category: Optional[str] = None, enabled: Optional[bool] = True, db: AsyncSession = None) -> List[Dict]:
     """
     列出所有可用技能
     
@@ -202,8 +214,8 @@ async def list_skills(category: Optional[str] = None, enabled: bool = True, db: 
         
         if category:
             query = query.where(Skill.category == category)
-        if enabled:
-            query = query.where(Skill.enabled == True)
+        if enabled is not None:
+            query = query.where(Skill.enabled == (enabled is True))
         
         result = await db.execute(query)
         db_skills = result.scalars().all()
@@ -240,31 +252,37 @@ async def reload_skill(skill_id: str, db: AsyncSession) -> Dict:
 
 async def initialize_skills(db: AsyncSession) -> List[Dict]:
     """
-    初始化所有技能到数据库
-    扫描 skills/ 目录，注册所有技能
-    
-    Args:
-        db: 数据库会话
-        
-    Returns:
-        List[dict]: 已注册的技能列表
+    初始化技能：尝试从文件注册，解析失败则跳过；表中已有记录则查表即用，缺 prompt_template 时尝试从文件回填。
     """
-    registered_skills = []
-    
     if not SKILLS_ROOT.exists():
         logger.warning(f"技能目录不存在: {SKILLS_ROOT}")
-        return registered_skills
+        return await list_skills(db=db, enabled=None)
     
-    # 扫描所有技能目录
     for skill_dir in SKILLS_ROOT.iterdir():
         if skill_dir.is_dir() and (skill_dir / "SKILL.md").exists():
             skill_id = skill_dir.name
             try:
-                skill_info = await register_skill(skill_id, db)
-                registered_skills.append(skill_info)
+                await register_skill(skill_id, db)
                 logger.info(f"技能初始化成功: {skill_id}")
             except Exception as e:
-                logger.error(f"技能初始化失败: {skill_id}, 错误: {e}")
+                logger.warning(f"技能从文件注册失败（已落表则查表可用）: {skill_id}, {e}")
     
-    logger.info(f"技能初始化完成，共注册 {len(registered_skills)} 个技能")
-    return registered_skills
+    # 回填：表中已有技能但 prompt_template 为空时，尝试从文件写入一次
+    result = await db.execute(select(Skill).where(Skill.enabled == True))
+    for row in result.scalars().all():
+        pt = getattr(row, "prompt_template", None)
+        if pt and str(pt).strip():
+            continue
+        try:
+            skill_data = load_skill_from_file(row.skill_id)
+            template = skill_data.get("prompt_template")
+            if template:
+                row.prompt_template = template
+                await db.commit()
+                logger.info(f"技能 prompt_template 已回填: {row.skill_id}")
+        except Exception as e:
+            logger.debug(f"技能 prompt_template 回填跳过: {row.skill_id}, {e}")
+    
+    skills_in_db = await list_skills(db=db, enabled=True)
+    logger.info(f"技能初始化完成，共注册 {len(skills_in_db)} 个技能")
+    return skills_in_db

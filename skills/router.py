@@ -2,6 +2,7 @@
 场景路由器
 实现场景识别和技能匹配功能
 """
+import os
 import json
 import logging
 from typing import List, Dict
@@ -13,6 +14,9 @@ from .registry import list_skills
 from database.models import Skill
 
 logger = logging.getLogger(__name__)
+
+# 场景/策略模型名，可通过环境变量 GEMINI_FLASH_MODEL 覆盖
+GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
 
 
 def classify_scene(transcript: list, model=None) -> Dict:
@@ -36,7 +40,7 @@ def classify_scene(transcript: list, model=None) -> Dict:
         }
     """
     if model is None:
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
     
     router_prompt = """你是一个场景分类专家。请分析以下对话转录，识别对话发生的场景类型。
 

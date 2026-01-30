@@ -2,6 +2,7 @@
 技能执行器
 执行技能，动态组装 Prompt 并生成策略
 """
+import os
 import json
 import time
 import logging
@@ -9,14 +10,12 @@ from typing import Dict, List, Optional
 import google.generativeai as genai
 
 from .loader import load_knowledge_base
-
-# 导入数据模型（避免循环导入）
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).parent.parent))
-from main import parse_gemini_response, VisualData, StrategyItem, Call2Response
+from schemas.strategy_schemas import parse_gemini_response, VisualData, StrategyItem, Call2Response
 
 logger = logging.getLogger(__name__)
+
+# 策略模型名，可通过环境变量 GEMINI_FLASH_MODEL 覆盖
+GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
 
 
 def execute_skill_scripts(skill_id: str, script_name: str, input_data: dict) -> dict:
@@ -57,7 +56,7 @@ async def execute_skill(
         dict: 策略分析结果（Call2Response 格式）
     """
     if model is None:
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
     
     skill_id = skill.get("skill_id", "unknown")
     prompt_template = skill.get("prompt_template", "")
@@ -92,7 +91,7 @@ async def execute_skill(
         logger.debug(f"Prompt 内容: {prompt[:500]}...")
         
         # 4. 调用 Gemini 生成策略
-        logger.info(f"调用模型: gemini-3-flash-preview")
+        logger.info(f"调用模型: {GEMINI_FLASH_MODEL}")
         response = model.generate_content(prompt)
         
         logger.info(f"Gemini 响应长度: {len(response.text)} 字符")

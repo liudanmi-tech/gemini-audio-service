@@ -259,19 +259,21 @@ struct StrategyAnalysisView_Updated: View {
                 }
                 
                 await MainActor.run {
-                    // 生成友好的错误提示
+                    let detail = (error as NSError?)?.userInfo[NSLocalizedDescriptionKey] as? String ?? error.localizedDescription
                     if let nsError = error as NSError? {
-                        if nsError.code == -1001 || error.localizedDescription.contains("timeout") {
+                        if nsError.code == -1001 || detail.contains("timeout") || detail.lowercased().contains("timed out") {
                             errorMessage = "策略分析加载超时，策略分析可能正在生成中，请稍后重试"
                         } else if nsError.code == 400 {
-                            errorMessage = "策略分析数据不完整，请稍后重试"
+                            errorMessage = detail
                         } else if nsError.code == 404 {
-                            errorMessage = "策略分析不存在，可能正在生成中"
+                            errorMessage = detail.isEmpty ? "策略分析不存在，可能正在生成中" : detail
+                        } else if !detail.isEmpty && detail != error.localizedDescription {
+                            errorMessage = detail
                         } else {
-                            errorMessage = "加载失败: \(error.localizedDescription)"
+                            errorMessage = "加载失败: \(detail)"
                         }
                     } else {
-                        errorMessage = "加载失败: \(error.localizedDescription)"
+                        errorMessage = "加载失败: \(detail)"
                     }
                     isLoading = false
                 }

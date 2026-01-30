@@ -6,7 +6,7 @@ import logging
 from typing import List, Dict
 from difflib import SequenceMatcher
 
-from main import Call2Response, VisualData, StrategyItem
+from schemas.strategy_schemas import Call2Response, VisualData, StrategyItem
 
 logger = logging.getLogger(__name__)
 

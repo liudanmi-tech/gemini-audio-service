@@ -11,6 +11,7 @@ import traceback
 import logging
 import uuid
 import asyncio
+from contextlib import asynccontextmanager
 from io import BytesIO
 from typing import List, Optional, Any, Tuple
 from pathlib import Path
@@ -19,7 +20,7 @@ from datetime import datetime
 import google.generativeai as genai
 from google import genai as genai_new  # 新的 SDK 用于图片生成
 from google.genai import types as genai_types
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -41,8 +42,97 @@ logger = logging.getLogger(__name__)
 # 加载环境变量
 load_dotenv()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期：启动时初始化数据库与技能，关闭时释放连接（替代已弃用的 on_event）"""
+    # === startup ===
+    use_proxy = os.getenv("PROXY_FORCE_LOCALHOST", "").lower() == "true" or bool(os.getenv("PROXY_URL"))
+    proxy_url = os.getenv("PROXY_URL", "http://127.0.0.1/secret-channel")
+    if use_proxy and proxy_url:
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(proxy_url)
+            host = parsed.hostname or "127.0.0.1"
+            port = parsed.port or (80 if parsed.scheme == "http" else 443)
+            sock = __import__("socket").socket(__import__("socket").AF_INET, __import__("socket").SOCK_STREAM)
+            sock.settimeout(3)
+            sock.connect((host, port))
+            sock.close()
+            logger.info(f"✅ 代理可达: {host}:{port}")
+        except (OSError, Exception) as e:
+            err = str(e).lower()
+            if "refused" in err or "111" in err:
+                logger.warning(
+                    "⚠️ 代理连接被拒绝 (Connection refused)。录音分析上传会失败。"
+                    " 请在服务器上启动 Nginx（或代理），并确保监听 %s:%s，且 /secret-channel 已配置转发到 Gemini。",
+                    host, port
+                )
+            else:
+                logger.warning(f"⚠️ 代理检测失败: {e}")
+    try:
+        logger.info("正在初始化数据库...")
+        await init_db()
+        logger.info("✅ 数据库初始化完成")
+        try:
+            from database.connection import engine
+            from sqlalchemy import text
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info("✅ 数据库连接池已预热")
+        except Exception as e:
+            logger.warning(f"连接池预热跳过: {e}")
+        try:
+            logger.info("正在初始化技能...")
+            from database.connection import AsyncSessionLocal
+            async with AsyncSessionLocal() as db:
+                try:
+                    registered_skills = await initialize_skills(db)
+                    logger.info(f"✅ 技能初始化完成，共注册 {len(registered_skills)} 个技能")
+                    for skill in registered_skills:
+                        logger.info(f"  - {skill['skill_id']}: {skill['name']}")
+                except Exception as e:
+                    logger.error(f"❌ 技能初始化失败: {e}")
+                    logger.error(traceback.format_exc())
+                    await db.rollback()
+        except Exception as e:
+            logger.error(f"❌ 技能初始化失败: {e}")
+            logger.error(traceback.format_exc())
+    except Exception as e:
+        logger.error(f"❌ 数据库初始化失败: {e}")
+        logger.error(traceback.format_exc())
+    yield
+    # === shutdown ===
+    try:
+        await close_db()
+        logger.info("✅ 数据库连接已关闭")
+    except Exception as e:
+        logger.error(f"关闭数据库连接时出错: {e}")
+
+
 # 初始化 FastAPI 应用
-app = FastAPI(title="音频分析服务", description="通过 Gemini API 分析音频文件")
+app = FastAPI(title="音频分析服务", description="通过 Gemini API 分析音频文件", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """请求/响应日志：便于排查 502 与列表接口问题"""
+    start = time.time()
+    logger.info(f"[Request] {request.method} {request.url.path}")
+    try:
+        response = await call_next(request)
+        duration = time.time() - start
+        status = response.status_code
+        logger.info(f"[Response] {request.url.path} status={status} duration={duration:.3f}s")
+        if status >= 500:
+            logger.error(f"[Response] 5xx path={request.url.path} status={status} duration={duration:.3f}s")
+        return response
+    except Exception as e:
+        duration = time.time() - start
+        logger.error(f"[Response] Exception path={request.url.path} error={type(e).__name__}: {e} duration={duration:.3f}s")
+        logger.error(traceback.format_exc())
+        raise
+
 
 # 注册认证路由
 from api.auth import router as auth_router
@@ -62,7 +152,7 @@ app.include_router(audio_segments_router)
 
 # 导入数据库相关
 from database.connection import get_db, init_db, close_db
-from database.models import User, Session, AnalysisResult, StrategyAnalysis, Skill, SkillExecution
+from database.models import User, Session, AnalysisResult, StrategyAnalysis, Skill, SkillExecution, Profile
 from auth.jwt_handler import get_current_user_id, get_current_user
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,11 +165,24 @@ from skills.composer import compose_results
 
 # 配置 Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-PROXY_URL = os.getenv("PROXY_URL", "http://47.79.254.213/secret-channel")
+PROXY_URL_RAW = os.getenv("PROXY_URL", "http://47.79.254.213/secret-channel")
 USE_PROXY = os.getenv("USE_PROXY", "true").lower() == "true"
+# 当应用与代理在同一台机时设为 true，可避免 Connection refused（请求走 127.0.0.1）
+PROXY_FORCE_LOCALHOST = os.getenv("PROXY_FORCE_LOCALHOST", "true").lower() == "true"
+
+if PROXY_FORCE_LOCALHOST and USE_PROXY and PROXY_URL_RAW:
+    from urllib.parse import urlparse, urlunparse
+    _p = urlparse(PROXY_URL_RAW)
+    PROXY_URL = urlunparse((_p.scheme, "127.0.0.1" + (f":{_p.port}" if _p.port else ""), _p.path or "", _p.params, _p.query, _p.fragment))
+    logger.info(f"PROXY_FORCE_LOCALHOST 已启用，代理请求使用: {PROXY_URL}")
+else:
+    PROXY_URL = PROXY_URL_RAW
 
 if not GEMINI_API_KEY:
     raise ValueError("请在 .env 文件中设置 GEMINI_API_KEY")
+
+# 策略/场景模型名，可通过环境变量覆盖（默认 gemini-3-flash-preview）
+GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
 
 # 配置 Gemini 客户端，使用反向代理服务器
 logger.info(f"API Key: {GEMINI_API_KEY[:10]}... (已隐藏)")
@@ -89,7 +192,7 @@ if USE_PROXY and PROXY_URL:
     # 对于反向代理，需要修改 API 的 base URL
     # google-generativeai SDK 使用 googleapiclient 和 httplib2
     try:
-        from urllib.parse import urlparse, urljoin
+        from urllib.parse import urlparse, urlunparse, urljoin
         import googleapiclient.http
         import httplib2
         
@@ -136,6 +239,19 @@ if USE_PROXY and PROXY_URL:
         # 替换 execute 方法
         googleapiclient.http.HttpRequest.execute = patched_execute
         logger.info("已 patch googleapiclient.http.HttpRequest.execute 以使用反向代理")
+        
+        # 让文件服务的 discovery 请求也走代理（否则上传时首次 discovery 可能直连 Google）
+        try:
+            import google.generativeai.client as _genai_client
+            _genai_client.GENAI_API_DISCOVERY_URL = urlunparse((
+                parsed.scheme or "http",
+                f"{parsed.hostname or '127.0.0.1'}:{parsed.port or 80}",
+                "/secret-channel/$discovery/rest",
+                "", "", ""
+            ))
+            logger.info(f"已设置文件服务 discovery URL: {_genai_client.GENAI_API_DISCOVERY_URL}")
+        except Exception as pe:
+            logger.warning(f"设置文件服务 discovery URL 失败: {pe}")
         
     except Exception as e:
         logger.warning(f"配置反向代理时出错: {e}")
@@ -235,32 +351,8 @@ class Call1Response(BaseModel):
     summary: str  # 对话总结
     transcript: List[TranscriptItem]  # 转录列表
 
-# Call #2 数据模型（策略分析）
-class StrategyItem(BaseModel):
-    """策略项数据模型"""
-    id: str  # 策略ID
-    label: str  # 策略标签
-    emoji: str  # 表情符号
-    title: str  # 策略标题
-    content: str  # 策略内容（Markdown格式）
-
-class VisualData(BaseModel):
-    """视觉数据模型"""
-    transcript_index: int  # 关联的 transcript 索引
-    speaker: str  # 说话人标识
-    image_prompt: str  # 火柴人图片描述词（详细版）
-    emotion: str  # 说话人情绪
-    subtext: str  # 潜台词
-    context: str  # 当时的情景或心理状态
-    my_inner: str  # 我的内心OS
-    other_inner: str  # 对方的内心OS
-    image_url: Optional[str] = None  # 图片 URL（优先使用）
-    image_base64: Optional[str] = None  # Base64 编码的图片数据（向后兼容，OSS 失败时使用）
-
-class Call2Response(BaseModel):
-    """Call #2 策略分析响应"""
-    visual: List[VisualData]  # 视觉数据数组（关键时刻）
-    strategies: List[StrategyItem]  # 策略列表
+# Call #2 数据模型（策略分析）- 从 schemas 导入，避免与 skills 循环依赖
+from schemas.strategy_schemas import StrategyItem, VisualData, Call2Response, parse_gemini_response
 
 
 def wait_for_file_active(file: Any, max_wait_time=300) -> Any:
@@ -357,6 +449,62 @@ def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image
         logger.error(f"完整错误堆栈:")
         logger.error(traceback.format_exc())
         return None
+
+
+def persist_original_audio(
+    session_id: str,
+    temp_file_path: str,
+    file_filename: str,
+    user_id: str,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    将原音频持久化到 OSS 或本地，供后续剪切与声纹使用。
+    Returns:
+        (audio_url, audio_path): OSS 时 url 有值；仅本地时 path 有值。
+    """
+    audio_url: Optional[str] = None
+    audio_path: Optional[str] = None
+    file_ext = Path(file_filename).suffix.lower() if file_filename else ".m4a"
+    if not file_ext.startswith("."):
+        file_ext = "." + file_ext
+
+    if USE_OSS and oss_bucket is not None:
+        try:
+            oss_key = f"sessions/{user_id}/{session_id}/original{file_ext}"
+            with open(temp_file_path, "rb") as f:
+                content = f.read()
+            headers = {"Content-Type": "audio/mp4" if file_ext == ".m4a" else "application/octet-stream"}
+            oss_bucket.put_object(oss_key, content, headers=headers)
+            if OSS_CDN_DOMAIN:
+                audio_url = f"https://{OSS_CDN_DOMAIN}/{oss_key}"
+            else:
+                if OSS_ENDPOINT.startswith("http://"):
+                    endpoint = OSS_ENDPOINT.replace("http://", "https://")
+                elif OSS_ENDPOINT.startswith("https://"):
+                    endpoint = OSS_ENDPOINT
+                else:
+                    endpoint = f"https://{OSS_BUCKET_NAME}.{OSS_ENDPOINT}"
+                audio_url = f"{endpoint}/{oss_key}"
+            logger.info(f"原音频已上传 OSS: {audio_url}")
+        except Exception as e:
+            logger.warning(f"原音频上传 OSS 失败，将使用本地路径: {e}")
+            audio_url = None
+
+    if not audio_url:
+        # 本地存储
+        storage_dir = os.getenv("AUDIO_STORAGE_DIR", "data/audio/sessions")
+        os.makedirs(storage_dir, exist_ok=True)
+        local_name = f"{session_id}{file_ext}"
+        dest_path = os.path.join(storage_dir, local_name)
+        try:
+            import shutil
+            shutil.copy2(temp_file_path, dest_path)
+            audio_path = dest_path
+            logger.info(f"原音频已保存到本地: {audio_path}")
+        except Exception as e:
+            logger.warning(f"原音频保存本地失败: {e}")
+
+    return (audio_url, audio_path)
 
 
 def generate_image_from_prompt(image_prompt: str, user_id: str, session_id: str, image_index: int, max_retries: int = 3) -> Optional[str]:
@@ -497,42 +645,6 @@ def generate_image_from_prompt(image_prompt: str, user_id: str, session_id: str,
     return None
 
 
-def parse_gemini_response(response_text: str) -> dict:
-    """
-    解析 Gemini 返回的文本，提取 JSON 数据
-    
-    Args:
-        response_text: Gemini 返回的文本
-        
-    Returns:
-        解析后的字典数据
-    """
-    # 尝试提取 JSON 部分（可能包含在 markdown 代码块中）
-    text = response_text.strip()
-    
-    # 如果包含 ```json 或 ``` 标记，提取其中的内容
-    if "```json" in text:
-        start = text.find("```json") + 7
-        end = text.find("```", start)
-        if end != -1:
-            text = text[start:end].strip()
-    elif "```" in text:
-        start = text.find("```") + 3
-        end = text.find("```", start)
-        if end != -1:
-            text = text[start:end].strip()
-    
-    # 解析 JSON
-    try:
-        data = json.loads(text)
-        return data
-    except json.JSONDecodeError as e:
-        # 如果解析失败，尝试修复常见的 JSON 问题
-        print(f"JSON 解析错误: {e}")
-        print(f"原始文本: {text}")
-        raise HTTPException(status_code=500, detail=f"无法解析 Gemini 返回的 JSON: {str(e)}")
-
-
 async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tuple[AudioAnalysisResponse, Optional[Call1Response]]:
     """
     从文件路径分析音频文件（内部函数）
@@ -563,17 +675,19 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tu
         max_retries = 3
         retry_count = 0
         uploaded_file = None
+        use_resumable = True  # 先尝试分片上传；若出现解析错误再试简单上传
         
         while retry_count < max_retries:
             try:
-                logger.info(f"尝试上传（第 {retry_count + 1}/{max_retries} 次）...")
+                logger.info(f"尝试上传（第 {retry_count + 1}/{max_retries} 次，resumable={use_resumable}）...")
                 logger.debug(f"调用 genai.upload_file()")
                 logger.debug(f"参数: path={temp_file_path}, display_name={file_filename}")
                 
                 start_upload = time.time()
                 uploaded_file = genai.upload_file(
                     path=temp_file_path,
-                    display_name=file_filename
+                    display_name=file_filename,
+                    resumable=use_resumable,
                 )
                 upload_time = time.time() - start_upload
                 
@@ -591,7 +705,17 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tu
                 logger.error(f"错误信息: {error_msg}")
                 logger.error(f"完整错误堆栈:")
                 logger.error(traceback.format_exc())
-                
+                # 代理/上游返回了非 JSON 或错误结构，SDK 解析时出现 string indices must be integers
+                if "string indices must be integers" in error_msg or "not 'str'" in error_msg:
+                    logger.error(
+                        "可能原因: 代理或 Gemini 返回了 HTML 错误页（如 502）或错误 JSON 结构；"
+                        "已设置文件服务走代理，若仍失败请检查 Nginx 与上游可达性。"
+                    )
+                    # 若尚未尝试简单上传，则下次重试改为 resumable=False（避免分片/重定向解析问题）
+                    if use_resumable:
+                        use_resumable = False
+                        logger.info("下次重试将使用 resumable=False（简单上传）")
+                        retry_count -= 1  # 不占重试次数，再试一次
                 if retry_count >= max_retries:
                     logger.error(f"已达到最大重试次数，放弃上传")
                     raise Exception(f"上传文件失败（已重试 {max_retries} 次）: {error_msg}")
@@ -605,10 +729,8 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tu
         uploaded_file = wait_for_file_active(uploaded_file, max_wait_time=600)
         logger.info(f"✅ 文件处理完成，状态: ACTIVE")
         
-        # 配置模型和提示词
-        # 使用 Gemini 3 Flash 模型（根据官方文档：https://ai.google.dev/gemini-api/docs/gemini-3）
-        # gemini-3-flash-preview: 免费层有配额，速度快，适合音频分析
-        model_name = 'gemini-3-flash-preview'
+        # 配置模型和提示词（可通过 GEMINI_FLASH_MODEL 环境变量覆盖）
+        model_name = GEMINI_FLASH_MODEL
         logger.info(f"========== 配置模型 ==========")
         logger.info(f"使用模型: {model_name}")
         model = genai.GenerativeModel(model_name)
@@ -893,11 +1015,15 @@ class TaskDetailResponse(BaseModel):
     duration: int
     tags: List[str] = []
     status: str
+    error_message: Optional[str] = None  # 分析失败时的错误信息
     emotion_score: Optional[int] = None
     speaker_count: Optional[int] = None
     dialogues: List[dict] = []
     risks: List[str] = []
-    summary: Optional[str] = None  # 新增：对话总结
+    summary: Optional[str] = None  # 对话总结
+    speaker_mapping: Optional[dict] = None  # Speaker_0/1 -> profile_id
+    speaker_names: Optional[dict] = None  # Speaker_0/1 -> 档案名（关系），如 张三（自己），便于前端展示
+    conversation_summary: Optional[str] = None  # 「谁和谁对话」总结
     created_at: str
     updated_at: str
 
@@ -1110,6 +1236,16 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             file_size = os.path.getsize(temp_file_path)
             logger.info(f"文件大小: {file_size} 字节 ({file_size / 1024 / 1024:.2f} MB)")
             
+            # 原音频持久化到 OSS 或本地，供后续剪切与声纹使用
+            audio_url, audio_path = persist_original_audio(session_id, temp_file_path, file_filename or "audio.m4a", user_id)
+            result_query = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+            db_session_audio = result_query.scalar_one_or_none()
+            if db_session_audio:
+                db_session_audio.audio_url = audio_url
+                db_session_audio.audio_path = audio_path
+                await db.commit()
+                logger.info(f"Session 已更新原音频: audio_url={bool(audio_url)}, audio_path={bool(audio_path)}")
+            
             # 直接使用临时文件路径调用 analyze_audio_from_path
             result, call1_result = await analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a")
             
@@ -1148,6 +1284,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 db_session.end_time = end_time
                 db_session.duration = duration
                 db_session.status = "archived"
+                db_session.error_message = None  # 成功时清除旧失败原因
                 db_session.emotion_score = emotion_score
                 db_session.speaker_count = result.speaker_count
                 db_session.tags = tags
@@ -1168,6 +1305,140 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             db.add(analysis_result)
             await db.commit()
             logger.info(f"分析结果已保存到数据库: {session_id}")
+            
+            # 分析后流程：按说话人选代表片段 → 声纹识别 → 写 speaker_mapping
+            speaker_mapping = {}
+            has_audio = bool(audio_url or audio_path)
+            logger.info(f"[声纹] session_id={session_id} transcript_len={len(transcript) if transcript else 0} has_audio={has_audio} audio_url={bool(audio_url)} audio_path={bool(audio_path)}")
+            if not transcript:
+                logger.info(f"[声纹] session_id={session_id} 无 transcript，跳过声纹匹配")
+            elif not has_audio:
+                logger.info(f"[声纹] session_id={session_id} 无原音频 URL/路径，跳过声纹匹配")
+            if transcript and has_audio:
+                try:
+                    from utils.audio_storage import get_session_audio_local_path, cut_audio_segment
+                    from services.voiceprint_service import identify_speaker
+                    def _ts_to_sec(ts):
+                        if not ts:
+                            return 0.0
+                        try:
+                            parts = str(ts).split(":")
+                            if len(parts) == 2:
+                                return int(parts[0]) * 60 + float(parts[1])
+                        except Exception:
+                            pass
+                        return 0.0
+                    # 为每个 speaker 取第一句的 (start_sec, end_sec)
+                    first_segment = {}
+                    for i, t in enumerate(transcript):
+                        sp = t.get("speaker") or "未知"
+                        if sp not in first_segment:
+                            start_sec = _ts_to_sec(t.get("timestamp"))
+                            if i + 1 < len(transcript):
+                                end_sec = _ts_to_sec(transcript[i + 1].get("timestamp"))
+                            else:
+                                end_sec = float(duration) if duration else start_sec + 5.0
+                            if end_sec <= start_sec:
+                                end_sec = start_sec + 2.0
+                            first_segment[sp] = (start_sec, end_sec)
+                    local_path, is_temp = get_session_audio_local_path(audio_url, audio_path)
+                    logger.info(f"[声纹] session_id={session_id} 本地音频 local_path={bool(local_path)} is_temp={is_temp} speakers={list(first_segment.keys())}")
+                    if not local_path:
+                        logger.warning(f"[声纹] session_id={session_id} 无法获取本地音频（下载或路径失败），跳过声纹匹配")
+                    if local_path:
+                        profile_result = await db.execute(select(Profile.id).where(Profile.user_id == uuid.UUID(user_id)))
+                        profile_ids = [str(r) for r in profile_result.scalars().all()]
+                        logger.info(f"[声纹] session_id={session_id} 当前用户档案数 profile_count={len(profile_ids)} profile_ids={profile_ids[:5]}{'...' if len(profile_ids) > 5 else ''}")
+                        if not profile_ids:
+                            logger.warning(f"[声纹] session_id={session_id} 当前用户无档案，跳过声纹匹配")
+                        # 占位：仅 1 个说话人且 1 个档案时直接映射，避免依赖剪切/ffmpeg
+                        if len(first_segment) == 1 and len(profile_ids) == 1:
+                            only_sp = next(iter(first_segment.keys()))
+                            speaker_mapping[only_sp] = profile_ids[0]
+                            logger.info(f"[声纹] 占位单说话人单档案: {only_sp} -> {profile_ids[0]}")
+                        else:
+                            for sp, (start_sec, end_sec) in first_segment.items():
+                                try:
+                                    logger.info(f"[声纹] 开始剪切 speaker={sp} start_sec={start_sec} end_sec={end_sec}")
+                                    segment_bytes = cut_audio_segment(local_path, start_sec, end_sec)
+                                    logger.info(f"[声纹] 剪切成功 speaker={sp} bytes={len(segment_bytes)}")
+                                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".m4a")
+                                    tmp.write(segment_bytes)
+                                    tmp_path = tmp.name
+                                    tmp.close()
+                                    try:
+                                        matched_id, conf = identify_speaker(tmp_path, user_id, profile_ids, speaker_label=sp)
+                                        logger.info(f"[声纹] identify 返回 speaker={sp} matched_id={matched_id} conf={conf}")
+                                        if matched_id is not None and conf > 0.5:
+                                            speaker_mapping[sp] = str(matched_id)
+                                            logger.info(f"声纹匹配: {sp} -> profile_id={speaker_mapping[sp]} confidence={conf}")
+                                    finally:
+                                        if os.path.isfile(tmp_path):
+                                            os.unlink(tmp_path)
+                                except Exception as e:
+                                    logger.warning(f"声纹匹配失败 speaker={sp}: {e}", exc_info=True)
+                        if is_temp and os.path.isfile(local_path):
+                            try:
+                                os.unlink(local_path)
+                            except Exception:
+                                pass
+                    if speaker_mapping:
+                        ar_result = await db.execute(select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id)))
+                        ar = ar_result.scalar_one_or_none()
+                        if ar:
+                            ar.speaker_mapping = speaker_mapping
+                            await db.commit()
+                            logger.info(f"[声纹] session_id={session_id} speaker_mapping 已写入: {speaker_mapping}")
+                        else:
+                            logger.warning(f"[声纹] session_id={session_id} 未找到 AnalysisResult，无法写入 speaker_mapping")
+                    else:
+                        logger.info(f"[声纹] session_id={session_id} speaker_mapping 为空，未写入")
+                except Exception as e:
+                    logger.warning(f"[声纹] session_id={session_id} 分析后声纹匹配失败: {e}", exc_info=True)
+            
+            # 第二次 Gemini：总结「谁和谁对话」
+            conversation_summary = None
+            if transcript:
+                try:
+                    profile_names = {}
+                    if speaker_mapping:
+                        profile_ids_in_mapping = list(speaker_mapping.values())
+                        if profile_ids_in_mapping:
+                            profile_res = await db.execute(
+                                select(Profile.id, Profile.name, Profile.relationship_type).where(
+                                    Profile.user_id == uuid.UUID(user_id),
+                                    Profile.id.in_([uuid.UUID(pid) for pid in profile_ids_in_mapping])
+                                )
+                            )
+                            for row in profile_res.all():
+                                name = row.name or "未知"
+                                rel = getattr(row, "relationship_type", None) or "未知"
+                                profile_names[str(row.id)] = f"{name}（{rel}）"
+                    lines = []
+                    for t in transcript:
+                        sp = t.get("speaker") or "未知"
+                        name = profile_names.get(speaker_mapping.get(sp, ""), sp)
+                        text = (t.get("text") or "").strip()
+                        lines.append(f"{name}: {text}")
+                    display_text = "\n".join(lines)
+                    prompt = f"""根据以下对话，总结这是谁和谁的对话（角色关系、对话主题、双方立场等）。对话格式为 说话人: 内容。请用一两段话概括，不要列点。
+
+对话：
+{display_text}
+
+总结："""
+                    model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
+                    resp = model.generate_content(prompt)
+                    if resp and resp.text:
+                        conversation_summary = resp.text.strip()
+                        ar_res = await db.execute(select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id)))
+                        ar = ar_res.scalar_one_or_none()
+                        if ar:
+                            ar.conversation_summary = conversation_summary
+                            await db.commit()
+                            logger.info(f"conversation_summary 已写入: {session_id}")
+                except Exception as e:
+                    logger.warning(f"第二次 Gemini 总结失败: {e}", exc_info=True)
             
             # 存储分析结果到内存（向后兼容）
             analysis_storage[session_id] = {
@@ -1194,15 +1465,18 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             logger.error(traceback.format_exc())
             
             # 更新内存存储
+            err_msg = str(e)[:500]
             task_data["status"] = "failed"
+            task_data["error_message"] = err_msg
             task_data["updated_at"] = datetime.now().isoformat()
-            
+
             # 更新数据库状态
             try:
                 result_query = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
                 db_session = result_query.scalar_one_or_none()
                 if db_session:
                     db_session.status = "failed"
+                    db_session.error_message = err_msg
                     await db.commit()
                     logger.info(f"数据库Session状态已更新为 failed: {session_id}")
                 else:
@@ -1246,14 +1520,13 @@ async def get_task_list(
         
         query = query.order_by(Session.created_at.desc())
         
-        # 获取总数
-        count_result = await db.execute(select(func.count()).select_from(query.subquery()))
-        total = count_result.scalar() or 0
-        
-        # 分页查询
-        query = query.offset((page - 1) * page_size).limit(page_size)
+        # 首屏性能优化：不执行 count，只请求 page_size+1 条以判断 has_more
+        query = query.offset((page - 1) * page_size).limit(page_size + 1)
         result = await db.execute(query)
         sessions = result.scalars().all()
+        has_more = len(sessions) > page_size
+        if has_more:
+            sessions = sessions[:page_size]
         
         task_items = [
             TaskItem(
@@ -1278,14 +1551,13 @@ async def get_task_list(
                 "pagination": {
                     "page": page,
                     "page_size": page_size,
-                    "total": total,
-                    "total_pages": (total + page_size - 1) // page_size
+                    "has_more": has_more
                 }
             },
             timestamp=datetime.now().isoformat()
         )
     except Exception as e:
-        logger.error(f"获取任务列表失败: {e}")
+        logger.error(f"获取任务列表失败: {type(e).__name__}: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取列表失败: {str(e)}")
 
@@ -1321,11 +1593,49 @@ async def get_task_detail(
         dialogues = []
         risks = []
         summary = None
+        speaker_mapping = None
+        speaker_names = None
+        conversation_summary = None
         
         if analysis_result:
             dialogues = analysis_result.dialogues if isinstance(analysis_result.dialogues, list) else []
             risks = analysis_result.risks or []
             summary = analysis_result.summary
+            speaker_mapping = analysis_result.speaker_mapping if isinstance(analysis_result.speaker_mapping, dict) else None
+            conversation_summary = getattr(analysis_result, "conversation_summary", None) or None
+            if speaker_mapping:
+                profile_ids_in_mapping = list(speaker_mapping.values())
+                if profile_ids_in_mapping:
+                    try:
+                        profile_res = await db.execute(
+                            select(Profile.id, Profile.name, Profile.relationship_type).where(
+                                Profile.user_id == uuid.UUID(user_id),
+                                Profile.id.in_([uuid.UUID(pid) for pid in profile_ids_in_mapping])
+                            )
+                        )
+                        # 展示格式：档案名（关系），如 张三（自己）
+                        id_to_display = {}
+                        for row in profile_res.all():
+                            name = row.name or "未知"
+                            rel = getattr(row, "relationship_type", None) or "未知"
+                            id_to_display[str(row.id)] = f"{name}（{rel}）"
+                        speaker_names = {sp: id_to_display.get(pid, sp) for sp, pid in speaker_mapping.items()}
+                    except Exception:
+                        speaker_names = None
+            
+            # 若已有 speaker_names，返回前在 summary / conversation_summary 中把 Speaker_0/Speaker_1 替换为档案名
+            def _replace_speaker_labels(text: Optional[str], names: dict) -> Optional[str]:
+                if not text or not names:
+                    return text
+                for sp in sorted(names.keys(), key=len, reverse=True):
+                    text = text.replace(sp, names[sp])
+                # Call #1 约定 Speaker_1 为用户，Gemini 总结常写「用户」而非 Speaker_1，一并替换为档案名
+                if "Speaker_1" in names:
+                    text = text.replace("用户", names["Speaker_1"])
+                return text
+            if speaker_names:
+                summary = _replace_speaker_labels(summary, speaker_names)
+                conversation_summary = _replace_speaker_labels(conversation_summary, speaker_names)
         
         detail = TaskDetailResponse(
             session_id=str(db_session.id),
@@ -1335,11 +1645,15 @@ async def get_task_detail(
             duration=db_session.duration or 0,
             tags=db_session.tags or [],
             status=db_session.status or "unknown",
+            error_message=getattr(db_session, "error_message", None) or None,
             emotion_score=db_session.emotion_score,
             speaker_count=db_session.speaker_count,
             dialogues=dialogues,
             risks=risks,
             summary=summary,
+            speaker_mapping=speaker_mapping,
+            speaker_names=speaker_names,
+            conversation_summary=conversation_summary,
             created_at=db_session.created_at.isoformat() if db_session.created_at else "",
             updated_at=db_session.updated_at.isoformat() if db_session.updated_at else ""
         )
@@ -1381,17 +1695,19 @@ async def get_task_status(
             raise HTTPException(status_code=404, detail="任务不存在")
         
         status_value = db_session.status or "unknown"
-        
+        payload = {
+            "session_id": session_id,
+            "status": status_value,
+            "progress": 1.0 if status_value == "archived" else 0.5,
+            "estimated_time_remaining": 0 if status_value == "archived" else 30,
+            "updated_at": db_session.updated_at.isoformat() if db_session.updated_at else ""
+        }
+        if status_value == "failed" and getattr(db_session, "error_message", None):
+            payload["failure_reason"] = db_session.error_message
         return APIResponse(
             code=200,
             message="success",
-            data={
-                "session_id": session_id,
-                "status": status_value,
-                "progress": 1.0 if status_value == "archived" else 0.5,
-                "estimated_time_remaining": 0 if status_value == "archived" else 30,
-                "updated_at": db_session.updated_at.isoformat() if db_session.updated_at else ""
-            },
+            data=payload,
             timestamp=datetime.now().isoformat()
         )
     except HTTPException:
@@ -1470,20 +1786,20 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         logger.info(f"========== 开始生成策略分析（v0.4 技能化架构） ==========")
         logger.info(f"session_id: {session_id}")
         
-        # 1. 场景识别（Router Agent）
-        logger.info("========== 步骤 1: 场景识别 ==========")
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        # 2.1 场景识别（Router Agent）
+        logger.info("[策略流程] 步骤2.1: 场景识别(Gemini classify_scene)...")
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
         scene_result = classify_scene(transcript, model)
         primary_scene = scene_result.get("primary_scene", "other")
         scenes = scene_result.get("scenes", [])
-        
-        logger.info(f"场景识别完成: primary_scene={primary_scene}")
+        logger.info(f"[策略流程] 步骤2.1: 完成 primary_scene={primary_scene}")
         for scene in scenes:
             logger.info(f"  - {scene.get('category')}: {scene.get('confidence', 0):.2f}")
         
-        # 2. 技能匹配
-        logger.info("========== 步骤 2: 技能匹配 ==========")
+        # 2.2 技能匹配（若此处报 PG type 114，可能是 skills 表 meta_data 列为 json）
+        logger.info("[策略流程] 步骤2.2: 技能匹配(match_skills/查 skills 表)...")
         matched_skills = await match_skills(scene_result, db)
+        logger.info(f"[策略流程] 步骤2.2: 完成 匹配到 {len(matched_skills)} 个技能")
         
         if not matched_skills:
             logger.warning("未匹配到任何技能，使用默认技能")
@@ -1500,12 +1816,11 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             else:
                 raise Exception("未匹配到技能且默认技能不存在")
         
-        logger.info(f"匹配到 {len(matched_skills)} 个技能")
         for skill in matched_skills:
             logger.info(f"  ✅ 技能: {skill['skill_id']} (名称: {skill.get('name', 'N/A')}, priority={skill['priority']}, confidence={skill['confidence']:.2f})")
         
-        # 3. 技能执行（并行执行所有匹配的技能）
-        logger.info("========== 步骤 3: 技能执行 ==========")
+        # 2.3 技能执行：transcript + 技能 prompt -> Gemini -> 策略与视觉描述
+        logger.info("[策略流程] 步骤2.3: 技能执行(transcript+技能prompt->Gemini)...")
         skill_results = []
         context = {
             "session_id": session_id,
@@ -1578,13 +1893,14 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         await db.commit()
         
         # 4. 结果融合（如果多技能）
-        logger.info("========== 步骤 4: 结果融合 ==========")
+        logger.info("[策略流程] 步骤2.3a: 结果融合(compose_results)...")
         if len(skill_results) == 1 and skill_results[0].get("success"):
             # 单个技能，直接使用结果
             call2_result = skill_results[0]["result"]
         else:
             # 多技能，需要融合
             call2_result = compose_results(skill_results)
+        logger.info(f"[策略流程] 步骤2.3a: 完成 关键时刻={len(call2_result.visual)} 策略数={len(call2_result.strategies)}")
         
         # 5. 为每个关键时刻生成图片
         logger.info(f"========== 步骤 5: 生成图片 ==========")
@@ -1616,10 +1932,10 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
                 updated_visual_list.append(visual_data)
         
         call2_result.visual = updated_visual_list
-        logger.info(f"========== 图片生成完成 ==========")
+        logger.info(f"[策略流程] 步骤2.3b: 图片生成完成")
         
-        # 6. 保存策略分析到数据库
-        logger.info("========== 步骤 6: 保存到数据库 ==========")
+        # 6. 保存策略分析到数据库（若此处或 commit 后报 PG type 114，说明 strategy_analysis 表列为 json 未改为 jsonb）
+        logger.info("[策略流程] 步骤2.4: 写入策略分析到数据库(StrategyAnalysis)...")
         
         # 构建 applied_skills 列表
         applied_skills = [
@@ -1662,11 +1978,11 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             existing.scene_category = primary_scene
             existing.scene_confidence = primary_scene_confidence
             await db.commit()
-            logger.info(f"策略分析已更新到数据库: {session_id}")
+            logger.info(f"[策略流程] 步骤2.4: 已更新到数据库: {session_id}")
         else:
             db.add(strategy_analysis)
             await db.commit()
-            logger.info(f"策略分析已保存到数据库: {session_id}")
+            logger.info(f"[策略流程] 步骤2.4: 已保存到数据库: {session_id}")
         
         # 存储策略结果到内存（向后兼容）
         if session_id not in analysis_storage:
@@ -1743,7 +2059,7 @@ async def classify_scene_endpoint(
             raise HTTPException(status_code=400, detail="对话转录数据不存在，请先完成音频分析")
         
         # 场景识别
-        model = genai.GenerativeModel('gemini-3-flash-preview')
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
         scene_result = classify_scene(transcript, model)
         
         # 技能匹配
@@ -1785,6 +2101,7 @@ async def generate_strategies(
     from datetime import datetime
     
     try:
+        logger.info(f"[策略流程] session_id={session_id} 开始")
         # 验证任务存在且属于当前用户
         result = await db.execute(
             select(Session).where(
@@ -1797,11 +2114,13 @@ async def generate_strategies(
         if not db_session:
             raise HTTPException(status_code=404, detail="任务不存在")
         
-        # 优先从数据库读取已生成的策略分析
+        # 步骤0：优先从数据库读取已生成的策略分析（若此处报 PG type 114，说明 strategy_analysis 表列为 json 未改为 jsonb）
+        logger.info(f"[策略流程] 步骤0: 读取已有策略分析(StrategyAnalysis)...")
         strategy_query = await db.execute(
             select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
         )
         existing_strategy = strategy_query.scalar_one_or_none()
+        logger.info(f"[策略流程] 步骤0: 完成 existing={existing_strategy is not None}")
         
         if existing_strategy and existing_strategy.visual_data and existing_strategy.strategies:
             logger.info(f"从数据库读取已生成的策略分析: {session_id}")
@@ -1839,13 +2158,15 @@ async def generate_strategies(
             )
         
         # 如果数据库中没有，则生成新的策略分析
-        logger.info(f"数据库中没有策略分析，开始生成: {session_id}")
+        logger.info(f"[策略流程] 数据库中没有策略分析，开始生成: {session_id}")
         
-        # 从数据库查询分析结果
+        # 步骤1：从数据库查询分析结果取 transcript（若此处报 PG type 114，说明 analysis_results 表列为 json 未改为 jsonb）
+        logger.info(f"[策略流程] 步骤1: 读取分析结果(AnalysisResult/transcript)...")
         analysis_result_query = await db.execute(
             select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
         )
         analysis_result_db = analysis_result_query.scalar_one_or_none()
+        logger.info(f"[策略流程] 步骤1: 完成 analysis_result_db={analysis_result_db is not None}")
         
         if not analysis_result_db:
             raise HTTPException(status_code=400, detail="分析结果不存在，请先完成音频分析")
@@ -1866,10 +2187,13 @@ async def generate_strategies(
         if not transcript:
             raise HTTPException(status_code=400, detail="对话转录数据不存在，请先完成音频分析")
         
-        # 调用核心策略生成逻辑
+        # 步骤2：核心生成（步骤2.1 场景识别 -> 2.2 技能匹配 -> 2.3 transcript+技能 prompt -> Gemini）
+        logger.info(f"[策略流程] 步骤2: 调用 _generate_strategies_core(场景识别->技能匹配->Gemini策略)...")
         call2_result = await _generate_strategies_core(session_id, user_id, transcript, db)
+        logger.info(f"[策略流程] 步骤2: _generate_strategies_core 返回成功")
         
-        # 从数据库读取技能信息
+        # 步骤3：从数据库读取刚写入的策略以取技能信息（若此处报 PG type 114，说明 strategy_analysis 表列为 json 未改为 jsonb）
+        logger.info(f"[策略流程] 步骤3: 读取刚写入的策略分析(技能信息)...")
         strategy_query_after = await db.execute(
             select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
         )
@@ -2050,8 +2374,7 @@ async def test_gemini():
     """测试 Gemini 3 Flash API 连接"""
     try:
         print("测试 Gemini 3 Flash API 连接...")
-        # 使用 Gemini 3 Flash（根据官方文档，免费层有配额）
-        model_name = 'gemini-3-flash-preview'
+        model_name = GEMINI_FLASH_MODEL
         print(f"使用模型: {model_name}")
         model = genai.GenerativeModel(model_name)
         response = model.generate_content("请回复'连接成功'")
@@ -2069,48 +2392,6 @@ async def test_gemini():
             "message": "Gemini 3 Flash API 连接失败",
             "error": error_msg
         }
-
-
-@app.on_event("startup")
-async def startup_event():
-    """应用启动时初始化数据库和技能"""
-    try:
-        logger.info("正在初始化数据库...")
-        await init_db()
-        logger.info("✅ 数据库初始化完成")
-        
-        # 初始化技能（v0.4 技能化架构）
-        try:
-            logger.info("正在初始化技能...")
-            from database.connection import async_session_maker
-            async with async_session_maker() as db:
-                try:
-                    registered_skills = await initialize_skills(db)
-                    logger.info(f"✅ 技能初始化完成，共注册 {len(registered_skills)} 个技能")
-                    for skill in registered_skills:
-                        logger.info(f"  - {skill['skill_id']}: {skill['name']}")
-                except Exception as e:
-                    logger.error(f"❌ 技能初始化失败: {e}")
-                    logger.error(traceback.format_exc())
-                    await db.rollback()
-        except Exception as e:
-            logger.error(f"❌ 技能初始化失败: {e}")
-            logger.error(traceback.format_exc())
-            # 不阻止应用启动，允许在没有技能的情况下运行（向后兼容）
-    except Exception as e:
-        logger.error(f"❌ 数据库初始化失败: {e}")
-        logger.error(traceback.format_exc())
-        # 不阻止应用启动，允许在没有数据库的情况下运行（向后兼容）
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭时清理数据库连接"""
-    try:
-        await close_db()
-        logger.info("✅ 数据库连接已关闭")
-    except Exception as e:
-        logger.error(f"关闭数据库连接时出错: {e}")
 
 
 if __name__ == "__main__":

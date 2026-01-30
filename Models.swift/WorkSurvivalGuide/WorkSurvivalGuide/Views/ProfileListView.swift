@@ -117,6 +117,7 @@ struct ProfileHeaderView: View {
 // 档案卡片视图
 struct ProfileCardView: View {
     let profile: Profile
+    @ObservedObject private var audioPlayer = ProfileAudioPlayerService.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -199,9 +200,9 @@ struct ProfileCardView: View {
                 // 音频播放按钮和波形图
                 if profile.audioUrl != nil || (profile.audioStartTime != nil && profile.audioEndTime != nil) {
                     HStack(alignment: .center, spacing: 11.995262145996094) { // 根据Figma: gap 11.99px
-                        // 播放按钮（圆形）
+                        // 播放按钮（圆形）：有 audioUrl 时点击播放/暂停
                         Button(action: {
-                            // TODO: 实现音频播放
+                            audioPlayer.togglePlayback(for: profile)
                         }) {
                             ZStack {
                                 Circle()
@@ -209,12 +210,13 @@ struct ProfileCardView: View {
                                     .frame(width: 39.99, height: 39.99)
                                     .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1)
                                 
-                                Image(systemName: "play.fill")
+                                Image(systemName: audioPlayer.currentPlayingProfileId == profile.id ? "pause.fill" : "play.fill")
                                     .font(.system(size: 18))
                                     .foregroundColor(AppColors.headerText)
                                     .offset(x: 1) // 稍微向右偏移，视觉居中
                             }
                         }
+                        .disabled(profile.audioUrl == nil || !(profile.audioUrl?.hasPrefix("http") ?? false))
                         
                         // 时长和波形图
                         HStack(alignment: .center, spacing: 11.995264053344727) {

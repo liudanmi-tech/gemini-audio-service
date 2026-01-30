@@ -1,0 +1,6 @@
+{
+  "cursor.terminal.allowList": [
+    "ssh",
+    "scp"
+  ]
+}

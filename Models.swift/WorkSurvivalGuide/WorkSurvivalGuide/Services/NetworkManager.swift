@@ -21,8 +21,8 @@ class NetworkManager {
     
     // ⚠️ 重要：修改为你的后端 API 地址
     // 开发阶段：使用 localhost（本地测试）
-    // 生产阶段：使用服务器地址（注意端口 8001）
-    private let baseURL = "http://47.79.254.213:8001/api/v1"
+    // 生产阶段：使用 80 端口经 Nginx 转发（安全组已放行 80）
+    private let baseURL = "http://47.79.254.213/api/v1"
     
     // 获取 baseURL（供外部使用，用于图片 URL 转换）
     func getBaseURL() -> String {
@@ -385,28 +385,32 @@ class NetworkManager {
             throw NSError(domain: "MockError", code: 404, userInfo: [NSLocalizedDescriptionKey: "Mock 模式下不支持详情查询"])
         }
         
-        // 使用真实 API
+        // 使用真实 API：先取原始响应，非 200 时按错误体解码，避免 "data is missing"
         print("🌐 [Real] 使用真实 API 获取任务详情")
-        let response = try await AF.request(
+        let dataResponse = await AF.request(
             "\(baseURL)/tasks/sessions/\(sessionId)",
             method: .get,
             headers: [
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 10 } // 优化超时时间为10秒
+            requestModifier: { $0.timeoutInterval = 60 }
         )
-        .serializingDecodable(APIResponse<TaskDetailResponse>.self)
-        .value
+        .serializingData()
+        .response
         
-        guard response.code == 200, let data = response.data else {
-            throw NSError(
-                domain: "NetworkError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
-            )
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        if statusCode != 200 {
+            let message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
+                ?? (responseData.isEmpty ? nil : String(data: responseData, encoding: .utf8))
+                ?? "请求失败 (HTTP \(statusCode))"
+            throw NSError(domain: "NetworkError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
-        
+        let decoded = try JSONDecoder().decode(APIResponse<TaskDetailResponse>.self, from: responseData)
+        guard decoded.code == 200, let data = decoded.data else {
+            throw NSError(domain: "NetworkError", code: decoded.code, userInfo: [NSLocalizedDescriptionKey: decoded.message])
+        }
         return data
     }
     
@@ -420,32 +424,37 @@ class NetworkManager {
                 status: "archived",
                 progress: 1.0,
                 estimatedTimeRemaining: 0,
-                updatedAt: Date()
+                updatedAt: Date(),
+                failureReason: nil
             )
         }
         
-        // 使用真实 API
+        // 使用真实 API：先取原始响应，非 200 时按错误体解码，避免 "data is missing"
         print("🌐 [Real] 使用真实 API 获取任务状态")
-        let response = try await AF.request(
+        let dataResponse = await AF.request(
             "\(baseURL)/tasks/sessions/\(sessionId)/status",
             method: .get,
             headers: [
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 120 } // 设置超时时间为120秒
+            requestModifier: { $0.timeoutInterval = 120 }
         )
-        .serializingDecodable(APIResponse<TaskStatusResponse>.self)
-        .value
+        .serializingData()
+        .response
         
-        guard response.code == 200, let data = response.data else {
-            throw NSError(
-                domain: "NetworkError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
-            )
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        if statusCode != 200 {
+            let message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
+                ?? (responseData.isEmpty ? nil : String(data: responseData, encoding: .utf8))
+                ?? "请求失败 (HTTP \(statusCode))"
+            throw NSError(domain: "NetworkError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
-        
+        let decoded = try JSONDecoder().decode(APIResponse<TaskStatusResponse>.self, from: responseData)
+        guard decoded.code == 200, let data = decoded.data else {
+            throw NSError(domain: "NetworkError", code: decoded.code, userInfo: [NSLocalizedDescriptionKey: decoded.message])
+        }
         return data
     }
     
@@ -461,25 +470,41 @@ class NetworkManager {
             )
         }
         
-        // 使用真实 API
+        // 使用真实 API：先取原始响应，按状态码分支解码，避免 4xx/5xx 时用成功结构解码导致 "data is missing"
         print("🌐 [Real] 使用真实 API 获取策略分析")
-        let response = try await AF.request(
+        let dataResponse = await AF.request(
             "\(baseURL)/tasks/sessions/\(sessionId)/strategies",
             method: .post,
             headers: [
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 180 } // 策略分析可能需要更长时间，设置180秒
+            requestModifier: { $0.timeoutInterval = 180 }
         )
-        .serializingDecodable(APIResponse<StrategyAnalysisResponse>.self)
-        .value
+        .serializingData()
+        .response
         
-        guard response.code == 200, let data = response.data else {
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        
+        if statusCode != 200 {
+            let message: String
+            if let errResp = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+                message = errResp.detail
+            } else if !responseData.isEmpty, let str = String(data: responseData, encoding: .utf8), !str.isEmpty {
+                message = str
+            } else {
+                message = "请求失败 (HTTP \(statusCode))"
+            }
+            throw NSError(domain: "NetworkError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        
+        let decoded = try JSONDecoder().decode(APIResponse<StrategyAnalysisResponse>.self, from: responseData)
+        guard decoded.code == 200, let data = decoded.data else {
             throw NSError(
                 domain: "NetworkError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
+                code: decoded.code,
+                userInfo: [NSLocalizedDescriptionKey: decoded.message]
             )
         }
         
@@ -1035,6 +1060,7 @@ class NetworkManager {
             "speaker": speaker
         ]
         
+        // 后端直接返回 ExtractSegmentResponse，未使用 APIResponse 包装
         let response = try await AF.request(
             "\(baseURL)/tasks/sessions/\(sessionId)/extract-segment",
             method: .post,
@@ -1046,19 +1072,12 @@ class NetworkManager {
             ],
             requestModifier: { $0.timeoutInterval = 30 } // 音频提取可能需要更长时间
         )
-        .serializingDecodable(APIResponse<AudioSegmentExtractResponse>.self)
+        .validate(statusCode: 200..<300)
+        .serializingDecodable(AudioSegmentExtractResponse.self)
         .value
         
-        guard response.code == 200, let data = response.data else {
-            throw NSError(
-                domain: "NetworkError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
-            )
-        }
-        
         print("✅ [NetworkManager] 音频片段提取成功")
-        return data
+        return response
     }
 }
 

@@ -1,6 +1,11 @@
 """
 音频片段提取API路由
 """
+import io
+import logging
+import os
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -11,6 +16,9 @@ from database.connection import get_db
 from database.models import Session, AnalysisResult
 from auth.jwt_handler import get_current_user_id
 from pydantic import BaseModel
+from utils.audio_storage import get_session_audio_local_path, upload_segment_bytes, cut_audio_segment
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/tasks/sessions", tags=["audio-segments"])
 
@@ -111,8 +119,7 @@ async def extract_audio_segment(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """提取指定时间段的音频片段"""
-    # 验证session属于当前用户
+    """提取指定时间段的音频片段（依赖原音频已持久化）。"""
     result = await db.execute(
         select(Session).where(
             Session.id == uuid.UUID(session_id),
@@ -120,20 +127,30 @@ async def extract_audio_segment(
         )
     )
     session = result.scalar_one_or_none()
-    
     if not session:
         raise HTTPException(status_code=404, detail="对话不存在")
-    
-    # TODO: 实现音频提取逻辑
-    # 1. 获取原始音频文件路径
-    # 2. 使用pydub或ffmpeg提取指定时间段
-    # 3. 保存音频片段到OSS或本地
-    # 4. 返回音频URL
-    
-    # 临时返回（需要实现实际的音频提取）
+    if not session.audio_url and not session.audio_path:
+        raise HTTPException(
+            status_code=400,
+            detail="原音频未持久化，无法剪切片段；请确保录音分析已完成且服务已配置原音频存储。"
+        )
+    local_path, is_temp = get_session_audio_local_path(session.audio_url, session.audio_path)
+    if not local_path:
+        raise HTTPException(status_code=502, detail="无法获取原音频文件")
+    try:
+        ext = Path(local_path).suffix or ".m4a"
+        segment_bytes = cut_audio_segment(local_path, request.start_time, request.end_time)
+    except Exception as e:
+        logger.exception("剪切音频失败")
+        raise HTTPException(status_code=500, detail=f"剪切音频失败: {str(e)}")
+    finally:
+        if is_temp and local_path and os.path.isfile(local_path):
+            try:
+                os.unlink(local_path)
+            except Exception:
+                pass
     segment_id = f"{session_id}_{int(request.start_time)}_{int(request.end_time)}"
-    audio_url = f"/audio/segments/{segment_id}.m4a"  # 临时URL，需要替换为实际提取的音频URL
-    
+    audio_url = upload_segment_bytes(segment_bytes, user_id, session_id, segment_id, ext)
     return ExtractSegmentResponse(
         segment_id=segment_id,
         audio_url=audio_url,

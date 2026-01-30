@@ -2,7 +2,7 @@
 数据库模型定义
 使用SQLAlchemy ORM定义所有表结构
 """
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, ARRAY, JSON
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, ARRAY, JSON, Float
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -36,9 +36,12 @@ class Session(Base):
     end_time = Column(DateTime(timezone=True))
     duration = Column(Integer)  # 秒
     status = Column(String(50))  # 'processing', 'completed', 'failed', 'archived'
+    error_message = Column(Text)  # 分析失败时的错误信息，供客户端展示
     emotion_score = Column(Integer)
     speaker_count = Column(Integer)
     tags = Column(ARRAY(String))
+    audio_url = Column(String(500), nullable=True)   # 原音频 OSS URL，供剪切与声纹使用
+    audio_path = Column(String(500), nullable=True)  # 原音频本地路径（无 OSS 时使用）
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -61,6 +64,8 @@ class AnalysisResult(Base):
     stats = Column(JSONB)  # 统计数据
     transcript = Column(Text)
     call1_result = Column(JSONB)  # Call #1 分析结果
+    speaker_mapping = Column(JSONB, nullable=True)  # Speaker_0/Speaker_1 -> profile_id 映射
+    conversation_summary = Column(Text, nullable=True)  # 「谁和谁对话」总结（第二次 Gemini）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -78,7 +83,7 @@ class StrategyAnalysis(Base):
     strategies = Column(JSONB, nullable=False)  # StrategyItem数组
     applied_skills = Column(JSONB, default=[])  # 应用的技能列表 [{"skill_id": "workplace_jungle", "priority": 100}]
     scene_category = Column(String(50))  # 识别的场景类别
-    scene_confidence = Column(JSONB)  # 场景识别置信度（存储为 float 值，兼容 JSONB 类型）
+    scene_confidence = Column(Float)  # 场景识别置信度（与文档/迁移一致）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -98,6 +103,7 @@ class Skill(Base):
     priority = Column(Integer, default=0)
     enabled = Column(Boolean, default=True, index=True)
     version = Column(String(50))
+    prompt_template = Column(Text, nullable=True)  # Prompt 模板内容，落表后查表即可用，不依赖 SKILL.md
     meta_data = Column("metadata", JSONB, default={})  # 元数据：keywords、scenarios等（使用 Column name 参数避免与 SQLAlchemy 保留字段冲突）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
@@ -114,7 +120,7 @@ class SkillExecution(Base):
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     skill_id = Column(String(100), ForeignKey("skills.skill_id"), nullable=False, index=True)
     scene_category = Column(String(50))  # 识别的场景类别
-    confidence_score = Column(JSONB)  # 场景识别置信度
+    confidence_score = Column(Float)  # 场景识别置信度（与文档/迁移一致）
     execution_time_ms = Column(Integer)  # 执行耗时（毫秒）
     success = Column(Boolean, default=True)
     error_message = Column(Text)

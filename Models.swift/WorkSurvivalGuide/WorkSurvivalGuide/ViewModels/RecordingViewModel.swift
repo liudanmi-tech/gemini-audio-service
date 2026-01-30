@@ -343,13 +343,16 @@ class RecordingViewModel: ObservableObject {
                     
                     // 处理失败状态
                     if status.status == "failed" {
-                        print("❌ [RecordingViewModel] 分析失败")
+                        let message = status.failureReason?.isEmpty == false
+                            ? status.failureReason!
+                            : "音频分析失败，请重试"
+                        print("❌ [RecordingViewModel] 分析失败: \(message)")
                         await MainActor.run {
                             print("📢 [RecordingViewModel] 发送 TaskAnalysisFailed 通知")
                             NotificationCenter.default.post(
                                 name: NSNotification.Name("TaskAnalysisFailed"),
                                 object: sessionId,
-                                userInfo: ["message": "音频分析失败，请重试"]
+                                userInfo: ["message": message]
                             )
                         }
                         break

@@ -36,7 +36,8 @@ class MockNetworkService {
                 page: page,
                 pageSize: pageSize,
                 total: mockTasks.count,
-                totalPages: 1
+                totalPages: 1,
+                hasMore: false
             )
         )
     }

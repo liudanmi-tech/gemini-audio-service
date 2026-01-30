@@ -177,18 +177,40 @@ struct APIResponse<T: Codable>: Codable {
 struct TaskListResponse: Codable {
     let sessions: [TaskItem]
     let pagination: Pagination
-    
+
     struct Pagination: Codable {
         let page: Int
         let pageSize: Int
+        /// 服务端可能不返回（列表性能优化后只返回 has_more），缺省为 0
         let total: Int
+        /// 服务端可能不返回，缺省为 1
         let totalPages: Int
-        
+        /// 是否有更多页（服务端优化后使用）
+        let hasMore: Bool
+
         enum CodingKeys: String, CodingKey {
             case page
             case pageSize = "page_size"
             case total
             case totalPages = "total_pages"
+            case hasMore = "has_more"
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            page = try c.decode(Int.self, forKey: .page)
+            pageSize = try c.decode(Int.self, forKey: .pageSize)
+            total = try c.decodeIfPresent(Int.self, forKey: .total) ?? 0
+            totalPages = try c.decodeIfPresent(Int.self, forKey: .totalPages) ?? 1
+            hasMore = try c.decodeIfPresent(Bool.self, forKey: .hasMore) ?? false
+        }
+
+        init(page: Int, pageSize: Int, total: Int, totalPages: Int, hasMore: Bool = false) {
+            self.page = page
+            self.pageSize = pageSize
+            self.total = total
+            self.totalPages = totalPages
+            self.hasMore = hasMore
         }
     }
 }
@@ -333,35 +355,39 @@ struct TaskStatusResponse: Codable {
     let progress: Double
     let estimatedTimeRemaining: Int
     let updatedAt: Date
-    
+    /// 分析失败时服务端返回的失败原因
+    let failureReason: String?
+
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case status
         case progress
         case estimatedTimeRemaining = "estimated_time_remaining"
         case updatedAt = "updated_at"
+        case failureReason = "failure_reason"
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         sessionId = try container.decode(String.self, forKey: .sessionId)
         status = try container.decode(String.self, forKey: .status)
         progress = try container.decode(Double.self, forKey: .progress)
         estimatedTimeRemaining = try container.decode(Int.self, forKey: .estimatedTimeRemaining)
-        
+        failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         let updatedAtString = try container.decode(String.self, forKey: .updatedAt)
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         updatedAt = dateFormatter.date(from: updatedAtString) ?? Date()
     }
-    
+
     // 便利初始化器
-    init(sessionId: String, status: String, progress: Double, estimatedTimeRemaining: Int, updatedAt: Date) {
+    init(sessionId: String, status: String, progress: Double, estimatedTimeRemaining: Int, updatedAt: Date, failureReason: String? = nil) {
         self.sessionId = sessionId
         self.status = status
         self.progress = progress
         self.estimatedTimeRemaining = estimatedTimeRemaining
         self.updatedAt = updatedAt
+        self.failureReason = failureReason
     }
 }
 

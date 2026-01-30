@@ -3,8 +3,10 @@ JWT Token处理模块
 负责Token的生成、验证和中间件
 """
 import os
+import time
+from types import SimpleNamespace
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, Dict, Tuple, Any
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -16,10 +18,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# User 查询短期缓存，减少列表请求重复查库（TTL 秒）
+_USER_CACHE_TTL = int(os.getenv("USER_CACHE_TTL", "90"))
+_user_cache: Dict[str, Tuple[Any, float]] = {}
+
 # 从环境变量读取配置
 JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "your-secret-key-here-change-in-production")
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "24"))
+# 默认 168 小时（7 天），减少「过了一会儿就 401」；可按需在 .env 中覆盖
+JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "168"))
 
 # HTTP Bearer认证方案
 security = HTTPBearer()
@@ -97,6 +104,18 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    # 短期缓存：列表等接口并行请求时只查一次 User
+    now = time.time()
+    if user_id in _user_cache:
+        cached, expiry = _user_cache[user_id]
+        if now < expiry:
+            if not cached.is_active:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="用户已被禁用",
+                )
+            return cached
+    
     # 从数据库查询用户
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
@@ -114,7 +133,10 @@ async def get_current_user(
             detail="用户已被禁用",
         )
     
-    return user
+    # 缓存脱壳后的简单对象，避免绑定 session
+    snapshot = SimpleNamespace(id=user.id, is_active=user.is_active)
+    _user_cache[user_id] = (snapshot, now + _USER_CACHE_TTL)
+    return snapshot
 
 
 async def get_current_user_id(

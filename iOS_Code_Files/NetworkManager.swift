@@ -6,7 +6,7 @@ class NetworkManager {
     
     // ⚠️ 重要：修改为你的后端 API 地址
     // 注意：iOS 设备上不能使用 localhost，需要使用实际的服务器 IP 或域名
-    private let baseURL = "http://47.79.254.213:8001/api/v1"
+    private let baseURL = "http://47.79.254.213/api/v1"
     
     // 获取 baseURL（供外部使用，用于图片 URL 转换）
     func getBaseURL() -> String {

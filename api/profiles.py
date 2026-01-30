@@ -1,10 +1,12 @@
 """
 档案管理API路由
 """
+import time
+from typing import List, Optional, Dict, Tuple, Any
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import List, Optional
 import uuid
 from datetime import datetime
 import logging
@@ -16,6 +18,17 @@ from auth.jwt_handler import get_current_user_id
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+# 档案列表短期缓存，TTL 60 秒；创建/更新/删除时按 user_id 失效
+_PROFILES_CACHE_TTL = 60
+_profiles_cache: Dict[str, Tuple[List[dict], float]] = {}
+
+
+def _invalidate_profiles_cache(user_id: str):
+    if user_id in _profiles_cache:
+        del _profiles_cache[user_id]
+        logger.debug("档案列表缓存已失效: %s", user_id)
+
 
 router = APIRouter(prefix="/api/v1/profiles", tags=["profiles"])
 
@@ -63,34 +76,47 @@ class ProfileResponse(BaseModel):
         from_attributes = True
 
 
+def _profile_to_response(p: Profile) -> ProfileResponse:
+    return ProfileResponse(
+        id=str(p.id),
+        name=p.name,
+        relationship=p.relationship_type,
+        photo_url=p.photo_url,
+        notes=p.notes,
+        audio_session_id=str(p.audio_session_id) if p.audio_session_id else None,
+        audio_segment_id=p.audio_segment_id,
+        audio_start_time=float(p.audio_start_time) if p.audio_start_time else None,
+        audio_end_time=float(p.audio_end_time) if p.audio_end_time else None,
+        audio_url=p.audio_url,
+        created_at=p.created_at.isoformat(),
+        updated_at=p.updated_at.isoformat(),
+    )
+
+
 @router.get("", response_model=List[ProfileResponse])
 async def get_profiles(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
     """获取当前用户的所有档案"""
-    result = await db.execute(
-        select(Profile).where(Profile.user_id == uuid.UUID(user_id))
-    )
-    profiles = result.scalars().all()
-    
-    return [
-        ProfileResponse(
-            id=str(p.id),
-            name=p.name,
-            relationship=p.relationship_type,
-            photo_url=p.photo_url,
-            notes=p.notes,
-            audio_session_id=str(p.audio_session_id) if p.audio_session_id else None,
-            audio_segment_id=p.audio_segment_id,
-            audio_start_time=float(p.audio_start_time) if p.audio_start_time else None,
-            audio_end_time=float(p.audio_end_time) if p.audio_end_time else None,
-            audio_url=p.audio_url,
-            created_at=p.created_at.isoformat(),
-            updated_at=p.updated_at.isoformat()
+    try:
+        now = time.time()
+        if user_id in _profiles_cache:
+            cached, expiry = _profiles_cache[user_id]
+            if now < expiry:
+                return [ProfileResponse(**d) for d in cached]
+
+        result = await db.execute(
+            select(Profile).where(Profile.user_id == uuid.UUID(user_id))
         )
-        for p in profiles
-    ]
+        profiles = result.scalars().all()
+        out = [_profile_to_response(p) for p in profiles]
+        _profiles_cache[user_id] = ([r.model_dump() for r in out], now + _PROFILES_CACHE_TTL)
+        return out
+    except Exception as e:
+        logger.error(f"获取档案列表失败: {type(e).__name__}: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取档案列表失败: {str(e)}")
 
 
 @router.post("", response_model=ProfileResponse, status_code=201)
@@ -100,6 +126,12 @@ async def create_profile(
     db: AsyncSession = Depends(get_db)
 ):
     """创建新档案"""
+    audio_session_id = None
+    if profile_data.audio_session_id and str(profile_data.audio_session_id).strip():
+        try:
+            audio_session_id = uuid.UUID(profile_data.audio_session_id)
+        except (ValueError, TypeError):
+            pass
     profile = Profile(
         id=uuid.uuid4(),
         user_id=uuid.UUID(user_id),
@@ -107,7 +139,7 @@ async def create_profile(
         relationship_type=profile_data.relationship,
         photo_url=profile_data.photo_url,
         notes=profile_data.notes,
-        audio_session_id=uuid.UUID(profile_data.audio_session_id) if profile_data.audio_session_id else None,
+        audio_session_id=audio_session_id,
         audio_segment_id=profile_data.audio_segment_id,
         audio_start_time=int(profile_data.audio_start_time) if profile_data.audio_start_time else None,
         audio_end_time=int(profile_data.audio_end_time) if profile_data.audio_end_time else None,
@@ -116,9 +148,10 @@ async def create_profile(
     
     db.add(profile)
     await db.commit()
+    _invalidate_profiles_cache(user_id)
     # 移除不必要的refresh，created_at和updated_at由数据库自动生成，但对象中已有值
     # await db.refresh(profile)  # 已移除，减少一次数据库查询
-    
+
     return ProfileResponse(
         id=str(profile.id),
         name=profile.name,
@@ -176,9 +209,10 @@ async def update_profile(
     
     # 提交更改
     await db.commit()
+    _invalidate_profiles_cache(user_id)
     # 刷新对象以获取最新的updated_at（由数据库自动更新）
     await db.refresh(profile)
-    
+
     return ProfileResponse(
         id=str(profile.id),
         name=profile.name,
@@ -215,7 +249,7 @@ async def delete_profile(
     
     await db.delete(profile)
     await db.commit()
-    
+    _invalidate_profiles_cache(user_id)
     return None
 
 
