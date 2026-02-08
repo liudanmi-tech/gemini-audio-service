@@ -98,7 +98,7 @@ async def get_profiles(
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """获取当前用户的所有档案"""
+    """获取当前用户的所有档案。返回数组，与 iOS 端 Array<Profile> 解码一致。"""
     try:
         now = time.time()
         if user_id in _profiles_cache:

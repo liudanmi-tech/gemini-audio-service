@@ -141,8 +141,13 @@ async def extract_audio_segment(
         ext = Path(local_path).suffix or ".m4a"
         segment_bytes = cut_audio_segment(local_path, request.start_time, request.end_time)
     except Exception as e:
-        logger.exception("剪切音频失败")
-        raise HTTPException(status_code=500, detail=f"剪切音频失败: {str(e)}")
+        logger.exception("剪切音频失败: %s", e)
+        err_msg = str(e).lower()
+        if "ffprobe" in err_msg or "avprobe" in err_msg or "ffmpeg" in err_msg or "couldn't find" in err_msg:
+            detail = "服务器未安装 ffmpeg，无法剪切音频。请在服务器上执行: sudo apt install -y ffmpeg"
+        else:
+            detail = f"剪切音频失败: {str(e)}"
+        raise HTTPException(status_code=500, detail=detail)
     finally:
         if is_temp and local_path and os.path.isfile(local_path):
             try:

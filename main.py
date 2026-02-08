@@ -1347,7 +1347,8 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                         logger.warning(f"[声纹] session_id={session_id} 无法获取本地音频（下载或路径失败），跳过声纹匹配")
                     if local_path:
                         profile_result = await db.execute(select(Profile.id).where(Profile.user_id == uuid.UUID(user_id)))
-                        profile_ids = [str(r) for r in profile_result.scalars().all()]
+                        _rows = profile_result.all()
+                        profile_ids = [str(row[0]) for row in _rows]
                         logger.info(f"[声纹] session_id={session_id} 当前用户档案数 profile_count={len(profile_ids)} profile_ids={profile_ids[:5]}{'...' if len(profile_ids) > 5 else ''}")
                         if not profile_ids:
                             logger.warning(f"[声纹] session_id={session_id} 当前用户无档案，跳过声纹匹配")
@@ -1376,7 +1377,14 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                                         if os.path.isfile(tmp_path):
                                             os.unlink(tmp_path)
                                 except Exception as e:
-                                    logger.warning(f"声纹匹配失败 speaker={sp}: {e}", exc_info=True)
+                                    logger.warning(f"声纹匹配失败 speaker={sp}: {type(e).__name__} {e}", exc_info=True)
+                        # 降级：多人时若剪切/识别全部失败，仍按顺序做占位映射，保证前端有“谁对应哪档案”
+                        if not speaker_mapping and profile_ids and first_segment:
+                            speakers_ordered = sorted(first_segment.keys())
+                            for idx, sp in enumerate(speakers_ordered):
+                                profile_idx = idx % len(profile_ids)
+                                speaker_mapping[sp] = profile_ids[profile_idx]
+                            logger.info(f"[声纹] 降级占位映射(剪切/识别失败): {speaker_mapping}")
                         if is_temp and os.path.isfile(local_path):
                             try:
                                 os.unlink(local_path)
