@@ -2396,5 +2396,7 @@ async def test_gemini():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    # 与 Nginx proxy_pass 一致：服务器上 Nginx 代理 80 -> 8000，此处必须监听 8000
+    port = int(os.getenv("UVICORN_PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 

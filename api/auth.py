@@ -153,7 +153,7 @@ async def get_current_user_info(
         "data": {
             "user_id": str(current_user.id),
             "phone": current_user.phone,
-            "created_at": current_user.created_at.isoformat() if current_user.created_at else None,
+            "created_at": current_user.created_at.isoformat() if current_user.created_at else "",
             "last_login_at": current_user.last_login_at.isoformat() if current_user.last_login_at else None
         }
     }

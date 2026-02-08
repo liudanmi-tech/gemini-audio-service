@@ -50,7 +50,14 @@ struct ProfileListView: View {
                             
                             // 档案列表
                             ForEach(viewModel.profiles) { profile in
-                                ProfileCardView(profile: profile)
+                                ProfileCardView(profile: profile, onDelete: {
+                                    Task {
+                                        try? await viewModel.deleteProfile(profile.id)
+                                        await MainActor.run {
+                                            if selectedProfile?.id == profile.id { selectedProfile = nil }
+                                        }
+                                    }
+                                })
                                     .padding(.horizontal, 19.992115020751953) // 根据Figma: padding horizontal 19.99px
                                     .onTapGesture {
                                         print("📋 [ProfileListView] 点击档案: \(profile.id)")
@@ -117,10 +124,13 @@ struct ProfileHeaderView: View {
 // 档案卡片视图
 struct ProfileCardView: View {
     let profile: Profile
+    var onDelete: (() -> Void)? = nil
     @ObservedObject private var audioPlayer = ProfileAudioPlayerService.shared
+    @State private var showDeleteAlert = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        ZStack(alignment: .topTrailing) {
+            VStack(alignment: .leading, spacing: 0) {
             // 照片、名称、关系区域
             VStack(alignment: .center, spacing: 0) {
                 // 照片（圆形，带白色边框）
@@ -285,6 +295,28 @@ struct ProfileCardView: View {
         .background(Color(hex: "#FFFAF5")) // 根据Figma: #FFFAF5
         .cornerRadius(32) // 根据Figma: borderRadius 32px
         .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
+            
+            // 档案删除按钮（卡片右上角）
+            if let onDelete = onDelete {
+                Button(action: { showDeleteAlert = true }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(AppColors.headerText.opacity(0.7))
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(Color(hex: "#F2E6D6").opacity(0.9)))
+                }
+                .padding(.top, 20)
+                .padding(.trailing, 20)
+            }
+        }
+        .alert("删除档案", isPresented: $showDeleteAlert) {
+            Button("取消", role: .cancel) {}
+            Button("删除", role: .destructive) {
+                onDelete?()
+            }
+        } message: {
+            Text("确定删除「\(profile.name)」？删除后无法恢复。")
+        }
     }
     
     // 格式化时长显示

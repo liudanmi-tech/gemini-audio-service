@@ -112,7 +112,7 @@ class AuthService {
         return nil
     }
     
-    // 获取当前用户信息
+    // 获取当前用户信息（先取原始响应再解码，避免 4xx/格式异常时直接抛解码错误）
     func getCurrentUser() async throws -> UserInfo {
         guard let token = KeychainManager.shared.getToken() else {
             throw NSError(
@@ -122,7 +122,7 @@ class AuthService {
             )
         }
         
-        let response = try await AF.request(
+        let dataResponse = await AF.request(
             "\(baseURL)/auth/me",
             method: .get,
             headers: [
@@ -130,18 +130,46 @@ class AuthService {
                 "Content-Type": "application/json"
             ]
         )
-        .serializingDecodable(APIResponse<UserInfo>.self)
-        .value
+        .serializingData()
+        .response
         
-        guard response.code == 200, let data = response.data else {
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        
+        guard statusCode == 200 else {
+            let message = Self.parseFastAPIErrorDetail(responseData) ?? "获取用户信息失败"
             throw NSError(
                 domain: "AuthError",
-                code: response.code,
-                userInfo: [NSLocalizedDescriptionKey: response.message]
+                code: statusCode,
+                userInfo: [NSLocalizedDescriptionKey: message]
             )
         }
         
-        return data
+        guard !responseData.isEmpty else {
+            throw NSError(
+                domain: "AuthError",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "服务器返回为空"]
+            )
+        }
+        
+        do {
+            let decoded = try JSONDecoder().decode(APIResponse<UserInfo>.self, from: responseData)
+            guard decoded.code == 200, let data = decoded.data else {
+                throw NSError(
+                    domain: "AuthError",
+                    code: decoded.code,
+                    userInfo: [NSLocalizedDescriptionKey: decoded.message]
+                )
+            }
+            return data
+        } catch {
+            throw NSError(
+                domain: "AuthError",
+                code: 0,
+                userInfo: [NSLocalizedDescriptionKey: "服务器返回格式异常，请重新登录"]
+            )
+        }
     }
     
     // 登出
@@ -169,6 +197,7 @@ struct LoginResponse: Codable {
 struct UserInfo: Codable {
     let user_id: String
     let phone: String
-    let created_at: String
+    /// 服务端可能为 null（如旧数据），改为可选避免解码失败
+    let created_at: String?
     let last_login_at: String?
 }
