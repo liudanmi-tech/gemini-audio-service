@@ -118,12 +118,19 @@ app = FastAPI(title="音频分析服务", description="通过 Gemini API 分析�
 async def log_requests(request: Request, call_next):
     """请求/响应日志：便于排查 502 与列表接口问题"""
     start = time.time()
-    logger.info(f"[Request] {request.method} {request.url.path}")
+    is_extract = "extract-segment" in request.url.path
+    if is_extract:
+        logger.info(f"[Request] ===== extract-segment 收到请求 ===== {request.method} {request.url.path}")
+    else:
+        logger.info(f"[Request] {request.method} {request.url.path}")
     try:
         response = await call_next(request)
         duration = time.time() - start
         status = response.status_code
-        logger.info(f"[Response] {request.url.path} status={status} duration={duration:.3f}s")
+        if is_extract:
+            logger.info(f"[Response] ===== extract-segment 返回 ===== path={request.url.path} status={status} duration={duration:.3f}s")
+        else:
+            logger.info(f"[Response] {request.url.path} status={status} duration={duration:.3f}s")
         if status >= 500:
             logger.error(f"[Response] 5xx path={request.url.path} status={status} duration={duration:.3f}s")
         return response
@@ -131,6 +138,8 @@ async def log_requests(request: Request, call_next):
         duration = time.time() - start
         logger.error(f"[Response] Exception path={request.url.path} error={type(e).__name__}: {e} duration={duration:.3f}s")
         logger.error(traceback.format_exc())
+        if is_extract:
+            logger.error(f"[Response] ===== extract-segment 发生未捕获异常 ===== 详见上方堆栈")
         raise
 
 
@@ -1611,6 +1620,7 @@ async def get_task_detail(
             summary = analysis_result.summary
             speaker_mapping = analysis_result.speaker_mapping if isinstance(analysis_result.speaker_mapping, dict) else None
             conversation_summary = getattr(analysis_result, "conversation_summary", None) or None
+            name_to_display = {}  # 档案名/角色名 -> 展示格式，用于替换 Gemini 直接写出的角色名（如梁致远）
             if speaker_mapping:
                 profile_ids_in_mapping = list(speaker_mapping.values())
                 if profile_ids_in_mapping:
@@ -1626,12 +1636,20 @@ async def get_task_detail(
                         for row in profile_res.all():
                             name = row.name or "未知"
                             rel = getattr(row, "relationship_type", None) or "未知"
-                            id_to_display[str(row.id)] = f"{name}（{rel}）"
+                            display = f"{name}（{rel}）"
+                            id_to_display[str(row.id)] = display
+                            if name and name.strip():
+                                name_to_display[name.strip()] = display
+                                # 常见同音/形近字变体：梁致远/梁志远，Gemini 可能用剧本角色名，用户档案用另一写法
+                                if "志" in name or "致" in name:
+                                    alt = name.replace("志", "致") if "志" in name else name.replace("致", "志")
+                                    if alt != name:
+                                        name_to_display[alt.strip()] = display
                         speaker_names = {sp: id_to_display.get(pid, sp) for sp, pid in speaker_mapping.items()}
                     except Exception:
                         speaker_names = None
             
-            # 若已有 speaker_names，返回前在 summary / conversation_summary 中把 Speaker_0/Speaker_1 替换为档案名
+            # 若已有 speaker_names，返回前在 summary / conversation_summary / dialogues 中把 Speaker_0/Speaker_1 替换为档案名
             def _replace_speaker_labels(text: Optional[str], names: dict) -> Optional[str]:
                 if not text or not names:
                     return text
@@ -1640,10 +1658,48 @@ async def get_task_detail(
                 # Call #1 约定 Speaker_1 为用户，Gemini 总结常写「用户」而非 Speaker_1，一并替换为档案名
                 if "Speaker_1" in names:
                     text = text.replace("用户", names["Speaker_1"])
+                # 兼容其他写法：说话人0/1、Speaker0/1（无下划线）
+                alias_map = [("说话人0", "Speaker_0"), ("说话人1", "Speaker_1"), ("Speaker0", "Speaker_0"), ("Speaker1", "Speaker_1")]
+                for alias, canonical in alias_map:
+                    if canonical in names and alias in text:
+                        text = text.replace(alias, names[canonical])
                 return text
+
+            def _replace_profile_names(text: Optional[str], name_map: dict) -> Optional[str]:
+                """替换 Gemini 在总结中直接写出的档案名/角色名（如 梁致远）为 档案名（关系）"""
+                if not text or not name_map:
+                    return text
+                for name in sorted(name_map.keys(), key=len, reverse=True):
+                    # 仅替换作为独立词出现的档案名，避免误替换（如「梁致远说」中的梁致远）
+                    text = text.replace(name, name_map[name])
+                return text
+
+            def _speaker_to_display(speaker_val: str, names: dict) -> str:
+                """将说话人标签转为档案名展示"""
+                if not names or not speaker_val:
+                    return speaker_val
+                if speaker_val in names:
+                    return names[speaker_val]
+                alias_map = {"说话人0": "Speaker_0", "说话人1": "Speaker_1", "Speaker0": "Speaker_0", "Speaker1": "Speaker_1"}
+                canonical = alias_map.get(speaker_val)
+                return names.get(canonical, speaker_val) if canonical else speaker_val
+
             if speaker_names:
                 summary = _replace_speaker_labels(summary, speaker_names)
                 conversation_summary = _replace_speaker_labels(conversation_summary, speaker_names)
+                # 额外替换：Gemini 可能在总结中直接写出角色名（如梁致远），需替换为 档案名（关系）
+                summary = _replace_profile_names(summary, name_to_display)
+                conversation_summary = _replace_profile_names(conversation_summary, name_to_display)
+                # 每条 dialogue 的 speaker 字段也替换为档案名，便于前端直接展示
+                if dialogues:
+                    new_dialogues = []
+                    for d in dialogues:
+                        if isinstance(d, dict) and "speaker" in d:
+                            d = dict(d)  # 深拷贝一层，避免改原始数据
+                            d["speaker"] = _speaker_to_display(d.get("speaker", ""), speaker_names)
+                        new_dialogues.append(d)
+                    dialogues = new_dialogues
+                logger.info(f"[任务详情] session={session_id} 已对 summary/conversation_summary/dialogues 做档案名替换 speaker_names={list(speaker_names.keys())}")
         
         detail = TaskDetailResponse(
             session_id=str(db_session.id),

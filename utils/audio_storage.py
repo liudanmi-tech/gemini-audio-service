@@ -44,9 +44,15 @@ def get_session_audio_local_path(audio_url: Optional[str], audio_path: Optional[
     Returns:
         (local_path, is_temp): is_temp 为 True 时调用方需在用完后删除该文件。
     """
+    logger.info("[get_session_audio] 入参: audio_path=%s audio_url=%s", audio_path, bool(audio_url))
     if audio_path and os.path.isfile(audio_path):
+        logger.info("[get_session_audio] 使用本地路径: %s", audio_path)
         return (audio_path, False)
+    if audio_path and not os.path.isfile(audio_path):
+        logger.warning("[get_session_audio] 本地路径不存在: %s", audio_path)
+        return (None, False)
     if not audio_url:
+        logger.warning("[get_session_audio] 无 audio_url")
         return (None, False)
     suffix = ".m4a"
     if ".mp3" in (audio_url or ""):
@@ -62,13 +68,16 @@ def get_session_audio_local_path(audio_url: Optional[str], audio_path: Optional[
         bucket_name = os.getenv("OSS_BUCKET_NAME")
         if all([ak, sk, ep, bucket_name]):
             try:
+                logger.info("[get_session_audio] OSS 下载开始: key=%s", oss_key)
                 import oss2
                 auth = oss2.Auth(ak, sk)
                 bucket = oss2.Bucket(auth, ep, bucket_name)
                 bucket.get_object_to_file(oss_key, tmp.name)
+                size = os.path.getsize(tmp.name)
+                logger.info("[get_session_audio] OSS 下载成功: size=%d bytes", size)
                 return (tmp.name, True)
             except Exception as e:
-                logger.warning(f"OSS SDK 下载原音频失败: {e}")
+                logger.exception("[get_session_audio] OSS SDK 下载原音频失败: %s", e)
             # 若 SDK 失败，下面不再用 urlretrieve 试同一 URL（通常也会 403）
             try:
                 os.unlink(tmp.name)
@@ -77,11 +86,14 @@ def get_session_audio_local_path(audio_url: Optional[str], audio_path: Optional[
             return (None, False)
     # 公网 URL 或非本 bucket：用 urllib
     try:
+        logger.info("[get_session_audio] urllib 下载开始: url=%s", audio_url[:80] + "..." if len(audio_url or "") > 80 else audio_url)
         import urllib.request
         urllib.request.urlretrieve(audio_url, tmp.name)
+        size = os.path.getsize(tmp.name)
+        logger.info("[get_session_audio] urllib 下载成功: size=%d bytes", size)
         return (tmp.name, True)
     except Exception as e:
-        logger.warning(f"下载原音频失败: {e}")
+        logger.exception("[get_session_audio] 下载原音频失败: %s", e)
         try:
             os.unlink(tmp.name)
         except Exception:
@@ -90,19 +102,46 @@ def get_session_audio_local_path(audio_url: Optional[str], audio_path: Optional[
 
 
 def cut_audio_segment(local_path: str, start_sec: float, end_sec: float) -> bytes:
-    """按时间戳剪切音频，返回片段字节。"""
-    from pydub import AudioSegment
-    start_ms = int(start_sec * 1000)
-    end_ms = int(end_sec * 1000)
-    if start_ms >= end_ms:
+    """
+    按时间戳剪切音频，返回片段字节。
+    使用 ffmpeg -ss -t 只解码目标区间，避免 pydub 加载全文件导致的超时（30MB mp3 需 1–2 分钟）。
+    """
+    import time
+    import subprocess
+    t0 = time.time()
+    logger.info("[cut_audio_segment] 开始: path=%s start=%.1f end=%.1f", local_path[:60] if len(local_path) > 60 else local_path, start_sec, end_sec)
+    if start_sec >= end_sec:
         raise ValueError("start_time 必须小于 end_time")
-    audio = AudioSegment.from_file(local_path)
-    clip = audio[start_ms:end_ms]
-    buf = io.BytesIO()
+    duration_sec = end_sec - start_sec
     ext = os.path.splitext(local_path)[1].lower() or ".m4a"
-    fmt = "mp4" if ext in (".m4a", ".mp4") else "mp3"
-    clip.export(buf, format=fmt)
-    return buf.getvalue()
+    out_fmt = "mp4" if ext in (".m4a", ".mp4") else "mp3"
+    # -ss 放 -i 前可加速 seek；-t 限制时长；-acodec copy 不可靠（不同编码），改用重新编码保证兼容
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", str(start_sec),   # 在解码前 seek，只处理目标区间
+        "-i", local_path,
+        "-t", str(duration_sec),
+        "-c:a", "libmp3lame" if out_fmt == "mp3" else "aac",
+        "-vn", "-f", out_fmt,
+        "pipe:1"
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=60,
+            check=False
+        )
+        if result.returncode != 0:
+            err = (result.stderr or b"").decode("utf-8", errors="replace")
+            raise RuntimeError(f"ffmpeg 失败 (code={result.returncode}): {err[:500]}")
+        out = result.stdout
+        if not out:
+            raise RuntimeError("ffmpeg 输出为空")
+        logger.info("[cut_audio_segment] 完成: size=%d bytes 耗时=%.2fs", len(out), time.time() - t0)
+        return out
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("ffmpeg 处理超时(60s)，请检查音频文件是否损坏")
 
 
 def upload_segment_bytes(
@@ -113,8 +152,12 @@ def upload_segment_bytes(
     ext: str = ".m4a",
 ) -> str:
     """
-    将片段字节上传到 OSS 或保存到本地，返回可访问的 URL 或本地路径。
+    将片段字节上传到 OSS，返回可访问的 URL。不设置 x-oss-object-acl，避免 "Put public object acl is not allowed"。
+    OSS 失败时抛出异常，供上层转为 503（客户端无法使用本地路径）。
     """
+    import time
+    t0 = time.time()
+    logger.info("[upload_segment] 开始: size=%d user=%s session=%s", len(segment_bytes), user_id, session_id)
     if _USE_OSS:
         try:
             import oss2
@@ -127,7 +170,10 @@ def upload_segment_bytes(
             auth = oss2.Auth(ak, sk)
             bucket = oss2.Bucket(auth, ep, bucket_name)
             oss_key = f"sessions/{user_id}/{session_id}/segments/{segment_id}{ext}"
-            bucket.put_object(oss_key, segment_bytes, headers={"Content-Type": "audio/mp4" if ext == ".m4a" else "application/octet-stream"})
+            # 仅设置 Content-Type，不设置 x-oss-object-acl（阿里云禁止时会导致 403）
+            headers = {"Content-Type": "audio/mp4" if ext == ".m4a" else "application/octet-stream"}
+            bucket.put_object(oss_key, segment_bytes, headers=headers)
+            logger.info("[upload_segment] OSS 成功: key=%s size=%d 耗时=%.2fs", oss_key, len(segment_bytes), time.time() - t0)
             if _OSS_CDN_DOMAIN:
                 return f"https://{_OSS_CDN_DOMAIN}/{oss_key}"
             if ep.startswith("http"):
@@ -136,9 +182,7 @@ def upload_segment_bytes(
                 base = f"https://{bucket_name}.{ep}"
             return f"{base}/{oss_key}"
         except Exception as e:
-            logger.warning(f"片段上传 OSS 失败，改用本地: {e}")
-    os.makedirs(_SEGMENTS_DIR, exist_ok=True)
-    local_path = os.path.join(_SEGMENTS_DIR, f"{segment_id}{ext}")
-    with open(local_path, "wb") as f:
-        f.write(segment_bytes)
-    return local_path
+            logger.exception("[upload_segment] OSS 失败: %s", e)
+            raise
+    # OSS 未启用时，本地路径对客户端不可用，应视为配置错误
+    raise ValueError("OSS 未启用，无法上传片段；客户端需要可访问的 URL")
