@@ -88,6 +88,12 @@ async def verify_code(
     Returns:
         验证是否通过
     """
+    # 开发模式：固定验证码 123456 免发送可直接通过（方便测试注册/登录）
+    if VERIFICATION_CODE_MOCK and code == VERIFICATION_CODE_MOCK_VALUE:
+        if len(phone) == 11 and phone.isdigit():
+            logger.info(f"开发模式: 验证码 {code} 直接通过, phone={phone}")
+            return True
+    
     # 查询未使用且未过期的验证码
     now = datetime.utcnow()
     result = await db.execute(

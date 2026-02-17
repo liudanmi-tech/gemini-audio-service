@@ -1,0 +1,26 @@
+# 在阿里云 Workbench 中复制下面整段到终端执行
+# 阿里云控制台 → ECS → 远程连接 → Workbench → 粘贴执行
+
+cd ~/gemini-audio-service && source venv/bin/activate
+
+echo "========== Gemini 接口诊断 =========="
+API_KEY=$(grep GEMINI_API_KEY .env 2>/dev/null | cut -d= -f2 | tr -d '"' | tr -d "'" | head -1)
+[ -z "$API_KEY" ] && { echo "❌ 未找到 GEMINI_API_KEY"; exit 1; }
+echo "✅ API Key 已加载"
+
+echo ""
+echo "=== 1. curl 测试 models（15秒）==="
+curl -sf --max-time 15 "https://generativelanguage.googleapis.com/v1beta/models?key=$API_KEY" | grep -q "models" && echo "✅ models 可达" || echo "❌ models 超时/失败"
+
+echo ""
+echo "=== 2. test_gemini_connection.py（45秒）==="
+timeout 45 python3 scripts/test_gemini_connection.py 2>&1
+echo "退出码: $?"
+
+echo ""
+echo "=== 3. test_gemini_file_upload.py（65秒）==="
+timeout 65 python3 scripts/test_gemini_file_upload.py 2>&1
+echo "退出码: $?"
+
+echo ""
+echo "========== 完成 =========="

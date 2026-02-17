@@ -30,11 +30,11 @@ class AudioRecorderService: NSObject, ObservableObject {
         setupAudioSession()
     }
     
-    // 配置音频会话
+    // 配置音频会话（支持蓝牙输入，如智能眼镜）
     private func setupAudioSession() {
         do {
             let audioSession = AVAudioSession.sharedInstance()
-            try audioSession.setCategory(.playAndRecord, mode: .default)
+            try audioSession.setCategory(.playAndRecord, mode: .default, options: [.allowBluetooth, .defaultToSpeaker])
             try audioSession.setActive(true)
         } catch {
             print("音频会话配置失败: \(error)")
@@ -61,6 +61,23 @@ class AudioRecorderService: NSObject, ObservableObject {
     
     private func _startRecording() {
         print("🎤 [AudioRecorderService] 开始创建录音文件...")
+        
+        // 配置音频会话并应用蓝牙输入偏好
+        setupAudioSession()
+        if let bluetoothInput = BluetoothDeviceManager.shared.preferredInputForRecording() {
+            do {
+                try AVAudioSession.sharedInstance().setPreferredInput(bluetoothInput)
+                print("🎤 [AudioRecorderService] 已选择蓝牙输入: \(bluetoothInput.portName)")
+            } catch {
+                print("⚠️ [AudioRecorderService] 蓝牙输入设置失败，使用手机麦克风: \(error)")
+            }
+        } else {
+            do {
+                try AVAudioSession.sharedInstance().setPreferredInput(nil)
+                print("🎤 [AudioRecorderService] 使用手机麦克风")
+            } catch { /* 忽略，使用默认 */ }
+        }
+        
         // 创建录音文件路径
         let documentsPath = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let audioFilename = documentsPath.appendingPathComponent("recording_\(Date().timeIntervalSince1970).m4a")

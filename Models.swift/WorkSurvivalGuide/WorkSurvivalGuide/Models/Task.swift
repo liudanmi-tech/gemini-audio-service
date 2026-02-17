@@ -357,6 +357,8 @@ struct TaskStatusResponse: Codable {
     let updatedAt: Date
     /// 分析失败时服务端返回的失败原因
     let failureReason: String?
+    /// 分析阶段：oss_upload/gemini_analysis/voiceprint，用于展示更细进度
+    let analysisStage: String?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -365,6 +367,7 @@ struct TaskStatusResponse: Codable {
         case estimatedTimeRemaining = "estimated_time_remaining"
         case updatedAt = "updated_at"
         case failureReason = "failure_reason"
+        case analysisStage = "analysis_stage"
     }
 
     init(from decoder: Decoder) throws {
@@ -374,6 +377,7 @@ struct TaskStatusResponse: Codable {
         progress = try container.decode(Double.self, forKey: .progress)
         estimatedTimeRemaining = try container.decode(Int.self, forKey: .estimatedTimeRemaining)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
+        analysisStage = try container.decodeIfPresent(String.self, forKey: .analysisStage)
         let updatedAtString = try container.decode(String.self, forKey: .updatedAt)
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -381,13 +385,25 @@ struct TaskStatusResponse: Codable {
     }
 
     // 便利初始化器
-    init(sessionId: String, status: String, progress: Double, estimatedTimeRemaining: Int, updatedAt: Date, failureReason: String? = nil) {
+    init(sessionId: String, status: String, progress: Double, estimatedTimeRemaining: Int, updatedAt: Date, failureReason: String? = nil, analysisStage: String? = nil) {
         self.sessionId = sessionId
         self.status = status
         self.progress = progress
         self.estimatedTimeRemaining = estimatedTimeRemaining
         self.updatedAt = updatedAt
         self.failureReason = failureReason
+        self.analysisStage = analysisStage
+    }
+    
+    /// 当前阶段的可读描述（用于 UI 展示）
+    var stageDisplayText: String? {
+        guard let s = analysisStage, !s.isEmpty else { return nil }
+        switch s {
+        case "oss_upload": return "正在上传到云端…"
+        case "gemini_analysis": return "正在分析对话…"
+        case "voiceprint": return "正在匹配说话人…"
+        default: return nil
+        }
     }
 }
 

@@ -122,7 +122,7 @@ struct TaskDetailView: View {
                         )
                     }
                     }
-                    .frame(width: geometry.size.width - 19.99 * 2, alignment: .leading) // 明确限制宽度：屏幕宽度 - 左右padding
+                    .frame(width: max(0, geometry.size.width - 19.99 * 2), alignment: .leading) // 明确限制宽度，避免负值导致 NaN
                     .padding(.horizontal, 19.99) // 根据Figma: padding horizontal 19.99px（左右各19.99px）
                     .padding(.top, 0) // Header已有padding.top
                     .padding(.bottom, 20)

@@ -37,6 +37,7 @@ class Session(Base):
     duration = Column(Integer)  # 秒
     status = Column(String(50))  # 'processing', 'completed', 'failed', 'archived'
     error_message = Column(Text)  # 分析失败时的错误信息，供客户端展示
+    analysis_stage = Column(String(100))  # 分析各阶段：oss_upload/gemini_upload/gemini_analysis/voiceprint
     emotion_score = Column(Integer)
     speaker_count = Column(Integer)
     tags = Column(ARRAY(String))

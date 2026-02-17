@@ -117,8 +117,12 @@ async def get_current_user(
             return cached
     
     # 从数据库查询用户
+    t0 = time.time()
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
+    elapsed = time.time() - t0
+    if elapsed > 2.0:
+        logger.warning(f"[Auth] User 查询耗时 {elapsed:.2f}s user_id={user_id[:8]}...")
     
     if user is None:
         raise HTTPException(
@@ -133,8 +137,14 @@ async def get_current_user(
             detail="用户已被禁用",
         )
     
-    # 缓存脱壳后的简单对象，避免绑定 session
-    snapshot = SimpleNamespace(id=user.id, is_active=user.is_active)
+    # 缓存脱壳后的简单对象（含 /auth/me 所需字段），避免绑定 session
+    snapshot = SimpleNamespace(
+        id=user.id,
+        is_active=user.is_active,
+        phone=user.phone,
+        created_at=user.created_at,
+        last_login_at=user.last_login_at,
+    )
     _user_cache[user_id] = (snapshot, now + _USER_CACHE_TTL)
     return snapshot
 

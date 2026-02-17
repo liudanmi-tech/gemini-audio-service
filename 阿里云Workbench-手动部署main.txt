@@ -1,0 +1,25 @@
+# 当 SSH/SCP 无法连接时，通过阿里云 Workbench 手动部署
+# 步骤 1：在本地把 main.py 内容复制到剪贴板（或先上传到 OSS/网盘后 wget）
+# 步骤 2：Workbench 连接后，按下面顺序执行
+
+# === 方法 A：若本机可 scp，在本地执行一次上传后再 Workbench ===
+# 本地终端：scp main.py admin@47.79.254.213:~/gemini-audio-service/
+
+# === 方法 B：完全在 Workbench 中操作 ===
+# 1. 在 Cursor 中打开 main.py，全选复制
+# 2. Workbench 连接后执行：
+
+cd ~/gemini-audio-service
+cp main.py main.py.bak.$(date +%Y%m%d%H%M%S)
+
+# 3. 用 nano 编辑（或通过 Workbench 的文件上传功能上传 main.py）
+# 若 Workbench 支持「上传文件」：直接上传本地的 main.py 到 ~/gemini-audio-service/
+# 若只能粘贴：nano main.py 然后粘贴替换，Ctrl+O 保存，Ctrl+X 退出
+
+# 4. 重启应用
+pkill -f "uvicorn main:app" 2>/dev/null
+sleep 3
+nohup venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 >> ~/gemini-audio-service.log 2>&1 &
+sleep 6
+curl -sf --max-time 5 http://127.0.0.1:8000/health && echo " OK" || echo " 失败"
+tail -10 ~/gemini-audio-service.log

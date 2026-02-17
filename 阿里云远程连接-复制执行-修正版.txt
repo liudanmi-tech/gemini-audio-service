@@ -1,0 +1,18 @@
+# 阿里云远程连接 - 复制下面整段到终端执行（多行版，无语法错误）
+# 关键：--workers 4 防止长任务阻塞列表/auth；Nginx 600s 防策略/上传超时
+
+cd ~/gemini-audio-service
+pkill -f "uvicorn main:app" 2>/dev/null
+pkill -f "python.*main.py" 2>/dev/null
+sleep 3
+nohup venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 >> ~/gemini-audio-service.log 2>&1 &
+sleep 15
+NGINX_CONF="/etc/nginx/sites-available/gemini-and-api"
+[ ! -f "$NGINX_CONF" ] && NGINX_CONF="/etc/nginx/sites-available/default"
+sudo sed -i.bak 's/proxy_read_timeout 60s/proxy_read_timeout 600s/g; s/proxy_read_timeout 120s/proxy_read_timeout 600s/g; s/proxy_read_timeout 300s/proxy_read_timeout 600s/g' "$NGINX_CONF" 2>/dev/null
+sudo sed -i 's/proxy_connect_timeout 60s/proxy_connect_timeout 600s/g; s/proxy_connect_timeout 120s/proxy_connect_timeout 600s/g' "$NGINX_CONF" 2>/dev/null
+sudo sed -i 's/proxy_send_timeout 60s/proxy_send_timeout 600s/g; s/proxy_send_timeout 120s/proxy_send_timeout 600s/g' "$NGINX_CONF" 2>/dev/null
+sudo nginx -t 2>/dev/null && sudo systemctl reload nginx 2>/dev/null
+echo "Nginx 超时已设为 600s，当前 proxy_read:"
+grep -n "proxy_read_timeout" "$NGINX_CONF" 2>/dev/null || true
+curl -sf --max-time 5 http://127.0.0.1:8000/health && echo " OK" || echo " 失败"

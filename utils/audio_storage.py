@@ -6,9 +6,120 @@ import io
 import os
 import tempfile
 import logging
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+
+def get_audio_duration_sec(local_path: str) -> float:
+    """
+    使用 ffprobe 获取音频总时长（秒）。
+    若 ffprobe 不可用或失败，抛出 RuntimeError。
+    """
+    import subprocess
+    if not os.path.isfile(local_path):
+        raise FileNotFoundError(f"文件不存在: {local_path}")
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                local_path,
+            ],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            err = (result.stderr or b"").decode("utf-8", errors="replace")
+            raise RuntimeError(f"ffprobe 失败: {err[:300]}")
+        out = (result.stdout or b"").decode("utf-8", errors="replace").strip()
+        if not out:
+            raise RuntimeError("ffprobe 未返回时长")
+        return float(out)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("ffprobe 超时")
+    except ValueError as e:
+        raise RuntimeError(f"无法解析时长: {e}")
+
+
+def split_audio_into_chunks(
+    local_path: str,
+    max_chunk_mb: float = 18.0,
+    base_name: str = "chunk",
+) -> List[Tuple[float, float, str]]:
+    """
+    将大音频按时长切分为多个小片段，使每个片段约 <= max_chunk_mb MB。
+    使用 ffmpeg 按时间区间剪切，返回 (start_sec, end_sec, temp_path) 列表。
+    调用方需在完成后删除返回的临时文件。
+
+    Args:
+        local_path: 原音频路径
+        max_chunk_mb: 每个片段最大约多少 MB（默认 18，留余量在 20MB 以下）
+        base_name: 临时文件名前缀
+
+    Returns:
+        [(start_sec, end_sec, temp_path), ...]
+    """
+    import math
+    import subprocess
+    import tempfile
+
+    file_size = os.path.getsize(local_path)
+    duration_sec = get_audio_duration_sec(local_path)
+    if duration_sec <= 0:
+        raise ValueError("音频时长为 0")
+
+    # 按文件大小计算需要的片段数，使每片 <= max_chunk_mb
+    max_bytes = max_chunk_mb * 1024 * 1024
+    num_chunks = max(1, math.ceil(file_size / max_bytes))
+    chunk_duration_sec = duration_sec / num_chunks
+
+    ext = os.path.splitext(local_path)[1].lower() or ".m4a"
+    out_fmt = "mp4" if ext in (".m4a", ".mp4") else "mp3"
+    codec = "aac" if out_fmt == "mp4" else "libmp3lame"
+
+    chunks: List[Tuple[float, float, str]] = []
+    for i in range(num_chunks):
+        start_sec = i * chunk_duration_sec
+        end_sec = min((i + 1) * chunk_duration_sec, duration_sec)
+        if start_sec >= end_sec:
+            continue
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=ext, prefix=f"{base_name}_{i}_")
+        tmp.close()
+        tmp_path = tmp.name
+
+        cmd = [
+            "ffmpeg", "-y",
+            "-ss", str(start_sec),
+            "-i", local_path,
+            "-t", str(end_sec - start_sec),
+            "-c:a", codec, "-vn", "-f", out_fmt,
+            tmp_path,
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=120, check=False)
+            if result.returncode != 0:
+                err = (result.stderr or b"").decode("utf-8", errors="replace")
+                for c in chunks:
+                    try:
+                        os.unlink(c[2])
+                    except Exception:
+                        pass
+                raise RuntimeError(f"ffmpeg 切分失败 (chunk {i}): {err[:300]}")
+        except subprocess.TimeoutExpired:
+            for c in chunks:
+                try:
+                    os.unlink(c[2])
+                except Exception:
+                    pass
+            raise RuntimeError("ffmpeg 切分超时")
+
+        chunks.append((start_sec, end_sec, tmp_path))
+
+    logger.info("[split_audio] 切分完成: %d 个片段, 总时长 %.1fs", len(chunks), duration_sec)
+    return chunks
+
 
 # 从环境变量读取 OSS 配置（与 main 一致）
 _USE_OSS = os.getenv("USE_OSS", "true").lower() == "true"

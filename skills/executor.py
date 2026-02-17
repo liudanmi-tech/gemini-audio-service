@@ -80,6 +80,14 @@ async def execute_skill(
         prompt = prompt_template.replace("{transcript_json}", transcript_json)
         prompt = prompt.replace("{session_id}", context.get("session_id", ""))
         prompt = prompt.replace("{user_id}", context.get("user_id", ""))
+        # v0.6 记忆：注入 memory_context，若无则填空（向后兼容）
+        memory_context = context.get("memory_context", "")
+        has_memory = bool(memory_context and memory_context.strip())
+        if has_memory:
+            logger.info(f"[记忆] 技能 {skill_id} 注入 memory_context: len={len(memory_context)} preview={memory_context[:150]}...")
+        elif "{memory_context}" in prompt_template:
+            logger.info(f"[记忆] 技能 {skill_id} memory_context 为空，占位符将填空")
+        prompt = prompt.replace("{memory_context}", memory_context)
         
         # 3. 知识库注入（可选）
         knowledge_base = skill.get("knowledge_base")

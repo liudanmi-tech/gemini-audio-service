@@ -9,6 +9,8 @@ import SwiftUI
 
 struct TaskListView: View {
     @ObservedObject private var viewModel = TaskListViewModel.shared
+    @ObservedObject private var deviceManager = BluetoothDeviceManager.shared
+    @State private var showDeviceSheet = false
     
     var body: some View {
         ZStack {
@@ -17,8 +19,40 @@ struct TaskListView: View {
             //     .ignoresSafeArea()
             
             VStack(spacing: 0) {
-                // Header
-                HeaderView()
+                // Header（含蓝牙设备按钮）
+                HStack(alignment: .center, spacing: 0) {
+                    Text("碎片")
+                        .font(AppFonts.headerTitle)
+                        .foregroundColor(AppColors.headerText)
+                    
+                    Spacer()
+                    
+                    Button(action: { showDeviceSheet = true }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "antenna.radiowaves.left.and.right")
+                                .font(.system(size: 20, weight: .medium))
+                            Text("设备")
+                                .font(.system(size: 14, weight: .medium))
+                        }
+                        .foregroundColor(deviceManager.isBluetoothConnected ? Color.blue : AppColors.headerText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .background(AppColors.headerText.opacity(0.08))
+                        .clipShape(Capsule())
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Button(action: {}) {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 28))
+                            .foregroundColor(AppColors.headerText)
+                            .frame(width: 44, height: 44)
+                    }
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 12)
+                .background(AppColors.headerBackground)
                 
                 // 任务列表
                 if viewModel.isLoading && viewModel.tasks.isEmpty {
@@ -92,6 +126,9 @@ struct TaskListView: View {
                 viewModel.deleteTask(taskId: taskId)
             }
         }
+        .sheet(isPresented: $showDeviceSheet) {
+            DeviceSelectionSheet()
+        }
     }
 }
 
@@ -116,6 +153,9 @@ struct TaskCardRow: View {
 
 // Header视图
 struct HeaderView: View {
+    var isBluetoothConnected: Bool = false
+    var onDeviceTap: () -> Void = {}
+    
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             Text("碎片")
@@ -123,6 +163,14 @@ struct HeaderView: View {
                 .foregroundColor(AppColors.headerText)
             
             Spacer()
+            
+            // 设备按钮（蓝牙录音）
+            Button(action: onDeviceTap) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 24))
+                    .foregroundColor(isBluetoothConnected ? Color.blue : AppColors.headerText)
+                    .frame(width: 44, height: 44)
+            }
             
             Button(action: {
                 // TODO: 添加更多功能菜单

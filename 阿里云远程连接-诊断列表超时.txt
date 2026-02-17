@@ -1,0 +1,52 @@
+# 在阿里云远程连接中复制下面整段到终端执行，输出用于排查任务列表超时
+# 方式：阿里云控制台 → ECS 实例 → 点击「远程连接」→ 选「通过Workbench」→ 粘贴执行
+
+echo "========== 0. 连接状态检测 =========="
+echo "当前用户: $(whoami)"
+echo "当前主机: $(hostname 2>/dev/null || echo '未知')"
+echo "当前目录: $(pwd)"
+if [ -d ~/gemini-audio-service ]; then
+  echo "✅ 已连接到服务器，gemini-audio-service 存在"
+else
+  echo "⚠️ 未找到 ~/gemini-audio-service，请确认已连接到正确实例"
+fi
+echo ""
+
+cd ~/gemini-audio-service 2>/dev/null || { echo "❌ 无法进入项目目录，请检查路径"; exit 1; }
+
+echo "========== 1. 进程与端口 =========="
+ps aux | grep -E "uvicorn|main.py" | grep -v grep
+echo "Worker 数量应≥4，若只有1个则 --workers 4 未生效"
+ss -tlnp 2>/dev/null | grep 8000 || netstat -tlnp 2>/dev/null | grep 8000
+
+echo ""
+echo "========== 2. 本地连通性测试 =========="
+curl -s -o /dev/null -w "health: HTTP %{http_code} 耗时 %{time_total}s\n" --max-time 5 http://127.0.0.1:8000/health 2>/dev/null || echo "health 失败"
+curl -s -o /dev/null -w "sessions(无token): HTTP %{http_code} 耗时 %{time_total}s\n" --max-time 15 "http://127.0.0.1:8000/api/v1/tasks/sessions?page=1&page_size=5" -H "Authorization: Bearer invalid" 2>/dev/null || echo "sessions 失败"
+echo "若无 token 应返回 401，若超时则说明请求卡在应用内"
+
+echo ""
+echo "========== 3. 最近 Request/Response（请求是否到达应用）=========="
+tail -500 ~/gemini-audio-service.log 2>/dev/null | grep -E "\[Request\]|\[Response\]" | tail -30
+echo "若有 [Request] /api/v1/tasks/sessions 但无对应 [Response] → 请求卡在应用内"
+echo "若完全无 [Request] tasks/sessions → 请求未到应用（Nginx 或网络问题）"
+
+echo ""
+echo "========== 4. 任务列表与 Auth 明细 =========="
+tail -500 ~/gemini-audio-service.log 2>/dev/null | grep -E "\[任务列表\]|\[Auth\]|User 查询耗时|Session 查询耗时|进入 handler|完成 total" || echo "无匹配"
+echo "若 [Auth] User 查询耗时 >2s → 数据库慢"
+echo "若 [任务列表] Session 查询耗时 >2s → 数据库慢或缺索引"
+
+echo ""
+echo "========== 5. 最近 ERROR/WARNING =========="
+tail -500 ~/gemini-audio-service.log 2>/dev/null | grep -E "ERROR|WARNING|502|504|timeout|Exception" | tail -20 || echo "无"
+
+echo ""
+echo "========== 6. Nginx 配置 =========="
+NGINX_CONF="/etc/nginx/sites-available/gemini-and-api"
+[ ! -f "$NGINX_CONF" ] && NGINX_CONF="/etc/nginx/sites-available/default"
+grep -E "proxy_pass|proxy_.*_timeout|location" "$NGINX_CONF" 2>/dev/null | head -30 || echo "未找到 Nginx 配置"
+
+echo ""
+echo "========== 7. 最后 20 行原始日志 =========="
+tail -20 ~/gemini-audio-service.log

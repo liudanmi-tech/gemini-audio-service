@@ -11,6 +11,7 @@ struct ProfileListView: View {
     @ObservedObject private var viewModel = ProfileViewModel.shared
     @State private var showingCreateProfile = false
     @State private var selectedProfile: Profile?
+    @State private var showSettingsSheet = false
     
     var body: some View {
         ZStack {
@@ -18,9 +19,10 @@ struct ProfileListView: View {
             
             VStack(spacing: 0) {
                 // Header区域
-                ProfileHeaderView(onAddTap: {
-                    showingCreateProfile = true
-                })
+                ProfileHeaderView(
+                    onAddTap: { showingCreateProfile = true },
+                    onSettingsTap: { showSettingsSheet = true }
+                )
                 
                 // 主内容区域
                 if viewModel.isLoading && viewModel.profiles.isEmpty {
@@ -84,12 +86,38 @@ struct ProfileListView: View {
         .sheet(item: $selectedProfile) { profile in
             ProfileEditView(profile: profile)
         }
+        .sheet(isPresented: $showSettingsSheet) {
+            VStack(spacing: 24) {
+                Text("设置")
+                    .font(AppFonts.cardTitle)
+                    .foregroundColor(AppColors.primaryText)
+                    .padding(.top, 24)
+                
+                Button("退出登录") {
+                    showSettingsSheet = false
+                    AuthManager.shared.logout()
+                }
+                .font(AppFonts.cardTitle)
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(AppColors.headerText)
+                .cornerRadius(8)
+                .padding(.horizontal, 24)
+                .padding(.top, 16)
+                
+                Spacer()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(AppColors.background)
+        }
     }
 }
 
 // Header视图
 struct ProfileHeaderView: View {
     let onAddTap: () -> Void
+    var onSettingsTap: (() -> Void)? = nil
     
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
@@ -101,16 +129,32 @@ struct ProfileHeaderView: View {
             
             Spacer()
             
-            // 右侧：添加按钮
-            Button(action: onAddTap) {
-                ZStack {
-                    Circle()
-                        .fill(AppColors.headerText.opacity(0.1)) // rgba(94, 75, 53, 0.1)
-                        .frame(width: 39.98, height: 39.98) // 根据Figma: 39.98 x 39.98px
-                    
-                    Image(systemName: "plus")
-                        .font(.system(size: 19.99, weight: .bold))
-                        .foregroundColor(AppColors.headerText)
+            // 右侧：设置按钮 + 添加按钮
+            HStack(spacing: 8) {
+                if let onSettingsTap = onSettingsTap {
+                    Button(action: onSettingsTap) {
+                        ZStack {
+                            Circle()
+                                .fill(AppColors.headerText.opacity(0.1))
+                                .frame(width: 39.98, height: 39.98)
+                            
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 19.99, weight: .bold))
+                                .foregroundColor(AppColors.headerText)
+                        }
+                    }
+                }
+                
+                Button(action: onAddTap) {
+                    ZStack {
+                        Circle()
+                            .fill(AppColors.headerText.opacity(0.1)) // rgba(94, 75, 53, 0.1)
+                            .frame(width: 39.98, height: 39.98) // 根据Figma: 39.98 x 39.98px
+                        
+                        Image(systemName: "plus")
+                            .font(.system(size: 19.99, weight: .bold))
+                            .foregroundColor(AppColors.headerText)
+                    }
                 }
             }
         }

@@ -1,0 +1,24 @@
+# 若无法从本机 SSH，请用阿里云 ECS 控制台「终端」登录后，复制下面整段执行：
+
+cd ~/gemini-audio-service
+
+echo "=== 1. 当前进程 ==="
+pgrep -af main.py || echo "无 main.py"
+
+echo "=== 2. 停止并重启 ==="
+pkill -f "uvicorn main" 2>/dev/null || true
+pkill -f "python.*main" 2>/dev/null || true
+sleep 3
+nohup venv/bin/python3 main.py >> ~/gemini-audio-service.log 2>&1 &
+
+echo "=== 3. 等待启动 (15秒) ==="
+sleep 15
+
+echo "=== 4. 验证 API ==="
+curl -s -m 10 -X POST "http://127.0.0.1:8000/api/v1/auth/send-code" -H "Content-Type: application/json" -d '{"phone":"13800138000"}'
+echo ""
+echo "=== 5. 进程确认 ==="
+pgrep -af main.py
+
+echo ""
+echo "若 send-code 返回 JSON 含 code:200 则修复成功。"

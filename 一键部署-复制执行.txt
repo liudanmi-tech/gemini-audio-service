@@ -1,0 +1,3 @@
+一键部署：只复制下面这一行到终端执行
+
+cd /Users/liudan/Desktop/AI军师/gemini-audio-service && bash 部署main并重启.sh

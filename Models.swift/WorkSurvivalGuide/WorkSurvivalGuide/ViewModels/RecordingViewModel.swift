@@ -12,7 +12,8 @@ class RecordingViewModel: ObservableObject {
     @Published var isRecording = false
     @Published var recordingTime: TimeInterval = 0
     @Published var isUploading = false
-    @Published var uploadProgress: Double = 0
+    @Published var uploadProgress: Double = 0  // 0~1，1.0 表示已发送完毕，等待服务器响应
+    @Published var uploadPhaseDescription: String = "上传中"  // "上传中" | "正在处理，请稍候..."
     
     private let audioRecorder = AudioRecorderService.shared
     private let networkManager = NetworkManager.shared
@@ -87,7 +88,12 @@ class RecordingViewModel: ObservableObject {
         
         print("✅ [RecordingViewModel] 录制停止成功")
         print("📁 [RecordingViewModel] 音频文件路径: \(audioURL.path)")
-        print("📁 [RecordingViewModel] 音频文件大小: \(getFileSize(url: audioURL)) 字节")
+        let fileSizeBytes = getFileSize(url: audioURL)
+        print("📁 [RecordingViewModel] 音频文件大小: \(fileSizeBytes) 字节")
+        if fileSizeBytes > 20 * 1024 * 1024 {
+            let mb = Double(fileSizeBytes) / (1024 * 1024)
+            print("📎 [RecordingViewModel] 大文件（\(String(format: "%.1f", mb)) MB > 20 MB），服务端将自动分段分析")
+        }
         
         let recordingDuration = Int(recordingTime)
         let startTime = Date().addingTimeInterval(-recordingTime)
@@ -101,6 +107,8 @@ class RecordingViewModel: ObservableObject {
         timer?.invalidate()
         timer = nil
         isUploading = true
+        uploadProgress = 0
+        uploadPhaseDescription = "上传中"
         
         // 更新卡片状态为"分析中"（在 Real API 模式下，后续会用服务器 ID 替换）
         if let taskId = currentRecordingTaskId {
@@ -149,6 +157,7 @@ class RecordingViewModel: ObservableObject {
                         print("❌ [RecordingViewModel] currentRecordingTaskId 为 nil")
                         await MainActor.run {
                             self.isUploading = false
+                            self.uploadProgress = 0
                         }
                         return
                     }
@@ -197,7 +206,13 @@ class RecordingViewModel: ObservableObject {
                     
                     let response = try await self.networkManager.uploadAudio(
                         fileURL: audioURL,
-                        title: nil
+                        title: nil,
+                        onProgress: { [weak self] pct in
+                            Task { @MainActor in
+                                self?.uploadProgress = pct
+                                self?.uploadPhaseDescription = pct >= 1.0 ? "正在处理，请稍候..." : "上传中"
+                            }
+                        }
                     )
                     
                     print("✅ [RecordingViewModel] 上传成功！")
@@ -249,6 +264,7 @@ class RecordingViewModel: ObservableObject {
                             object: newTask
                         )
                         self.isUploading = false
+                        self.uploadProgress = 0
                         print("✅ [RecordingViewModel] 上传状态已设置为 false")
                     }
                     
@@ -259,6 +275,7 @@ class RecordingViewModel: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.isUploading = false
+                    self.uploadProgress = 0
                     print("❌ [RecordingViewModel] ========== 上传/分析失败 ==========")
                     print("❌ [RecordingViewModel] 错误类型: \(type(of: error))")
                     print("❌ [RecordingViewModel] 错误信息: \(error.localizedDescription)")
@@ -267,6 +284,148 @@ class RecordingViewModel: ObservableObject {
                         print("❌ [RecordingViewModel] 错误码: \(nsError.code)")
                         print("❌ [RecordingViewModel] 用户信息: \(nsError.userInfo)")
                     }
+                }
+            }
+        }
+    }
+    
+    // 本地上传音频文件（用于测试，如《岁月》《沧浪之水》等）
+    func uploadLocalFile(fileURL: URL) {
+        print("📤 [RecordingViewModel] ========== 本地上传音频 ==========")
+        print("📤 [RecordingViewModel] 原始文件路径: \(fileURL.path)")
+        
+        // 大文件分段提示
+        let sizeLimitMB: Int64 = 20
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+           let size = attrs[.size] as? Int64, size > sizeLimitMB * 1024 * 1024 {
+            let mb = Double(size) / (1024 * 1024)
+            print("📎 [RecordingViewModel] 大文件（\(String(format: "%.1f", mb)) MB > \(sizeLimitMB) MB），服务端将自动分段分析")
+        }
+        
+        // security-scoped URL 需在复制前申请访问
+        let needsSecurityScope = fileURL.startAccessingSecurityScopedResource()
+        defer { if needsSecurityScope { fileURL.stopAccessingSecurityScopedResource() } }
+        
+        // 复制到临时目录，便于稳定上传
+        let tempDir = FileManager.default.temporaryDirectory
+        let tempFileName = "upload_\(UUID().uuidString)\(fileURL.pathExtension.isEmpty ? ".m4a" : ".\(fileURL.pathExtension)")"
+        let tempURL = tempDir.appendingPathComponent(tempFileName)
+        
+        do {
+            if FileManager.default.fileExists(atPath: tempURL.path) {
+                try FileManager.default.removeItem(at: tempURL)
+            }
+            try FileManager.default.copyItem(at: fileURL, to: tempURL)
+            print("📁 [RecordingViewModel] 已复制到临时文件: \(tempURL.path)")
+        } catch {
+            print("❌ [RecordingViewModel] 复制文件失败: \(error)")
+            return
+        }
+        
+        let startTime = Date()
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        let timeString = formatter.string(from: startTime)
+        let taskId = UUID().uuidString
+        currentRecordingTaskId = taskId
+        
+        // 创建本地任务卡片，状态为分析中
+        let newTask = TaskItem(
+            id: taskId,
+            title: "本地上传 \(timeString)",
+            startTime: startTime,
+            endTime: nil,
+            duration: 0,
+            tags: [],
+            status: .analyzing,
+            emotionScore: nil,
+            speakerCount: nil
+        )
+        
+        Task { @MainActor in
+            NotificationCenter.default.post(name: NSNotification.Name("NewTaskCreated"), object: newTask)
+        }
+        
+        isUploading = true
+        uploadProgress = 0
+        uploadPhaseDescription = "上传中"
+        print("📤 [RecordingViewModel] 上传状态已设置为 true")
+        
+        Task {
+            defer {
+                try? FileManager.default.removeItem(at: tempURL)
+                Task { @MainActor in
+                    self.isUploading = false
+                    self.uploadProgress = 0
+                    print("✅ [RecordingViewModel] 上传状态已设置为 false")
+                }
+            }
+            do {
+                if AppConfig.shared.useMockData {
+                    print("📦 [RecordingViewModel] Mock 模式：本地上传分析")
+                    let analysisResult = try await GeminiAnalysisService.shared.analyzeAudio(fileURL: tempURL)
+                    let completedTask = TaskItem(
+                        id: taskId,
+                        title: "本地上传 \(timeString)",
+                        startTime: startTime,
+                        endTime: Date(),
+                        duration: 0,
+                        tags: analysisResult.risks.map { "#\($0)" },
+                        status: .archived,
+                        emotionScore: calculateEmotionScore(from: analysisResult),
+                        speakerCount: analysisResult.speakerCount,
+                        summary: nil
+                    )
+                    await MainActor.run {
+                        NotificationCenter.default.post(name: NSNotification.Name("TaskDeleted"), object: taskId)
+                        NotificationCenter.default.post(name: NSNotification.Name("NewTaskCreated"), object: completedTask)
+                        NotificationCenter.default.post(name: NSNotification.Name("TaskAnalysisCompleted"), object: completedTask)
+                    }
+                } else {
+                    print("🌐 [RecordingViewModel] 真实 API：开始本地上传（调用 uploadAudio）...")
+                    let response = try await networkManager.uploadAudio(
+                        fileURL: tempURL,
+                        title: "本地上传 \(timeString)",
+                        onProgress: { [weak self] pct in
+                            Task { @MainActor in
+                                self?.uploadProgress = pct
+                                self?.uploadPhaseDescription = pct >= 1.0 ? "正在处理，请稍候..." : "上传中"
+                            }
+                        }
+                    )
+                    print("✅ [RecordingViewModel] 本地上传成功，收到响应 sessionId=\(response.sessionId)")
+                    
+                    await MainActor.run {
+                        NotificationCenter.default.post(name: NSNotification.Name("TaskDeleted"), object: taskId)
+                    }
+                    
+                    let newTask = TaskItem(
+                        id: response.sessionId,
+                        title: response.title,
+                        startTime: startTime,
+                        endTime: nil,
+                        duration: 0,
+                        tags: [],
+                        status: .analyzing,
+                        emotionScore: nil,
+                        speakerCount: nil
+                    )
+                    
+                    await MainActor.run {
+                        NotificationCenter.default.post(name: NSNotification.Name("NewTaskCreated"), object: newTask)
+                    }
+                    
+                    startPollingStatus(sessionId: response.sessionId)
+                }
+            } catch {
+                print("❌ [RecordingViewModel] 本地上传失败: \(error)")
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("TaskAnalysisFailed"),
+                        object: taskId,
+                        userInfo: ["message": (error as NSError).localizedDescription]
+                    )
                 }
             }
         }
@@ -287,27 +446,46 @@ class RecordingViewModel: ObservableObject {
         print("🔄 [RecordingViewModel] sessionId: \(sessionId)")
         
         Task {
+            // 轮询开始时缓存 Token，避免其他请求（如任务列表刷新）返回 401 时登出导致 Token 被清空、轮询中断
+            let cachedToken = KeychainManager.shared.getToken()
+            guard let token = cachedToken, !token.isEmpty else {
+                print("❌ [RecordingViewModel] 轮询前 Token 为空，请先登录")
+                await MainActor.run {
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("TaskAnalysisFailed"),
+                        object: sessionId,
+                        userInfo: ["message": "未登录，请先登录后重试"]
+                    )
+                }
+                return
+            }
+            
             var pollCount = 0
             let maxPolls = 120  // 最多轮询 120 次（6分钟，因为音频分析可能需要更长时间）
             
             while pollCount < maxPolls {
                 do {
-                    print("🔄 [RecordingViewModel] 等待 3 秒后查询状态（第 \(pollCount + 1)/\(maxPolls) 次）...")
-                    try await Task.sleep(nanoseconds: 3_000_000_000)  // 等待 3 秒
+                    let waitSeconds: UInt64 = pollCount == 0 ? 8 : 3  // 首次等待 8 秒（给服务器 OSS 下载留时间）
+                    print("🔄 [RecordingViewModel] 等待 \(waitSeconds) 秒后查询状态（第 \(pollCount + 1)/\(maxPolls) 次）...")
+                    try await Task.sleep(nanoseconds: waitSeconds * 1_000_000_000)
                     
                     print("🔄 [RecordingViewModel] 查询任务状态...")
-                    let status = try await networkManager.getTaskStatus(sessionId: sessionId)
+                    let status = try await networkManager.getTaskStatus(sessionId: sessionId, authToken: token)
                     
                     print("📊 [RecordingViewModel] 任务状态:")
                     print("   - status: \(status.status)")
                     print("   - progress: \(status.progress)")
                     print("   - estimatedTimeRemaining: \(status.estimatedTimeRemaining)")
+                    if let stage = status.stageDisplayText {
+                        print("   - stage: \(stage)")
+                        await MainActor.run { self.uploadPhaseDescription = stage }
+                    }
                     
                     // 处理完成状态
                     if status.status == "archived" || status.status == "completed" {
                         print("✅ [RecordingViewModel] 分析完成！获取详情...")
-                        // 分析完成，获取详情并更新
-                        let detail = try await networkManager.getTaskDetail(sessionId: sessionId)
+                        // 分析完成，获取详情并更新（使用缓存的 token）
+                        let detail = try await networkManager.getTaskDetail(sessionId: sessionId, authToken: token)
                         
                         print("📋 [RecordingViewModel] 任务详情:")
                         print("   - title: \(detail.title)")
@@ -363,7 +541,19 @@ class RecordingViewModel: ObservableObject {
                     print("❌ [RecordingViewModel] 轮询状态失败:")
                     print("   - 错误类型: \(type(of: error))")
                     print("   - 错误信息: \(error.localizedDescription)")
-                    // 继续轮询，不要立即退出
+                    // 401 表示认证失效，停止轮询并提示重新登录
+                    if (error as NSError).code == 401 {
+                        print("❌ [RecordingViewModel] 认证已失效，请重新登录")
+                        await MainActor.run {
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("TaskAnalysisFailed"),
+                                object: sessionId,
+                                userInfo: ["message": "登录已过期，请重新登录后查看任务"]
+                            )
+                        }
+                        break
+                    }
+                    // 其他错误继续轮询
                     pollCount += 1
                     if pollCount >= maxPolls {
                         break

@@ -6,11 +6,13 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
     @StateObject private var authManager = AuthManager.shared
     @State private var selectedTab: TabItem = .fragments
     @StateObject private var recordingViewModel = RecordingViewModel()
+    @State private var showFilePicker = false
     
     var body: some View {
         Group {
@@ -40,17 +42,39 @@ struct ContentView: View {
                                     }
                                 }
                                 
-                                // 录音按钮（只在碎片页面显示）
+                                // 录音按钮 + 本地上传按钮（只在碎片页面显示）
                                 if selectedTab == .fragments {
                                     VStack {
                                         Spacer()
                                         HStack {
                                             Spacer()
-                                            RecordingButtonView(viewModel: recordingViewModel)
-                                                .padding(.trailing, 0)
-                                                .padding(.bottom, 100) // 位于底部导航栏上方
+                                            RecordingButtonView(
+                                                viewModel: recordingViewModel,
+                                                onUploadTap: { showFilePicker = true }
+                                            )
+                                            .padding(.trailing, 0)
+                                            .padding(.bottom, 100) // 位于底部导航栏上方
                                         }
                                     }
+                                }
+                                
+                                // 上传进度悬浮提示（100% 后显示「正在处理，请稍候...」）
+                                if recordingViewModel.isUploading {
+                                    Color.black.opacity(0.3)
+                                        .ignoresSafeArea()
+                                    VStack(spacing: 12) {
+                                        ProgressView()
+                                            .scaleEffect(1.2)
+                                        Text(recordingViewModel.uploadPhaseDescription)
+                                            .font(.system(size: 15, weight: .medium, design: .rounded))
+                                            .foregroundColor(.white)
+                                        Text("\(Int(recordingViewModel.uploadProgress * 100))%")
+                                            .font(.system(size: 14, weight: .regular, design: .rounded))
+                                            .foregroundColor(.white.opacity(0.9))
+                                    }
+                                    .padding(24)
+                                    .background(Color.black.opacity(0.6))
+                                    .cornerRadius(12)
                                 }
                             }
                         }
@@ -70,6 +94,20 @@ struct ContentView: View {
         }
         .onAppear {
             authManager.checkLoginStatus()
+        }
+        .fileImporter(
+            isPresented: $showFilePicker,
+            allowedContentTypes: [.audio, .mpeg4Audio, .mp3, .wav],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    recordingViewModel.uploadLocalFile(fileURL: url)
+                }
+            case .failure(let error):
+                print("❌ [ContentView] 选择文件失败: \(error)")
+            }
         }
     }
 }

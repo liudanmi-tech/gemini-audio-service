@@ -96,7 +96,7 @@ class NetworkManager {
                 "Authorization": "Bearer \(getAuthToken())"
             ],
             requestModifier: { request in
-                request.timeoutInterval = 10 // 优化超时时间为10秒
+                request.timeoutInterval = 120 // 任务列表跨网+服务器负载高时可能较慢，120秒超时
                 // 添加请求开始时间戳（用于诊断）
                 request.setValue("\(requestStartTime.timeIntervalSince1970)", forHTTPHeaderField: "X-Request-Start")
             }
@@ -162,14 +162,19 @@ class NetworkManager {
         }
         #endif
         
-        // 检查响应是否为空
+        // 检查响应是否为空（常见于请求超时或连接中断）
         guard !responseData.isEmpty else {
             print("❌ [NetworkManager] 响应数据为空")
-            throw NSError(
-                domain: "NetworkError",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "服务端返回空响应"]
-            )
+            let msg: String
+            if let err = dataResponse.error {
+                let d = err.localizedDescription
+                if d.contains("timed out") || d.contains("超时") { msg = "请求超时，请检查网络后重试" }
+                else if d.contains("offline") || d.contains("network") { msg = "网络不可达，请检查连接" }
+                else { msg = "服务端返回空响应 (\(d))" }
+            } else {
+                msg = "服务端返回空响应，可能是请求超时"
+            }
+            throw NSError(domain: "NetworkError", code: -1, userInfo: [NSLocalizedDescriptionKey: msg])
         }
         
         // 尝试解析 JSON（使用已获取的响应数据）
@@ -220,9 +225,12 @@ class NetworkManager {
     }
     
     // 上传音频文件（支持 Mock 和真实 API）
+    /// - Parameters:
+    ///   - onProgress: 可选回调，progress 0~1 为上传进度；达到 1.0 后进入等待响应阶段（服务器处理中）
     func uploadAudio(
         fileURL: URL,
-        title: String? = nil
+        title: String? = nil,
+        onProgress: ((Double) -> Void)? = nil
     ) async throws -> UploadResponse {
         print("🌐 [NetworkManager] ========== 上传音频 ==========")
         print("🌐 [NetworkManager] 文件路径: \(fileURL.path)")
@@ -242,6 +250,17 @@ class NetworkManager {
         // 使用真实 API
         print("🌐 [NetworkManager] 使用真实 API 上传音频")
         print("🌐 [NetworkManager] API 地址: \(baseURL)/audio/upload")
+        
+        // 大文件（>20MB）分段提示：服务端会自动切分后分析
+        let fileSizeLimitMB: Int64 = 20
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: fileURL.path),
+           let size = attrs[.size] as? Int64 {
+            let sizeMB = Double(size) / (1024 * 1024)
+            print("📁 [NetworkManager] 文件大小: \(String(format: "%.1f", sizeMB)) MB")
+            if size > fileSizeLimitMB * 1024 * 1024 {
+                print("📎 [NetworkManager] 大文件（>\(fileSizeLimitMB)MB），服务端将自动分段上传并分析")
+            }
+        }
         
         let uploadTask = AF.upload(
             multipartFormData: { multipartFormData in
@@ -270,21 +289,48 @@ class NetworkManager {
             headers: [
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 180 } // 上传文件需要更长时间，设置180秒
+            requestModifier: { $0.timeoutInterval = 600 } // 大文件(20MB+)上传需更长时间，设置600秒
         )
         
-        // 监听上传进度
+        // 监听上传进度（0~1；达 1.0 后仍需等待服务器处理并返回响应）
+        var didLog100 = false
         uploadTask.uploadProgress { progress in
-            print("📤 [NetworkManager] 上传进度: \(Int(progress.fractionCompleted * 100))%")
+            let pct = progress.fractionCompleted
+            print("📤 [NetworkManager] 上传进度: \(Int(pct * 100))%")
+            if pct >= 1.0, !didLog100 {
+                didLog100 = true
+                print("📤 [NetworkManager] 上传数据已发送完毕，等待服务器响应（大文件可能需 10-60 秒）...")
+            }
+            onProgress?(pct)
         }
         
-        // 先获取原始响应数据用于调试
+        print("⏳ [NetworkManager] 开始等待 HTTP 响应（await serializingData）...")
         let dataResponse = await uploadTask.serializingData().response
         let httpResponse = dataResponse.response
+        if let err = dataResponse.error {
+            print("❌ [NetworkManager] 请求失败: \(err.localizedDescription)")
+            print("   domain=\((err as NSError).domain) code=\((err as NSError).code)")
+            if (err as NSError).code == -1001 {
+                print("   原因: 连接超时（服务器处理时间过长或网络问题）")
+            }
+        }
+        print("📥 [NetworkManager] 已收到响应: statusCode=\(httpResponse?.statusCode ?? 0)")
         
         // 检查 HTTP 状态码
         if let statusCode = httpResponse?.statusCode {
             print("📥 [NetworkManager] HTTP 状态码: \(statusCode)")
+            
+            // 502/503/504 网关错误（常因大文件上传超时）
+            if statusCode == 502 || statusCode == 503 || statusCode == 504 {
+                let msg = statusCode == 502
+                    ? "服务器暂时不可用，大文件上传可能超时。请尝试：1) 使用较小文件 2) 检查网络 3) 稍后重试"
+                    : "服务暂不可用 (HTTP \(statusCode))，请稍后重试"
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: msg]
+                )
+            }
             
             // 如果是 401，立即清除登录状态
             if statusCode == 401 {
@@ -354,7 +400,7 @@ class NetworkManager {
             
             return data
         } catch let error as DecodingError {
-            // 解码失败，可能是 FastAPI 错误格式
+            // 解码失败，可能是 FastAPI 错误格式，或服务端返回了 HTML（如 502 页）
             print("⚠️ [NetworkManager] JSON 解码失败，尝试解析 FastAPI 错误格式")
             if let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
                 let statusCode = httpResponse?.statusCode ?? 400
@@ -373,16 +419,30 @@ class NetworkManager {
                     userInfo: [NSLocalizedDescriptionKey: errorResponse.detail]
                 )
             }
+            // 若响应以 < 开头，说明是 HTML（502 等），优先提示服务器问题
+            if let str = String(data: responseData, encoding: .utf8), str.trimmingCharacters(in: .whitespaces).hasPrefix("<") {
+                let statusCode = httpResponse?.statusCode ?? 502
+                throw NSError(
+                    domain: "NetworkError",
+                    code: statusCode,
+                    userInfo: [NSLocalizedDescriptionKey: "服务器返回异常，大文件上传可能超时，请稍后重试或使用较小文件"]
+                )
+            }
             throw error
         }
     }
     
     // 获取任务详情
-    func getTaskDetail(sessionId: String) async throws -> TaskDetailResponse {
+    func getTaskDetail(sessionId: String, authToken: String? = nil) async throws -> TaskDetailResponse {
         // 如果使用 Mock 数据
         if config.useMockData {
             // Mock 模式下返回空详情
             throw NSError(domain: "MockError", code: 404, userInfo: [NSLocalizedDescriptionKey: "Mock 模式下不支持详情查询"])
+        }
+        
+        let token = authToken?.isEmpty == false ? authToken! : getAuthToken()
+        guard !token.isEmpty else {
+            throw NSError(domain: "NetworkError", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录，请先登录"])
         }
         
         // 使用真实 API：先取原始响应，非 200 时按错误体解码，避免 "data is missing"
@@ -392,7 +452,7 @@ class NetworkManager {
             method: .get,
             headers: [
                 "Content-Type": "application/json",
-                "Authorization": "Bearer \(getAuthToken())"
+                "Authorization": "Bearer \(token)"
             ],
             requestModifier: { $0.timeoutInterval = 60 }
         )
@@ -414,8 +474,8 @@ class NetworkManager {
         return data
     }
     
-    // 获取任务状态
-    func getTaskStatus(sessionId: String) async throws -> TaskStatusResponse {
+    // 获取任务状态（authToken 可选：轮询时传入缓存的 token，避免被其他请求的 401 登出导致中断）
+    func getTaskStatus(sessionId: String, authToken: String? = nil) async throws -> TaskStatusResponse {
         // 如果使用 Mock 数据
         if config.useMockData {
             // Mock 模式下返回默认状态
@@ -425,18 +485,24 @@ class NetworkManager {
                 progress: 1.0,
                 estimatedTimeRemaining: 0,
                 updatedAt: Date(),
-                failureReason: nil
+                failureReason: nil,
+                analysisStage: nil
             )
         }
         
-        // 使用真实 API：先取原始响应，非 200 时按错误体解码，避免 "data is missing"
+        let token = authToken?.isEmpty == false ? authToken! : getAuthToken()
+        guard !token.isEmpty else {
+            throw NSError(domain: "NetworkError", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录，请先登录"])
+        }
+        
+        // 使用真实 API：分析期间 OSS 下载等同步操作会阻塞，120s 超时；超时后轮询会继续重试
         print("🌐 [Real] 使用真实 API 获取任务状态")
         let dataResponse = await AF.request(
             "\(baseURL)/tasks/sessions/\(sessionId)/status",
             method: .get,
             headers: [
                 "Content-Type": "application/json",
-                "Authorization": "Bearer \(getAuthToken())"
+                "Authorization": "Bearer \(token)"
             ],
             requestModifier: { $0.timeoutInterval = 120 }
         )
@@ -446,9 +512,24 @@ class NetworkManager {
         let statusCode = dataResponse.response?.statusCode ?? 0
         let responseData = dataResponse.data ?? Data()
         if statusCode != 200 {
-            let message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
-                ?? (responseData.isEmpty ? nil : String(data: responseData, encoding: .utf8))
-                ?? "请求失败 (HTTP \(statusCode))"
+            let message: String
+            if statusCode == 0, let err = dataResponse.error {
+                // HTTP 0：连接层失败，给出更明确的提示
+                let errDesc = err.localizedDescription
+                if errDesc.contains("timed out") || errDesc.contains("超时") {
+                    message = "连接超时，请检查网络后重试"
+                } else if errDesc.contains("offline") || errDesc.contains("internet") || errDesc.contains("network") {
+                    message = "网络不可达，请检查网络连接"
+                } else if errDesc.contains("host") || errDesc.contains("connect") {
+                    message = "无法连接服务器，请确认网络或稍后重试"
+                } else {
+                    message = "连接失败: \(errDesc)"
+                }
+            } else {
+                message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
+                    ?? (responseData.isEmpty ? nil : String(data: responseData, encoding: .utf8))
+                    ?? "请求失败 (HTTP \(statusCode))"
+            }
             throw NSError(domain: "NetworkError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
         let decoded = try JSONDecoder().decode(APIResponse<TaskStatusResponse>.self, from: responseData)
@@ -479,7 +560,7 @@ class NetworkManager {
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 180 }
+            requestModifier: { $0.timeoutInterval = 600 }  // 策略生成含场景识别+多技能+多图，需与 Nginx 600s 匹配
         )
         .serializingData()
         .response
@@ -493,6 +574,8 @@ class NetworkManager {
                 message = errResp.detail
             } else if !responseData.isEmpty, let str = String(data: responseData, encoding: .utf8), !str.isEmpty {
                 message = str
+            } else if statusCode == 0 {
+                message = "连接中断或超时，策略可能仍在生成中，请稍后重试"
             } else {
                 message = "请求失败 (HTTP \(statusCode))"
             }
@@ -1060,8 +1143,7 @@ class NetworkManager {
             "speaker": speaker
         ]
         
-        // 后端直接返回 ExtractSegmentResponse，未使用 APIResponse 包装
-        let response = try await AF.request(
+        let dataResponse = await AF.request(
             "\(baseURL)/tasks/sessions/\(sessionId)/extract-segment",
             method: .post,
             parameters: parameters,
@@ -1070,14 +1152,31 @@ class NetworkManager {
                 "Content-Type": "application/json",
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 30 } // 音频提取可能需要更长时间
+            requestModifier: { $0.timeoutInterval = 120 } // 提取+上传需更长时间
         )
-        .validate(statusCode: 200..<300)
-        .serializingDecodable(AudioSegmentExtractResponse.self)
-        .value
+        .serializingData()
+        .response
         
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        
+        guard statusCode >= 200 && statusCode < 300 else {
+            // 尝试解析 FastAPI 错误格式 { "detail": "..." }
+            if let err = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
+                throw NSError(domain: "NetworkError", code: statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: err.detail])
+            }
+            if statusCode == 502 || statusCode == 503 || statusCode == 504 {
+                throw NSError(domain: "NetworkError", code: statusCode,
+                              userInfo: [NSLocalizedDescriptionKey: "服务器暂时不可用，请稍后重试或选择其他任务"])
+            }
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "提取失败 (HTTP \(statusCode))"])
+        }
+        
+        let decoded = try JSONDecoder().decode(AudioSegmentExtractResponse.self, from: responseData)
         print("✅ [NetworkManager] 音频片段提取成功")
-        return response
+        return decoded
     }
 }
 

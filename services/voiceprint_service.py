@@ -33,24 +33,29 @@ def identify_speaker(
 ) -> Tuple[Optional[str], float]:
     """
     将一段音频与当前用户的若干档案声纹比对，返回最佳匹配的 profile_id 与置信度。
-    占位：不调用阿里云；按 speaker_label 映射到不同档案（Speaker_0->第1个，Speaker_1->第2个…），
-    无标签则退回第1个档案；无档案则 (None, 0)。后续可接入阿里云 Speaker Verification 的 1:N 识别。
+    占位：不调用阿里云；按 speaker_label 映射到档案（Speaker_0->第1个，Speaker_1->第2个…）。
+    重要：当说话人数量 > 档案数量时，超出部分的说话人视为「新人」，不映射，返回 (None, 0)，
+    前端保持显示 Speaker_X，避免误将新人当作已有档案。
+    后续可接入阿里云 Speaker Verification 的 1:N 识别。
     """
     if not profile_ids:
         return (None, 0.0)
-    # 占位：按说话人标签轮询到不同档案，便于多说话人显示不同名字
-    if speaker_label and profile_ids:
-        idx = 0
-        if speaker_label.startswith("Speaker_"):
-            try:
-                idx = int(speaker_label.replace("Speaker_", "").strip()) % len(profile_ids)
-            except ValueError:
-                idx = hash(speaker_label) % len(profile_ids)
-        else:
-            idx = hash(speaker_label) % len(profile_ids) if speaker_label else 0
-        matched = profile_ids[idx]
+    if not speaker_label:
+        return (profile_ids[0], 0.8)
+    # 占位：Speaker_0->档案0, Speaker_1->档案1, ... ；当 idx >= 档案数时为新人，不映射
+    if speaker_label.startswith("Speaker_"):
+        try:
+            idx = int(speaker_label.replace("Speaker_", "").strip())
+            if idx >= len(profile_ids):
+                # 新人：录音中说话人数量 > 档案数量，该说话人无对应档案
+                logger.info(f"声纹识别占位: speaker={speaker_label} 为新人（idx={idx} >= 档案数{len(profile_ids)}），不映射")
+                return (None, 0.0)
+            matched = profile_ids[idx]
+        except ValueError:
+            matched = profile_ids[0]
     else:
-        matched = profile_ids[0]
+        idx = hash(speaker_label) % len(profile_ids) if speaker_label else 0
+        matched = profile_ids[idx]
     confidence = 0.8
-    logger.info(f"声纹识别占位: speaker={speaker_label} segment=... -> profile_id={matched} confidence={confidence}")
+    logger.info(f"声纹识别占位: speaker={speaker_label} -> profile_id={matched} confidence={confidence}")
     return (matched, confidence)

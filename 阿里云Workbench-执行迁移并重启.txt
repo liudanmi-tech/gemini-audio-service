@@ -1,0 +1,25 @@
+# 在阿里云 Workbench 中复制下面整段到终端执行
+# 路径：阿里云控制台 → ECS → 实例 → 远程连接 → 通过 Workbench 连接
+
+# 1. 执行 analysis_stage 迁移（需有 DATABASE_URL，通常为 RDS 连接）
+cd ~/gemini-audio-service
+if [ -f .env ]; then
+  export $(grep -v '^#' .env | xargs 2>/dev/null)
+  if [ -n "$DATABASE_URL" ]; then
+    psql "$DATABASE_URL" -f database/migrations/add_session_analysis_stage.sql 2>/dev/null && echo "✅ 迁移完成" || echo "⚠️ psql 失败，可能需手动在 RDS 控制台执行 SQL"
+  else
+    echo "⚠️ 未找到 DATABASE_URL，跳过迁移"
+  fi
+else
+  echo "⚠️ 未找到 .env，跳过迁移"
+fi
+
+# 2. 重启服务
+echo ""
+echo "========== 重启服务 =========="
+pkill -f "uvicorn main:app" 2>/dev/null || true
+sleep 3
+nohup venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 4 >> ~/gemini-audio-service.log 2>&1 &
+sleep 6
+curl -s --max-time 5 http://127.0.0.1:8000/health && echo "" && echo "✅ 服务已重启" || echo "⚠️ 健康检查失败，请查: tail -50 ~/gemini-audio-service.log"
+ps aux | grep uvicorn | grep -v grep

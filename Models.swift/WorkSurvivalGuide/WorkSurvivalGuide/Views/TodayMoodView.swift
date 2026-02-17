@@ -12,7 +12,8 @@ struct TodayMoodView: View {
     let moodStats: [MoodStat]?
     
     private var score: Int {
-        emotionScore ?? 60
+        let s = emotionScore ?? 60
+        return max(0, min(100, s))
     }
     
     var body: some View {
@@ -30,9 +31,9 @@ struct TodayMoodView: View {
                         .stroke(Color.gray.opacity(0.2), lineWidth: 8)
                         .frame(width: 76.53, height: 76.53)
                     
-                    // 进度圆环（根据分数显示颜色）
+                    // 进度圆环（根据分数显示颜色，clamp 避免 NaN）
                     Circle()
-                        .trim(from: 0, to: CGFloat(score) / 100)
+                        .trim(from: 0, to: min(1, max(0, CGFloat(score) / 100)))
                         .stroke(
                             scoreColor,
                             style: StrokeStyle(lineWidth: 8, lineCap: .round)

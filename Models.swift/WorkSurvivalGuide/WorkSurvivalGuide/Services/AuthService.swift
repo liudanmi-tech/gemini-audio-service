@@ -128,7 +128,8 @@ class AuthService {
             headers: [
                 "Authorization": "Bearer \(token)",
                 "Content-Type": "application/json"
-            ]
+            ],
+            requestModifier: { $0.timeoutInterval = 120 }
         )
         .serializingData()
         .response

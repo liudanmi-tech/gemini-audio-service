@@ -376,7 +376,7 @@ def wait_for_file_active(file: Any, max_wait_time=300) -> Any:
         状态为 ACTIVE 的文件对象
     """
     start_time = time.time()
-    print(f"等待文件处理，当前状态: {file.state}")
+    logger.info(f"[wait_for_file_active] 等待文件处理，当前状态: {file.state}")
     
     while file.state.name == "PROCESSING":
         elapsed = time.time() - start_time
@@ -386,9 +386,9 @@ def wait_for_file_active(file: Any, max_wait_time=300) -> Any:
         time.sleep(2)
         try:
             file = genai.get_file(file.name)
-            print(f"文件状态: {file.state} (已等待 {int(elapsed)} 秒)")
+            logger.info(f"[wait_for_file_active] 文件状态: {file.state} (已等待 {int(elapsed)} 秒)")
         except Exception as e:
-            print(f"获取文件状态时出错: {e}")
+            logger.warning(f"[wait_for_file_active] 获取文件状态时出错: {e}")
             time.sleep(2)
             continue
     
@@ -460,6 +460,10 @@ def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image
         return None
 
 
+# 原音频是否上传阿里云 OSS（默认 false：仅本地，直接走 Gemini）
+USE_OSS_FOR_ORIGINAL_AUDIO = os.getenv("USE_OSS_FOR_ORIGINAL_AUDIO", "false").lower() == "true"
+
+
 def persist_original_audio(
     session_id: str,
     temp_file_path: str,
@@ -467,7 +471,8 @@ def persist_original_audio(
     user_id: str,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
-    将原音频持久化到 OSS 或本地，供后续剪切与声纹使用。
+    将原音频持久化到本地（或 OSS，需显式启用），供后续剪切与声纹使用。
+    默认不上传阿里云，直接走 Gemini 分析。
     Returns:
         (audio_url, audio_path): OSS 时 url 有值；仅本地时 path 有值。
     """
@@ -477,7 +482,7 @@ def persist_original_audio(
     if not file_ext.startswith("."):
         file_ext = "." + file_ext
 
-    if USE_OSS and oss_bucket is not None:
+    if USE_OSS_FOR_ORIGINAL_AUDIO and USE_OSS and oss_bucket is not None:
         try:
             oss_key = f"sessions/{user_id}/{session_id}/original{file_ext}"
             with open(temp_file_path, "rb") as f:
@@ -494,13 +499,13 @@ def persist_original_audio(
                 else:
                     endpoint = f"https://{OSS_BUCKET_NAME}.{OSS_ENDPOINT}"
                 audio_url = f"{endpoint}/{oss_key}"
-            logger.info(f"原音频已上传 OSS: {audio_url}")
+            logger.info(f"[分析-{session_id}] 原音频已上传 OSS: {audio_url[:80]}...")
         except Exception as e:
             logger.warning(f"原音频上传 OSS 失败，将使用本地路径: {e}")
             audio_url = None
 
     if not audio_url:
-        # 本地存储
+        # 本地存储（默认路径，供剪切与声纹使用）
         storage_dir = os.getenv("AUDIO_STORAGE_DIR", "data/audio/sessions")
         os.makedirs(storage_dir, exist_ok=True)
         local_name = f"{session_id}{file_ext}"
@@ -509,7 +514,7 @@ def persist_original_audio(
             import shutil
             shutil.copy2(temp_file_path, dest_path)
             audio_path = dest_path
-            logger.info(f"原音频已保存到本地: {audio_path}")
+            logger.info(f"[分析-{session_id}] 原音频已保存到本地: {audio_path}")
         except Exception as e:
             logger.warning(f"原音频保存本地失败: {e}")
 
@@ -654,9 +659,56 @@ def generate_image_from_prompt(image_prompt: str, user_id: str, session_id: str,
     return None
 
 
-async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tuple[AudioAnalysisResponse, Optional[Call1Response]]:
+# 大文件分片阈值：超过此大小时切分为多个 ≤18MB 片段分别上传 Gemini
+CHUNK_SIZE_MB = 18.0
+
+
+def _upload_single_file_to_gemini(
+    path: str,
+    display_name: str,
+    _sid: str,
+    no_proxy: bool,
+    use_resumable: bool,
+    upload_timeout: int,
+    max_retries: int = 3,
+):
+    """上传单个文件到 Gemini，带重试。返回 uploaded_file 对象。"""
+    import concurrent.futures
+    retry_count = 0
+    current_resumable = use_resumable
+    while retry_count < max_retries:
+        try:
+            logger.info(f"[分析-{_sid}-step3] 尝试上传（第 {retry_count + 1}/{max_retries} 次，resumable={current_resumable}，超时={upload_timeout}s）...")
+            start_upload = time.time()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+                fut = ex.submit(
+                    genai.upload_file,
+                    path=path,
+                    display_name=display_name,
+                    resumable=current_resumable,
+                )
+                try:
+                    uploaded_file = fut.result(timeout=upload_timeout)
+                except concurrent.futures.TimeoutError:
+                    raise Exception(f"Gemini 文件上传超时（{upload_timeout}秒）")
+            logger.info(f"[分析-{_sid}-step4] ✅ 文件上传成功！name={uploaded_file.name} 耗时={time.time()-start_upload:.2f}s")
+            return uploaded_file
+        except Exception as e:
+            retry_count += 1
+            error_msg = str(e)
+            logger.error(f"[分析-{_sid}-step3] ❌ 上传失败（第 {retry_count}/{max_retries}）{error_msg}")
+            if ("string indices must be integers" in error_msg or "not 'str'" in error_msg) and current_resumable:
+                current_resumable = False
+                retry_count -= 1
+            if retry_count >= max_retries:
+                raise Exception(f"上传文件失败（已重试 {max_retries} 次）: {error_msg}")
+            time.sleep(5)
+
+
+async def analyze_audio_from_path(temp_file_path: str, file_filename: str, session_id: Optional[str] = None) -> Tuple[AudioAnalysisResponse, Optional[Call1Response]]:
     """
     从文件路径分析音频文件（内部函数）
+    若文件 > 18MB，自动切分为多个 ≤18MB 片段，分别上传 Gemini 后合并分析。
     
     Args:
         temp_file_path: 临时文件路径
@@ -664,89 +716,78 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tu
         
     Returns:
         元组：(AudioAnalysisResponse, Optional[Call1Response])
-        - AudioAnalysisResponse: 兼容旧版本的分析结果
-        - Call1Response: 新的Call1格式数据（如果解析成功）
     """
     uploaded_file = None
+    uploaded_files_list: List[Any] = []
+    chunk_paths_to_clean: List[str] = []
+    _sid = session_id or "?"
     
     try:
-        logger.info(f"========== 文件上传处理开始 ==========")
-        logger.info(f"文件已保存到临时路径: {temp_file_path}")
+        logger.info(f"[分析-{_sid}-step1] ========== 文件上传处理开始 ==========")
+        logger.info(f"[分析-{_sid}-step1] 文件已保存到临时路径: {temp_file_path}")
         
-        # 上传文件到 Gemini（添加超时和重试机制）
         file_size = os.path.getsize(temp_file_path)
         file_size_mb = file_size / 1024 / 1024
-        logger.info(f"========== 开始上传文件到 Gemini ==========")
-        logger.info(f"文件名: {file_filename}")
-        logger.info(f"文件大小: {file_size} 字节 ({file_size_mb:.2f} MB)")
-        logger.info(f"文件路径: {temp_file_path}")
+        logger.info(f"[分析-{_sid}-step2] 文件名: {file_filename} 大小: {file_size} 字节 ({file_size_mb:.2f} MB)")
         
-        max_retries = 3
-        retry_count = 0
-        uploaded_file = None
-        use_resumable = True  # 先尝试分片上传；若出现解析错误再试简单上传
-        
-        while retry_count < max_retries:
+        no_proxy = os.getenv("GEMINI_FILE_UPLOAD_NO_PROXY", "").lower() == "true"
+        use_resumable = False if no_proxy else True
+        _genai_client = None
+        _old_discovery_url = None
+        if no_proxy:
             try:
-                logger.info(f"尝试上传（第 {retry_count + 1}/{max_retries} 次，resumable={use_resumable}）...")
-                logger.debug(f"调用 genai.upload_file()")
-                logger.debug(f"参数: path={temp_file_path}, display_name={file_filename}")
-                
-                start_upload = time.time()
-                uploaded_file = genai.upload_file(
-                    path=temp_file_path,
-                    display_name=file_filename,
-                    resumable=use_resumable,
-                )
-                upload_time = time.time() - start_upload
-                
-                logger.info(f"✅ 文件上传成功！")
-                logger.info(f"上传的文件名: {uploaded_file.name}")
-                logger.info(f"文件状态: {uploaded_file.state}")
-                logger.info(f"上传耗时: {upload_time:.2f} 秒")
-                break
+                import google.generativeai.client as _genai_client
+                _old_discovery_url = getattr(_genai_client, "GENAI_API_DISCOVERY_URL", None)
+                _genai_client.GENAI_API_DISCOVERY_URL = "https://generativelanguage.googleapis.com/$discovery/rest"
+                logger.info("文件上传已切换为直连 Gemini（GEMINI_FILE_UPLOAD_NO_PROXY=true）")
             except Exception as e:
-                retry_count += 1
-                error_msg = str(e)
-                error_type = type(e).__name__
-                logger.error(f"❌ 上传失败（第 {retry_count}/{max_retries} 次）")
-                logger.error(f"错误类型: {error_type}")
-                logger.error(f"错误信息: {error_msg}")
-                logger.error(f"完整错误堆栈:")
-                logger.error(traceback.format_exc())
-                # 代理/上游返回了非 JSON 或错误结构，SDK 解析时出现 string indices must be integers
-                if "string indices must be integers" in error_msg or "not 'str'" in error_msg:
-                    logger.error(
-                        "可能原因: 代理或 Gemini 返回了 HTML 错误页（如 502）或错误 JSON 结构；"
-                        "已设置文件服务走代理，若仍失败请检查 Nginx 与上游可达性。"
+                logger.warning(f"切换直连失败: {e}，将继续使用代理")
+        
+        upload_timeout = int(os.getenv("GEMINI_UPLOAD_TIMEOUT", "90"))
+        
+        try:
+            if file_size > CHUNK_SIZE_MB * 1024 * 1024:
+                # 大文件：切分为多个 ≤18MB 片段，分别上传后一起传给 Gemini
+                from utils.audio_storage import split_audio_into_chunks
+                logger.info(f"[分析-{_sid}] 大文件（{file_size_mb:.1f} MB > {CHUNK_SIZE_MB} MB），切分后多文件上传")
+                chunks = split_audio_into_chunks(
+                    temp_file_path,
+                    max_chunk_mb=CHUNK_SIZE_MB,
+                    base_name=f"gemini_{_sid[:8]}",
+                )
+                chunk_paths_to_clean = [c[2] for c in chunks]
+                for i, (start_sec, end_sec, chunk_path) in enumerate(chunks):
+                    chunk_name = f"{file_filename}_片段{i+1}"
+                    uf = _upload_single_file_to_gemini(
+                        chunk_path, chunk_name, _sid, no_proxy, use_resumable, upload_timeout
                     )
-                    # 若尚未尝试简单上传，则下次重试改为 resumable=False（避免分片/重定向解析问题）
-                    if use_resumable:
-                        use_resumable = False
-                        logger.info("下次重试将使用 resumable=False（简单上传）")
-                        retry_count -= 1  # 不占重试次数，再试一次
-                if retry_count >= max_retries:
-                    logger.error(f"已达到最大重试次数，放弃上传")
-                    raise Exception(f"上传文件失败（已重试 {max_retries} 次）: {error_msg}")
-                
-                logger.info(f"等待 5 秒后重试...")
-                time.sleep(5)
+                    uf = wait_for_file_active(uf, max_wait_time=600)
+                    uploaded_files_list.append(uf)
+                # 多文件时用统一变量，后续 generate_content 用 contents
+                uploaded_file = uploaded_files_list[0] if uploaded_files_list else None
+            else:
+                # 小文件：单文件上传
+                logger.info(f"[分析-{_sid}-step2] ========== 开始上传文件到 Gemini ==========")
+                uploaded_file = _upload_single_file_to_gemini(
+                    temp_file_path, file_filename, _sid, no_proxy, use_resumable, upload_timeout
+                )
+                logger.info(f"[分析-{_sid}-step5] 等待文件处理完成，当前状态: {uploaded_file.state}")
+                uploaded_file = wait_for_file_active(uploaded_file, max_wait_time=600)
+        finally:
+            if no_proxy and _genai_client is not None and _old_discovery_url is not None:
+                try:
+                    _genai_client.GENAI_API_DISCOVERY_URL = _old_discovery_url
+                    logger.info("已恢复文件服务 discovery URL")
+                except Exception:
+                    pass
         
-        # 等待文件处理完成（最多等待 10 分钟）
-        logger.info(f"========== 等待文件处理完成 ==========")
-        logger.info(f"当前文件状态: {uploaded_file.state}")
-        uploaded_file = wait_for_file_active(uploaded_file, max_wait_time=600)
-        logger.info(f"✅ 文件处理完成，状态: ACTIVE")
+        logger.info(f"[分析-{_sid}-step6] ✅ 文件 ACTIVE，即将调用 generate_content")
         
-        # 配置模型和提示词（可通过 GEMINI_FLASH_MODEL 环境变量覆盖）
         model_name = GEMINI_FLASH_MODEL
-        logger.info(f"========== 配置模型 ==========")
-        logger.info(f"使用模型: {model_name}")
         model = genai.GenerativeModel(model_name)
-        logger.info(f"模型初始化完成")
         
-        # 使用新的提示词（Call #1 - Observer）
-        prompt = """角色: 你是一个专业的语音分析与行为观察专家。
+        # 单文件 / 多文件 共用基础提示词
+        prompt_base = """角色: 你是一个专业的语音分析与行为观察专家。
 
 任务: 请深入解析上传的音频文件，并输出严格格式化的 JSON 数据。
 
@@ -795,33 +836,38 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tu
 
 注意：transcript 数组必须包含所有对话，按时间顺序排列，不要遗漏任何对话。"""
         
+        if len(uploaded_files_list) > 1:
+            # 多文件时附加说明
+            multi_instruction = f"""
+重要：你收到的是同一段录音按时间顺序切分的 {len(uploaded_files_list)} 个连续片段（片段1、2、...、{len(uploaded_files_list)}）。
+请将全部片段作为整体分析，合并输出一个完整的 JSON。
+transcript 中的 timestamp 必须使用相对于整段录音开始的全局时间。
+例如，若片段2对应原录音的 20:00–40:00，则片段2中「00:05」的对话应记为「20:05」。"""
+            prompt = prompt_base + multi_instruction
+        else:
+            prompt = prompt_base
+        
         # 调用模型进行分析（添加重试机制）
         logger.info(f"========== 开始调用 Gemini 模型分析音频 ==========")
-        logger.info(f"模型: {model_name}")
-        logger.info(f"提示词长度: {len(prompt)} 字符")
+        logger.info(f"模型: {model_name} 文件数: {len(uploaded_files_list) or 1}")
         max_retries = 3
         retry_count = 0
         response = None
+        contents = (uploaded_files_list if uploaded_files_list else [uploaded_file]) + [prompt]
         
         while retry_count < max_retries:
             try:
-                logger.info(f"调用模型（第 {retry_count + 1}/{max_retries} 次）...")
-                logger.debug(f"调用 model.generate_content()")
+                logger.info(f"[分析-{_sid}-step7] 调用 generate_content（第 {retry_count + 1}/{max_retries} 次）...")
                 start_generate = time.time()
-                response = model.generate_content([
-                    uploaded_file,
-                    prompt
-                ])
+                response = model.generate_content(contents)
                 generate_time = time.time() - start_generate
-                logger.info(f"✅ 模型调用成功，耗时: {generate_time:.2f} 秒")
+                logger.info(f"[分析-{_sid}-step8] ✅ generate_content 成功，耗时: {generate_time:.2f}s 响应长度: {len(response.text)}")
                 break
             except Exception as e:
                 retry_count += 1
                 error_msg = str(e)
                 error_type = type(e).__name__
-                logger.error(f"❌ 调用模型失败（第 {retry_count}/{max_retries} 次）")
-                logger.error(f"错误类型: {error_type}")
-                logger.error(f"错误信息: {error_msg}")
+                logger.error(f"[分析-{_sid}-step7] ❌ generate_content 失败（第 {retry_count}/{max_retries}）{error_type}: {error_msg}")
                 logger.error(f"完整错误堆栈:")
                 logger.error(traceback.format_exc())
                 if retry_count >= max_retries:
@@ -901,21 +947,28 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str) -> Tu
     except Exception as e:
         error_msg = str(e)
         error_type = type(e).__name__
-        logger.error(f"========== 处理过程中发生错误 ==========")
-        logger.error(f"错误类型: {error_type}")
-        logger.error(f"错误信息: {error_msg}")
-        logger.error(f"完整错误堆栈:")
+        logger.error(f"[分析-{_sid}] ❌ analyze_audio_from_path 异常: {error_type}: {error_msg}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"音频分析失败: {error_msg}")
     
     finally:
         # 删除 Gemini 上的文件
-        if uploaded_file:
+        to_delete = uploaded_files_list if uploaded_files_list else ([uploaded_file] if uploaded_file else [])
+        for uf in to_delete:
+            if uf:
+                try:
+                    genai.delete_file(uf.name)
+                    logger.info(f"已删除 Gemini 文件: {uf.name}")
+                except Exception as e:
+                    logger.error(f"删除 Gemini 文件失败: {e}")
+        # 删除分片临时文件
+        for p in chunk_paths_to_clean:
             try:
-                genai.delete_file(uploaded_file.name)
-                logger.info(f"已删除 Gemini 文件: {uploaded_file.name}")
+                if os.path.exists(p):
+                    os.unlink(p)
+                    logger.info(f"已删除分片临时文件: {p}")
             except Exception as e:
-                logger.error(f"删除 Gemini 文件失败: {e}")
+                logger.warning(f"删除分片临时文件失败: {e}")
 
 
 @app.post("/analyze-audio", response_model=AudioAnalysisResponse)
@@ -1102,11 +1155,9 @@ async def upload_audio_api(
     import asyncio
     from datetime import datetime
     
-    logger.info("========== 收到音频上传请求 ==========")
-    logger.info(f"文件名: {file.filename}")
-    logger.info(f"Content-Type: {file.content_type}")
-    logger.info(f"Title: {title}")
-    logger.info(f"User ID: {user_id}")
+    t_enter = time.time()
+    logger.info("========== [upload] 进入 handler ==========")
+    logger.info(f"文件名: {file.filename} Content-Type: {file.content_type} Title: {title} User: {user_id[:8]}...")
     
     try:
         session_id = str(uuid.uuid4())
@@ -1131,7 +1182,8 @@ async def upload_audio_api(
         db.add(db_session)
         await db.commit()
         await db.refresh(db_session)
-        logger.info(f"数据库Session已创建: {session_id}")
+        t_after_db = time.time() - t_enter
+        logger.info(f"[upload] 数据库Session已创建 session_id={session_id} 耗时={t_after_db:.2f}s")
         
         # 保留内存存储用于向后兼容（可选）
         task_data = {
@@ -1152,10 +1204,13 @@ async def upload_audio_api(
         logger.info(f"任务数据已存储: {session_id}")
         
         # 读取文件内容并保存到临时文件（必须在异步任务之前读取，因为 UploadFile 只能读取一次）
-        logger.info("开始读取文件内容...")
+        # 注意：不限制文件大小，Gemini 支持大文件；Nginx 需配置 client_max_body_size 100M 以上
+        t_before_read = time.time()
+        logger.info("[upload] 开始读取文件内容（await file.read，大文件时此步骤较慢）...")
         file_content = await file.read()
         file_size = len(file_content)
-        logger.info(f"文件内容读取完成，大小: {file_size} 字节 ({file_size / 1024 / 1024:.2f} MB)")
+        t_read_elapsed = time.time() - t_before_read
+        logger.info(f"[upload] 文件读取完成 size={file_size} bytes ({file_size / 1024 / 1024:.2f} MB) 耗时={t_read_elapsed:.2f}s")
         
         file_filename = file.filename or "audio.m4a"
         file_ext = Path(file_filename).suffix.lower() if file_filename else '.m4a'
@@ -1166,8 +1221,7 @@ async def upload_audio_api(
         temp_file.write(file_content)
         temp_file.close()
         temp_file_path = temp_file.name
-        logger.info(f"临时文件已创建: {temp_file_path}")
-        logger.info(f"文件大小: {file_size} 字节 ({file_size / 1024 / 1024:.2f} MB)")
+        logger.info(f"[upload] 临时文件已创建: {temp_file_path}")
         
         # 异步分析（传递临时文件路径和文件名，确保所有参数都正确传递）
         # 注意：不传递db会话，在异步任务中创建新的会话
@@ -1192,12 +1246,9 @@ async def upload_audio_api(
             timestamp=datetime.now().isoformat()
         )
         
-        logger.info("========== 准备返回响应 ==========")
-        logger.info(f"响应码: {api_response.code}")
-        logger.info(f"响应消息: {api_response.message}")
-        logger.info(f"响应数据: {response_data}")
-        logger.info(f"响应对象: {api_response}")
-        logger.info(f"响应字典: {api_response.dict()}")
+        t_total = time.time() - t_enter
+        logger.info(f"[upload] ========== 准备返回响应 总耗时={t_total:.2f}s ==========")
+        logger.info(f"[upload] 响应: code={api_response.code} session_id={session_id}")
         
         # 使用 JSONResponse 确保正确序列化
         return JSONResponse(
@@ -1222,7 +1273,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
     # 创建新的数据库会话（因为原会话可能已关闭）
     async with AsyncSessionLocal() as db:
         try:
-            logger.info(f"========== 开始异步分析音频 ==========")
+            logger.info(f"[分析-{session_id}] ========== 开始异步分析 ==========")
             logger.info(f"session_id: {session_id}")
             logger.info(f"user_id: {user_id}")
             logger.info(f"temp_file_path: {temp_file_path}")
@@ -1241,22 +1292,41 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             if not os.path.exists(temp_file_path):
                 raise FileNotFoundError(f"临时文件不存在: {temp_file_path}")
             
-            # 记录文件大小（不限制）
-            file_size = os.path.getsize(temp_file_path)
-            logger.info(f"文件大小: {file_size} 字节 ({file_size / 1024 / 1024:.2f} MB)")
+            logger.info(f"[分析-{session_id}] step_async1: 分析任务开始，文件大小: {os.path.getsize(temp_file_path)} 字节")
+            # 直接进入 Gemini 分析阶段（原音频不上传阿里云，仅本地存储）
+            _uq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+            _us = _uq.scalar_one_or_none()
+            if _us:
+                _us.analysis_stage = "gemini_analysis"
+                await db.commit()
             
-            # 原音频持久化到 OSS 或本地，供后续剪切与声纹使用
-            audio_url, audio_path = persist_original_audio(session_id, temp_file_path, file_filename or "audio.m4a", user_id)
+            # 原音频持久化到本地（秒级，供剪切与声纹使用；默认不上传 OSS）
+            audio_url, audio_path = await asyncio.to_thread(
+                persist_original_audio, session_id, temp_file_path, file_filename or "audio.m4a", user_id
+            )
             result_query = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
             db_session_audio = result_query.scalar_one_or_none()
             if db_session_audio:
                 db_session_audio.audio_url = audio_url
                 db_session_audio.audio_path = audio_path
                 await db.commit()
-                logger.info(f"Session 已更新原音频: audio_url={bool(audio_url)}, audio_path={bool(audio_path)}")
+                logger.info(f"[分析-{session_id}] Session 已更新原音频: audio_url={bool(audio_url)}, audio_path={bool(audio_path)}")
             
-            # 直接使用临时文件路径调用 analyze_audio_from_path
-            result, call1_result = await analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a")
+            logger.info(f"[分析-{session_id}] step_async2: 本地存储完成，即将调用 Gemini")
+            
+            # 在 executor 中运行 Gemini 分析（避免阻塞事件循环），带 6 分钟超时
+            logger.info(f"[分析-{session_id}] step_async3: 即将调用 analyze_audio_from_path（executor）")
+            def _run_analysis():
+                return asyncio.run(analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a", session_id=session_id))
+            try:
+                result, call1_result = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(None, _run_analysis),
+                    timeout=360.0  # 6 分钟超时，防止 Gemini 上传卡住导致永久 analyzing
+                )
+                logger.info(f"[分析-{session_id}] step_async4: analyze_audio_from_path 返回成功")
+            except asyncio.TimeoutError:
+                logger.error(f"[分析-{session_id}] step_async4: 6 分钟超时！Gemini 分析未在限时内完成")
+                raise Exception("分析超时（6 分钟），可能因 Gemini 文件上传失败或代理不可达，请检查网络/代理配置")
             
             # 使用Call1结果或旧结果
             if call1_result:
@@ -1293,6 +1363,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 db_session.end_time = end_time
                 db_session.duration = duration
                 db_session.status = "archived"
+                db_session.analysis_stage = None  # 完成时清除
                 db_session.error_message = None  # 成功时清除旧失败原因
                 db_session.emotion_score = emotion_score
                 db_session.speaker_count = result.speaker_count
@@ -1315,6 +1386,13 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             await db.commit()
             logger.info(f"分析结果已保存到数据库: {session_id}")
             
+            # 更新进度：声纹匹配
+            _vq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+            _vs = _vq.scalar_one_or_none()
+            if _vs:
+                _vs.analysis_stage = "voiceprint"
+                await db.commit()
+            
             # 分析后流程：按说话人选代表片段 → 声纹识别 → 写 speaker_mapping
             speaker_mapping = {}
             has_audio = bool(audio_url or audio_path)
@@ -1325,8 +1403,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 logger.info(f"[声纹] session_id={session_id} 无原音频 URL/路径，跳过声纹匹配")
             if transcript and has_audio:
                 try:
-                    from utils.audio_storage import get_session_audio_local_path, cut_audio_segment
-                    from services.voiceprint_service import identify_speaker
+                    from utils.audio_storage import get_session_audio_local_path
                     def _ts_to_sec(ts):
                         if not ts:
                             return 0.0
@@ -1355,45 +1432,36 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                     if not local_path:
                         logger.warning(f"[声纹] session_id={session_id} 无法获取本地音频（下载或路径失败），跳过声纹匹配")
                     if local_path:
-                        profile_result = await db.execute(select(Profile.id).where(Profile.user_id == uuid.UUID(user_id)))
+                        profile_result = await db.execute(
+                            select(Profile.id, Profile.relationship_type).where(Profile.user_id == uuid.UUID(user_id))
+                        )
                         _rows = profile_result.all()
                         profile_ids = [str(row[0]) for row in _rows]
-                        logger.info(f"[声纹] session_id={session_id} 当前用户档案数 profile_count={len(profile_ids)} profile_ids={profile_ids[:5]}{'...' if len(profile_ids) > 5 else ''}")
+                        self_profile_id = None
+                        for row in _rows:
+                            rel = row[1] if len(row) > 1 else None
+                            if rel == "自己":
+                                self_profile_id = str(row[0])
+                                break
+                        logger.info(f"[声纹] session_id={session_id} 当前用户档案数 profile_count={len(profile_ids)} self_profile_id={self_profile_id}")
                         if not profile_ids:
                             logger.warning(f"[声纹] session_id={session_id} 当前用户无档案，跳过声纹匹配")
-                        # 占位：仅 1 个说话人且 1 个档案时直接映射，避免依赖剪切/ffmpeg
-                        if len(first_segment) == 1 and len(profile_ids) == 1:
+                        # 占位：仅 1 个说话人且 1 个档案时直接映射
+                        elif len(first_segment) == 1 and len(profile_ids) == 1:
                             only_sp = next(iter(first_segment.keys()))
                             speaker_mapping[only_sp] = profile_ids[0]
                             logger.info(f"[声纹] 占位单说话人单档案: {only_sp} -> {profile_ids[0]}")
                         else:
-                            for sp, (start_sec, end_sec) in first_segment.items():
-                                try:
-                                    logger.info(f"[声纹] 开始剪切 speaker={sp} start_sec={start_sec} end_sec={end_sec}")
-                                    segment_bytes = cut_audio_segment(local_path, start_sec, end_sec)
-                                    logger.info(f"[声纹] 剪切成功 speaker={sp} bytes={len(segment_bytes)}")
-                                    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".m4a")
-                                    tmp.write(segment_bytes)
-                                    tmp_path = tmp.name
-                                    tmp.close()
-                                    try:
-                                        matched_id, conf = identify_speaker(tmp_path, user_id, profile_ids, speaker_label=sp)
-                                        logger.info(f"[声纹] identify 返回 speaker={sp} matched_id={matched_id} conf={conf}")
-                                        if matched_id is not None and conf > 0.5:
-                                            speaker_mapping[sp] = str(matched_id)
-                                            logger.info(f"声纹匹配: {sp} -> profile_id={speaker_mapping[sp]} confidence={conf}")
-                                    finally:
-                                        if os.path.isfile(tmp_path):
-                                            os.unlink(tmp_path)
-                                except Exception as e:
-                                    logger.warning(f"声纹匹配失败 speaker={sp}: {type(e).__name__} {e}", exc_info=True)
-                        # 降级：多人时若剪切/识别全部失败，仍按顺序做占位映射，保证前端有“谁对应哪档案”
-                        if not speaker_mapping and profile_ids and first_segment:
-                            speakers_ordered = sorted(first_segment.keys())
-                            for idx, sp in enumerate(speakers_ordered):
-                                profile_idx = idx % len(profile_ids)
-                                speaker_mapping[sp] = profile_ids[profile_idx]
-                            logger.info(f"[声纹] 降级占位映射(剪切/识别失败): {speaker_mapping}")
+                            # 多人：利用 is_me 映射「自己」，其余不盲映射（避免新人误标为其他档案）
+                            speaker_with_is_me = None
+                            for t in transcript:
+                                if t.get("is_me") is True:
+                                    speaker_with_is_me = t.get("speaker")
+                                    break
+                            if self_profile_id and speaker_with_is_me:
+                                speaker_mapping[speaker_with_is_me] = self_profile_id
+                                logger.info(f"[声纹] 利用 is_me 映射自己: {speaker_with_is_me} -> {self_profile_id}")
+                            # 非 is_me 的说话人（如新人）不再做盲映射
                         if is_temp and os.path.isfile(local_path):
                             try:
                                 os.unlink(local_path)
@@ -1457,6 +1525,33 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 except Exception as e:
                     logger.warning(f"第二次 Gemini 总结失败: {e}", exc_info=True)
             
+            # v0.6 记忆提取（B 钩子）：档案匹配完成后写入 Mem0
+            if speaker_mapping and conversation_summary and profile_names:
+                logger.info(f"[记忆] B 钩子触发: session_id={session_id} speaker_mapping={speaker_mapping} profile_names_keys={list(profile_names.keys())}")
+                try:
+                    from services.memory_service import build_memory_payload, add_memory
+                    payload = build_memory_payload(
+                        transcript, conversation_summary, speaker_mapping, profile_names
+                    )
+                    metadata = {
+                        "session_id": session_id,
+                        "profile_ids": list(speaker_mapping.values()),
+                    }
+                    logger.info(f"[记忆] B 钩子调用 add_memory: session_id={session_id} payload_len={len(payload)}")
+                    # 同步 add_memory 在线程中执行，避免阻塞事件循环
+                    ok = await asyncio.to_thread(
+                        add_memory,
+                        payload,
+                        user_id,
+                        metadata=metadata,
+                        enable_graph=True,
+                    )
+                    logger.info(f"[记忆] B 钩子 add_memory 结果: session_id={session_id} success={ok}")
+                except Exception as mem_err:
+                    logger.warning(f"[记忆] B 钩子写入失败: session_id={session_id} error={mem_err}", exc_info=True)
+            else:
+                logger.info(f"[记忆] B 钩子跳过: session_id={session_id} speaker_mapping={bool(speaker_mapping)} conversation_summary={bool(conversation_summary)} profile_names={bool(profile_names)}")
+            
             # 存储分析结果到内存（向后兼容）
             analysis_storage[session_id] = {
                 "dialogues": [d.dict() for d in result.dialogues],
@@ -1475,10 +1570,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             asyncio.create_task(generate_strategies_async(session_id, user_id))
             
         except Exception as e:
-            logger.error(f"========== 分析音频失败 ==========")
-            logger.error(f"session_id: {session_id}")
-            logger.error(f"错误类型: {type(e).__name__}")
-            logger.error(f"错误信息: {str(e)}")
+            logger.error(f"[分析-{session_id}] ❌ 分析音频失败: {type(e).__name__}: {str(e)}")
             logger.error(traceback.format_exc())
             
             # 更新内存存储
@@ -1493,6 +1585,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 db_session = result_query.scalar_one_or_none()
                 if db_session:
                     db_session.status = "failed"
+                    db_session.analysis_stage = "failed"
                     db_session.error_message = err_msg
                     await db.commit()
                     logger.info(f"数据库Session状态已更新为 failed: {session_id}")
@@ -1522,8 +1615,11 @@ async def get_task_list(
     """获取任务列表（需要JWT认证，仅返回当前用户的任务）"""
     from datetime import datetime
     
+    t_start = time.time()
+    logger.info(f"[任务列表] 进入 handler user_id={user_id[:8]}... page={page} page_size={page_size}")
     try:
         # 从数据库查询当前用户的任务
+        t0 = time.time()
         query = select(Session).where(Session.user_id == uuid.UUID(user_id))
         
         if date:
@@ -1541,6 +1637,9 @@ async def get_task_list(
         query = query.offset((page - 1) * page_size).limit(page_size + 1)
         result = await db.execute(query)
         sessions = result.scalars().all()
+        db_elapsed = time.time() - t0
+        if db_elapsed > 2.0:
+            logger.warning(f"[任务列表] Session 查询耗时 {db_elapsed:.2f}s count={len(sessions)}")
         has_more = len(sessions) > page_size
         if has_more:
             sessions = sessions[:page_size]
@@ -1560,6 +1659,8 @@ async def get_task_list(
             for s in sessions
         ]
         
+        total_elapsed = time.time() - t_start
+        logger.info(f"[任务列表] 完成 total={total_elapsed:.2f}s sessions={len(task_items)}")
         return APIResponse(
             code=200,
             message="success",
@@ -1621,7 +1722,53 @@ async def get_task_detail(
             speaker_mapping = analysis_result.speaker_mapping if isinstance(analysis_result.speaker_mapping, dict) else None
             conversation_summary = getattr(analysis_result, "conversation_summary", None) or None
             name_to_display = {}  # 档案名/角色名 -> 展示格式，用于替换 Gemini 直接写出的角色名（如梁致远）
-            if speaker_mapping:
+            speaker_names = None
+
+            # 解析 transcript（来自 transcript 字段或 call1_result）
+            transcript = []
+            if getattr(analysis_result, "transcript", None):
+                try:
+                    transcript = json.loads(analysis_result.transcript) if isinstance(analysis_result.transcript, str) else (analysis_result.transcript or [])
+                except Exception:
+                    transcript = []
+            if not transcript and getattr(analysis_result, "call1_result", None):
+                call1 = analysis_result.call1_result
+                if isinstance(call1, dict) and "transcript" in call1:
+                    transcript = call1.get("transcript") or []
+
+            # 优先使用 transcript + is_me 计算正确的 speaker_names（修复旧任务错误映射）
+            self_profile_id = None
+            self_display = None
+            profile_rows = await db.execute(
+                select(Profile.id, Profile.name, Profile.relationship_type).where(Profile.user_id == uuid.UUID(user_id))
+            )
+            for row in profile_rows.all():
+                rel = getattr(row, "relationship_type", None) or (row[2] if len(row) > 2 else None)
+                if rel == "自己":
+                    self_profile_id = str(getattr(row, "id", row[0]))
+                    name = getattr(row, "name", None) or (row[1] if len(row) > 1 else None) or "未知"
+                    self_display = f"{name}（自己）"
+                    if name and name.strip():
+                        name_to_display[name.strip()] = self_display
+                        if "志" in name or "致" in name:
+                            alt = name.replace("志", "致") if "志" in name else name.replace("致", "志")
+                            if alt != name:
+                                name_to_display[alt.strip()] = self_display
+                    break
+
+            if transcript and self_profile_id and self_display:
+                # 从 transcript 找 is_me=true 的 speaker，仅映射「自己」，其余保持 Speaker_X
+                speaker_with_is_me = None
+                for t in transcript:
+                    if t.get("is_me") is True:
+                        speaker_with_is_me = t.get("speaker")
+                        break
+                if speaker_with_is_me:
+                    speaker_names = {speaker_with_is_me: self_display}
+                    # 非 is_me 的说话人不映射，_speaker_to_display 会返回原 speaker_val（如 Speaker_0）
+                    logger.info(f"[任务详情] session={session_id} 使用 transcript+is_me 计算 speaker_names: {speaker_names}，未映射者显示为 Speaker_X")
+            elif speaker_mapping and not speaker_names:
+                # 无 transcript/is_me 时回退到 speaker_mapping（兼容旧逻辑）
                 profile_ids_in_mapping = list(speaker_mapping.values())
                 if profile_ids_in_mapping:
                     try:
@@ -1631,7 +1778,6 @@ async def get_task_detail(
                                 Profile.id.in_([uuid.UUID(pid) for pid in profile_ids_in_mapping])
                             )
                         )
-                        # 展示格式：档案名（关系），如 张三（自己）
                         id_to_display = {}
                         for row in profile_res.all():
                             name = row.name or "未知"
@@ -1640,7 +1786,6 @@ async def get_task_detail(
                             id_to_display[str(row.id)] = display
                             if name and name.strip():
                                 name_to_display[name.strip()] = display
-                                # 常见同音/形近字变体：梁致远/梁志远，Gemini 可能用剧本角色名，用户档案用另一写法
                                 if "志" in name or "致" in name:
                                     alt = name.replace("志", "致") if "志" in name else name.replace("致", "志")
                                     if alt != name:
@@ -1759,11 +1904,23 @@ async def get_task_status(
             raise HTTPException(status_code=404, detail="任务不存在")
         
         status_value = db_session.status or "unknown"
+        analysis_stage = getattr(db_session, "analysis_stage", None) or ""
+        
+        # 根据阶段估算进度与剩余时间
+        if status_value == "archived":
+            progress_val, eta = 1.0, 0
+        elif status_value == "failed":
+            progress_val, eta = 0.0, 0
+        else:
+            stage_map = {"gemini_analysis": (0.5, 45), "voiceprint": (0.9, 10)}
+            progress_val, eta = stage_map.get(analysis_stage, (0.3, 60))
+        
         payload = {
             "session_id": session_id,
             "status": status_value,
-            "progress": 1.0 if status_value == "archived" else 0.5,
-            "estimated_time_remaining": 0 if status_value == "archived" else 30,
+            "progress": progress_val,
+            "estimated_time_remaining": eta,
+            "analysis_stage": analysis_stage,
             "updated_at": db_session.updated_at.isoformat() if db_session.updated_at else ""
         }
         if status_value == "failed" and getattr(db_session, "error_message", None):
@@ -1883,13 +2040,44 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         for skill in matched_skills:
             logger.info(f"  ✅ 技能: {skill['skill_id']} (名称: {skill.get('name', 'N/A')}, priority={skill['priority']}, confidence={skill['confidence']:.2f})")
         
+        # 2.2b v0.6 记忆检索：为技能注入相关记忆
+        memory_context = ""
+        try:
+            logger.info(f"[记忆] 开始检索: session_id={session_id} user_id={user_id}")
+            ar_query = await db.execute(
+                select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+            )
+            ar_row = ar_query.scalar_one_or_none()
+            if ar_row:
+                search_query = getattr(ar_row, "conversation_summary", None) or ar_row.summary or ""
+                if not search_query and transcript:
+                    search_query = " ".join((t.get("text", "") or "")[:100] for t in transcript[:5])
+                logger.info(f"[记忆] 检索 query 来源: conversation_summary={bool(getattr(ar_row, 'conversation_summary', None))} summary={bool(ar_row.summary)} search_query_len={len(search_query)}")
+                if search_query:
+                    from services.memory_service import search_memory
+                    mem_results = await asyncio.to_thread(
+                        search_memory, search_query, user_id, limit=5
+                    )
+                    if mem_results:
+                        memory_context = "\n".join(f"- {m}" for m in mem_results)
+                        logger.info(f"[记忆] 检索成功注入技能: session_id={session_id} 命中={len(mem_results)} 条 context_len={len(memory_context)}")
+                    else:
+                        logger.info(f"[记忆] 检索无命中: session_id={session_id}")
+                else:
+                    logger.info(f"[记忆] 检索跳过: search_query 为空 session_id={session_id}")
+            else:
+                logger.info(f"[记忆] 检索跳过: 无 AnalysisResult session_id={session_id}")
+        except Exception as mem_err:
+            logger.warning(f"[记忆] 检索失败: session_id={session_id} error={mem_err}", exc_info=True)
+        context = {
+            "session_id": session_id,
+            "user_id": user_id,
+            "memory_context": memory_context or "",
+        }
+        
         # 2.3 技能执行：transcript + 技能 prompt -> Gemini -> 策略与视觉描述
         logger.info("[策略流程] 步骤2.3: 技能执行(transcript+技能prompt->Gemini)...")
         skill_results = []
-        context = {
-            "session_id": session_id,
-            "user_id": user_id
-        }
         
         # 并行执行所有技能
         execution_tasks = []
@@ -1997,6 +2185,35 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         
         call2_result.visual = updated_visual_list
         logger.info(f"[策略流程] 步骤2.3b: 图片生成完成")
+        
+        # v0.6 记忆补充（C 钩子）：策略文本写入 Mem0
+        if call2_result.strategies:
+            logger.info(f"[记忆] C 钩子触发: session_id={session_id} 策略数={len(call2_result.strategies)}")
+            try:
+                from services.memory_service import add_memory
+                strategy_text = "\n\n".join(
+                    f"[{s.title}] {s.content}" for s in call2_result.strategies
+                )
+                ar_q = await db.execute(
+                    select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+                )
+                ar = ar_q.scalar_one_or_none()
+                profile_ids = []
+                if ar and isinstance(getattr(ar, "speaker_mapping", None), dict):
+                    profile_ids = list(ar.speaker_mapping.values())
+                skill_ids = [s["skill_id"] for s in skill_results if s.get("success")]
+                metadata = {"session_id": session_id, "profile_ids": profile_ids}
+                if skill_ids:
+                    metadata["skill_ids"] = skill_ids
+                logger.info(f"[记忆] C 钩子调用 add_memory: session_id={session_id} strategy_text_len={len(strategy_text)} metadata={metadata}")
+                ok = await asyncio.to_thread(
+                    add_memory, strategy_text, user_id, metadata=metadata, enable_graph=True
+                )
+                logger.info(f"[记忆] C 钩子 add_memory 结果: session_id={session_id} success={ok}")
+            except Exception as mem_err:
+                logger.warning(f"[记忆] C 钩子写入失败: session_id={session_id} error={mem_err}", exc_info=True)
+        else:
+            logger.info(f"[记忆] C 钩子跳过: session_id={session_id} strategies 为空")
         
         # 6. 保存策略分析到数据库（若此处或 commit 后报 PG type 114，说明 strategy_analysis 表列为 json 未改为 jsonb）
         logger.info("[策略流程] 步骤2.4: 写入策略分析到数据库(StrategyAnalysis)...")

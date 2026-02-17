@@ -1,0 +1,75 @@
+# 在阿里云 Workbench 中部署 main.py（移除 25 MB 限制）
+
+## 问题
+
+上传 63.9 MB 录音时返回：
+> 上传失败: 413: 录音过长（63.9 MB），当前限制 25 MB。请录制 20 分钟以内的音频。
+
+说明服务器上的 main.py 仍包含 25 MB 限制。本地 main.py 已无此限制，需部署到服务器。
+
+---
+
+## 方式一：本机 scp 上传（若 SSH 可用）
+
+在本地终端执行：
+```bash
+cd /Users/liudan/Desktop/AI军师/gemini-audio-service
+scp -o ConnectTimeout=25 main.py admin@47.79.254.213:~/gemini-audio-service/
+```
+
+上传成功后，在 Workbench 终端执行下方「重启命令」。
+
+---
+
+## 方式二：Workbench 手动部署
+
+若 scp 超时，可用以下任一方式把 main.py 传到服务器：
+
+### 2a. Workbench 文件上传
+
+1. 阿里云控制台 → ECS → 实例 → 远程连接 → Workbench
+2. 进入 Workbench 后，看是否有「上传文件」或类似功能
+3. 上传本地的 `main.py` 到 `~/gemini-audio-service/` 目录
+
+### 2b. Git 拉取（若服务器已配 git 且代码已推送）
+
+在 Workbench 终端执行：
+```bash
+cd ~/gemini-audio-service
+git pull origin main   # 或你的主分支名
+```
+
+---
+
+## 重启命令（在 Workbench 终端执行）
+
+复制下面整段到 Workbench 终端执行：
+
+```bash
+cd ~/gemini-audio-service
+echo "========== 重启服务 =========="
+pkill -f "uvicorn main:app" 2>/dev/null || true
+sleep 3
+nohup venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2 >> ~/gemini-audio-service.log 2>&1 &
+sleep 6
+curl -s --max-time 5 http://127.0.0.1:8000/health && echo "" && echo "✅ 服务已重启"
+```
+
+---
+
+## 验证
+
+1. 健康检查：`curl -s http://127.0.0.1:8000/health` 应返回 `{"message":"...","status":"ok"}`
+2. 使用 iOS 客户端重新上传 63.9 MB 录音，应不再出现 25 MB 限制错误。
+
+---
+
+## 若仍提示 25 MB 限制
+
+说明服务器上的 main.py 未被正确覆盖。请在 Workbench 终端执行：
+
+```bash
+grep -n "25\|录音过长\|MAX_AUDIO" ~/gemini-audio-service/main.py
+```
+
+把输出结果发给开发者，以便针对性移除限制逻辑。

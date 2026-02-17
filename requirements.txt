@@ -13,3 +13,6 @@ passlib[bcrypt]>=1.7.4
 pyyaml>=6.0.0
 pydub>=0.25.0
 
+# v0.6 记忆与知识图谱 (Mem0 + Qdrant 本地向量；Kuzu 图库可选，需 cmake)
+mem0ai>=0.1.0
+# 安装 mem0ai[graph] 可启用 Kuzu 图存储，需 cmake；否则仅向量检索

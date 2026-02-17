@@ -138,6 +138,12 @@ struct LoginView: View {
                     }
                     .disabled(phoneText.count != 11 || codeText.count != 6 || viewModel.isLoading)
                     .padding(.top, 10)
+                    
+                    // 注册入口
+                    NavigationLink("没有账号？去注册", destination: RegisterView())
+                        .font(.system(size: 14))
+                        .foregroundColor(.blue)
+                        .padding(.top, 16)
                 }
                 .padding(.horizontal, 24)
                 
