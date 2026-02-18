@@ -235,7 +235,8 @@ class TaskListViewModel: ObservableObject {
                     status: apiTask.status,
                     emotionScore: apiTask.emotionScore,
                     speakerCount: apiTask.speakerCount,
-                    summary: existingSummary
+                    summary: existingSummary,
+                    coverImageUrl: apiTask.coverImageUrl
                 )
             } else {
                 // API 任务有 summary 或本地也没有，直接使用 API 任务
@@ -286,7 +287,8 @@ class TaskListViewModel: ObservableObject {
                                             status: task.status,
                                             emotionScore: task.emotionScore,
                                             speakerCount: task.speakerCount,
-                                            summary: detail.summary
+                                            summary: detail.summary,
+                                            coverImageUrl: task.coverImageUrl
                                         )
                                         self.tasks[index] = updatedTask
                                         print("✅ [TaskListViewModel] 已为任务 \(task.id) 补充summary并缓存详情")

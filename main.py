@@ -1207,6 +1207,8 @@ class TaskItem(BaseModel):
     status: str
     emotion_score: Optional[int] = None
     speaker_count: Optional[int] = None
+    summary: Optional[str] = None  # 对话总结，来自 AnalysisResult
+    cover_image_url: Optional[str] = None  # 策略分析首图 URL，来自 StrategyAnalysis.visual_data[0]
 
 
 class TaskListResponse(BaseModel):
@@ -1791,6 +1793,27 @@ async def get_task_list(
         if has_more:
             sessions = sessions[:page_size]
         
+        session_ids = [str(s.id) for s in sessions]
+        summary_map = {}
+        cover_map = {}
+        
+        if session_ids:
+            ar_result = await db.execute(select(AnalysisResult).where(AnalysisResult.session_id.in_([uuid.UUID(sid) for sid in session_ids])))
+            for ar in ar_result.scalars().all():
+                summary_map[str(ar.session_id)] = ar.summary
+            sa_result = await db.execute(select(StrategyAnalysis).where(StrategyAnalysis.session_id.in_([uuid.UUID(sid) for sid in session_ids])))
+            api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213")
+            api_base = api_base.rstrip("/")
+            for sa in sa_result.scalars().all():
+                sid = str(sa.session_id)
+                vd = sa.visual_data
+                if isinstance(vd, list) and len(vd) > 0:
+                    first_v = vd[0] if isinstance(vd[0], dict) else getattr(vd[0], "__dict__", {})
+                    img_url = first_v.get("image_url") if isinstance(first_v, dict) else getattr(first_v, "image_url", None)
+                    if img_url:
+                        # 统一走代理 API（需 JWT），避免 OSS 私有 URL 直接访问 403
+                        cover_map[sid] = f"{api_base}/api/v1/images/{sid}/0"
+        
         task_items = [
             TaskItem(
                 session_id=str(s.id),
@@ -1801,7 +1824,9 @@ async def get_task_list(
                 tags=s.tags or [],
                 status=s.status or "unknown",
                 emotion_score=s.emotion_score,
-                speaker_count=s.speaker_count
+                speaker_count=s.speaker_count,
+                summary=summary_map.get(str(s.id)),
+                cover_image_url=cover_map.get(str(s.id))
             )
             for s in sessions
         ]

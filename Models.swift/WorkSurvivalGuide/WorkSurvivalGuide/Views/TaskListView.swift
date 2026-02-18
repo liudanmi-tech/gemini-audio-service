@@ -76,18 +76,26 @@ struct TaskListView: View {
                     Spacer()
                 } else {
                     ScrollView {
-                        LazyVStack(spacing: 30) { // 卡片间距改为 30 像素
+                        LazyVStack(alignment: .leading, spacing: 24) {
                             // 按天分组显示
                             ForEach(Array(viewModel.groupedTasks.keys.sorted(by: >)), id: \.self) { dateKey in
-                                VStack(alignment: .leading, spacing: 30) { // 同一天内多个卡片间距改为 30 像素
-                                    // 该分组下的任务卡片
-                                    ForEach(viewModel.groupedTasks[dateKey] ?? []) { task in
-                                        TaskCardRow(task: task)
-                                            .padding(.horizontal, 19.99) // 精确按照 Figma: padding: 0px 19.992115020751953px
+                                VStack(alignment: .leading, spacing: 12) {
+                                    // 日期分组标题
+                                    Text(viewModel.groupTitle(for: dateKey))
+                                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                                        .foregroundColor(AppColors.headerText.opacity(0.7))
+                                        .padding(.horizontal, 4)
+                                    
+                                    // 单列布局
+                                    VStack(spacing: 12) {
+                                        ForEach(viewModel.groupedTasks[dateKey] ?? []) { task in
+                                            TaskCardRow(task: task)
+                                        }
                                     }
                                 }
                             }
                         }
+                        .padding(.horizontal, 16)
                         .padding(.top, 0)
                         .padding(.bottom, 100) // 为底部悬浮按钮留出空间
                     }
