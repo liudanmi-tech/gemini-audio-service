@@ -1,0 +1,53 @@
+# 在阿里云 Workbench 中复制下面整段到终端执行
+# 阿里云控制台 → ECS 实例 → 远程连接 → Workbench → 粘贴执行
+# 用于诊断 session ff15831b 图片不显示问题
+
+cd ~/gemini-audio-service && source venv/bin/activate
+
+export SESSION_ID="ff15831b-523a-428a-8aeb-009ba63a9e9a"
+
+echo "========== 图片不显示诊断 session=$SESSION_ID =========="
+echo ""
+
+echo "=== 1. 数据库 strategy_analysis visual_data ==="
+python3 -c "
+import asyncio, sys, uuid
+async def run():
+    from dotenv import load_dotenv
+    load_dotenv()
+    from sqlalchemy import select
+    from database.connection import AsyncSessionLocal
+    from database.models import StrategyAnalysis, Session
+    sid = '$SESSION_ID'
+    async with AsyncSessionLocal() as db:
+        r = await db.execute(select(Session).where(Session.id == uuid.UUID(sid)))
+        if not r.scalar_one_or_none():
+            print('❌ session 不存在'); return
+        r = await db.execute(select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(sid)))
+        sa = r.scalar_one_or_none()
+        if not sa:
+            print('❌ 未找到 strategy_analysis'); return
+        print('✅ 找到 strategy_analysis, visual 数量:', len(sa.visual_data or []))
+        for i, v in enumerate(sa.visual_data or []):
+            vd = v if isinstance(v, dict) else {}
+            hu = bool(vd.get('image_url')); hb = bool(vd.get('image_base64'))
+            bl = len(vd.get('image_base64') or '')
+            u = (vd.get('image_url') or '')[:80]
+            print('  visual[%d]: image_url=%s image_base64=%s b64_len=%d' % (i, hu, hb, bl))
+            if u: print('    url前80: %s...' % u)
+asyncio.run(run())
+"
+
+echo ""
+echo "=== 2. 最近策略/图片相关日志 ==="
+tail -300 ~/gemini-audio-service.log 2>/dev/null | grep -E "\[策略-图片\]|\[策略返回\]|策略流程.*步骤0|visual\[" | tail -25
+
+echo ""
+echo "=== 3. 健康检查 ==="
+curl -sf --max-time 5 http://127.0.0.1:8000/health && echo " OK" || echo " FAIL"
+
+echo ""
+echo "=== 4. 结论与建议 ==="
+echo "若 image_url 为空且有 image_base64 → 前端已支持 Base64，请更新 iOS 并重装/刷新"
+echo "若 image_url 为 OSS 路径 → 需通过 API 访问，前端会转为 /api/v1/images/{session}/{index}"
+echo "若 visual 为空 → 需重新触发策略分析"

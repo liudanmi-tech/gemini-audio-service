@@ -480,32 +480,36 @@ struct SceneRestoreImageView: View {
     let visualData: VisualData
     let baseURL: String
     
+    @ViewBuilder
+    private var imageFromBase64Placeholder: some View {
+        if let b64 = visualData.imageBase64, !b64.isEmpty,
+           let data = Data(base64Encoded: b64),
+           let uiImage = UIImage(data: data) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .aspectRatio(contentMode: .fill)
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .clipped()
+        } else {
+            Color(hex: "#F9FAFB")
+        }
+    }
+    
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            // 图片背景
-            if let imageURL = visualData.getAccessibleImageURL(baseURL: baseURL) {
-                AsyncImage(url: URL(string: imageURL)) { phase in
-                    switch phase {
-                    case .empty:
-                        Color(hex: "#F9FAFB") // 根据Figma: #F9FAFB
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                    case .failure:
-                        Color(hex: "#F9FAFB")
-                    @unknown default:
-                        Color(hex: "#F9FAFB")
-                    }
+            // 图片区域：严格限制在占位区内，填满且不超出
+            Group {
+                if let imageURL = visualData.getAccessibleImageURL(baseURL: baseURL) {
+                    ImageLoaderView(imageUrl: imageURL, imageBase64: visualData.imageBase64, placeholder: "加载中", contentMode: .fill)
+                } else if let b64 = visualData.imageBase64, !b64.isEmpty {
+                    imageFromBase64Placeholder
+                } else {
+                    Color(hex: "#F9FAFB")
                 }
-                .frame(maxWidth: .infinity)
-                .aspectRatio(1, contentMode: .fill) // 使用fill以填充整个区域
-                .clipped()
-            } else {
-                Color(hex: "#F9FAFB")
-                    .frame(maxWidth: .infinity)
-                    .aspectRatio(1, contentMode: .fill)
             }
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+            .aspectRatio(1, contentMode: .fill)
+            .clipped()
             
             // 底部渐变遮罩
             LinearGradient(
@@ -516,12 +520,12 @@ struct SceneRestoreImageView: View {
                 startPoint: .bottom,
                 endPoint: .top
             )
-            .frame(maxWidth: .infinity)
+            .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
             .aspectRatio(1, contentMode: .fill)
+            .allowsHitTesting(false)
             
             // 底部文字内容
             VStack(alignment: .leading, spacing: 3.998422622680664) { // 根据Figma: gap 3.99px
-                // "场景还原"标签
                 Text("场景还原")
                     .font(.system(size: 12, weight: .bold, design: .rounded)) // Nunito 700, 12px
                     .foregroundColor(.white)
@@ -530,7 +534,6 @@ struct SceneRestoreImageView: View {
                     .background(Color.black.opacity(0.5)) // 根据Figma: rgba(0, 0, 0, 0.5)
                     .cornerRadius(4) // 根据Figma: borderRadius 4px
                 
-                // 引号文字
                 Text("\"\(visualData.context)\"")
                     .font(.system(size: 18, weight: .bold, design: .rounded)) // Nunito 700, 18px
                     .foregroundColor(.white)
@@ -540,7 +543,8 @@ struct SceneRestoreImageView: View {
             .padding(.bottom, 24) // 底部内边距
         }
         .frame(maxWidth: .infinity)
-        .aspectRatio(1, contentMode: .fit) // 保持1:1比例，使用fit确保不超出
+        .aspectRatio(1, contentMode: .fit) // 1:1 方框，不超出父容器
+        .clipped()
         .cornerRadius(24)
     }
 }

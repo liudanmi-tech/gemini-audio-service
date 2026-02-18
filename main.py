@@ -422,17 +422,14 @@ def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image
         logger.info(f"上传图片到 OSS: {oss_key}")
         logger.info(f"图片大小: {len(image_bytes)} 字节")
         
-        # 上传图片到 OSS，设置ACL为公共读，允许客户端直接访问
+        # 上传图片到 OSS（不设置 x-oss-object-acl，避免 bucket 策略导致 "Put public object acl is not allowed" 403）
+        # 图片保持私有，客户端通过后端 API GET /api/v1/images/{session_id}/{image_index} 访问
         start_time = time.time()
-        headers = {
-            'Content-Type': 'image/png',
-            'x-oss-object-acl': 'public-read'  # 设置对象为公共读
-        }
+        headers = {'Content-Type': 'image/png'}
         oss_bucket.put_object(oss_key, image_bytes, headers=headers)
         upload_time = time.time() - start_time
         
         logger.info(f"✅ 图片上传成功，耗时: {upload_time:.2f} 秒")
-        logger.info(f"✅ 图片已设置为公共读权限")
         
         # 构建图片 URL
         if OSS_CDN_DOMAIN:
@@ -2184,7 +2181,9 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
                 updated_visual_list.append(visual_data)
         
         call2_result.visual = updated_visual_list
-        logger.info(f"[策略流程] 步骤2.3b: 图片生成完成")
+        url_count = sum(1 for v in updated_visual_list if getattr(v, "image_url", None))
+        b64_count = sum(1 for v in updated_visual_list if getattr(v, "image_base64", None))
+        logger.info(f"[策略流程] 步骤2.3b: 图片生成完成 session_id={session_id} 共{len(updated_visual_list)}个 含image_url={url_count} 含image_base64={b64_count}")
         
         # v0.6 记忆补充（C 钩子）：策略文本写入 Mem0
         if call2_result.strategies:
@@ -2407,7 +2406,12 @@ async def generate_strategies(
             logger.info(f"从数据库读取已生成的策略分析: {session_id}")
             # 构建返回数据
             visual_list = []
-            for v in existing_strategy.visual_data:
+            for idx, v in enumerate(existing_strategy.visual_data):
+                vdict = v if isinstance(v, dict) else (v.__dict__ if hasattr(v, '__dict__') else {})
+                has_url = bool(vdict.get("image_url"))
+                has_b64 = bool(vdict.get("image_base64"))
+                b64_len = len(vdict.get("image_base64") or "")
+                logger.info(f"[策略-图片] session_id={session_id} visual[{idx}] image_url={has_url} image_base64={bool(has_b64)} b64_len={b64_len}")
                 visual_list.append(VisualData(**v))
             
             strategies_list = []
@@ -2426,6 +2430,12 @@ async def generate_strategies(
             scene_confidence = existing_strategy.scene_confidence
             
             logger.info(f"技能信息: applied_skills={applied_skills}, scene_category={scene_category}, scene_confidence={scene_confidence}")
+            # 日志：返回给前端的 visual 中每个的 image_url / image_base64 情况
+            for idx, v in enumerate(result_dict.get("visual", [])):
+                vd = v if isinstance(v, dict) else (getattr(v, "__dict__", {}) or {})
+                url_present = bool(vd.get("image_url"))
+                b64_present = bool(vd.get("image_base64"))
+                logger.info(f"[策略返回] session_id={session_id} visual[{idx}] 返回image_url={url_present} image_base64={b64_present}")
             
             result_dict["applied_skills"] = applied_skills
             result_dict["scene_category"] = scene_category

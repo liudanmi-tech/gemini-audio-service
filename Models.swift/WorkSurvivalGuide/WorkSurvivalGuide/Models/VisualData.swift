@@ -120,18 +120,22 @@ extension VisualData {
         }
         
         // 如果是 OSS URL，提取 session_id 和 image_index，转换为后端 API URL
-        // OSS URL 格式: https://geminipicture2.oss-cn-beijing.aliyuncs.com/images/{session_id}/{image_index}.png
-        // 后端 API URL 格式: {baseURL}/images/{session_id}/{image_index}
-        if imageUrl.contains("oss-cn-beijing.aliyuncs.com/images/") {
-            // 提取路径部分: images/{session_id}/{image_index}.png
+        // OSS 路径格式: images/{user_id}/{session_id}/{image_index}.png
+        // baseURL 已含 /api/v1，故 API URL = {baseURL}/images/{session_id}/{image_index}
+        if imageUrl.contains("/images/") {
             if let pathRange = imageUrl.range(of: "/images/") {
                 let path = String(imageUrl[pathRange.upperBound...])
-                // 移除 .png 后缀
-                let pathWithoutExtension = path.replacingOccurrences(of: ".png", with: "")
-                let convertedURL = "\(baseURL)/images/\(pathWithoutExtension)"
-                print("✅ [VisualData] OSS URL 转换成功:")
-                print("  转换后 URL: \(convertedURL)")
-                return convertedURL
+                let parts = path.components(separatedBy: "/")
+                // path = "user_id/session_id/0.png" -> parts = [user_id, session_id, 0.png]
+                if parts.count >= 3 {
+                    let sessionId = parts[1]
+                    let indexPart = parts[2].replacingOccurrences(of: ".png", with: "")
+                    let base = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+                    let convertedURL = "\(base)/images/\(sessionId)/\(indexPart)"
+                    print("✅ [VisualData] OSS URL 转换成功:")
+                    print("  转换后 URL: \(convertedURL)")
+                    return convertedURL
+                }
             }
         }
         

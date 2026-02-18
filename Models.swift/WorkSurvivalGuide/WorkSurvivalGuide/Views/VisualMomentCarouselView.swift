@@ -65,7 +65,7 @@ struct VisualMomentCardView: View {
                         .stroke(Color(hex: "#D1D5DC"), lineWidth: 1.38)
                 )
             
-            // 图片
+            // 图片（ImageLoaderView 会自动带 JWT 访问 API，并支持 Base64 回退）
             if let accessibleURL = moment.getAccessibleImageURL(baseURL: baseURL) {
                 ImageLoaderView(
                     imageUrl: accessibleURL,
@@ -78,6 +78,9 @@ struct VisualMomentCardView: View {
                     print("  原始 URL: \(moment.imageUrl ?? "nil")")
                     print("  转换后 URL: \(accessibleURL)")
                 }
+            } else if let b64 = moment.imageBase64, !b64.isEmpty {
+                ImageLoaderView(imageUrl: nil, imageBase64: b64, placeholder: "加载中...")
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
             } else {
                 // 如果没有图片，显示提示信息和调试信息
                 VStack(spacing: 8) {
