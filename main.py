@@ -518,30 +518,181 @@ def persist_original_audio(
     return (audio_url, audio_path)
 
 
-def generate_image_from_prompt(image_prompt: str, user_id: str, session_id: str, image_index: int, max_retries: int = 3) -> Optional[str]:
+def _fetch_image_bytes(url: str, timeout: float = 10.0) -> Optional[Tuple[bytes, str]]:
     """
-    使用 Gemini Nano Banana 生成图片并上传到 OSS
+    从 URL 下载图片，返回 (bytes, mime_type) 或 None。
+    支持 http/https，用于获取档案照片作为图片生成参考。
+    注意：/api/v1/images/ 需 JWT，服务端内部请用 _fetch_profile_image_from_oss。
+    """
+    if not url or not isinstance(url, str) or not url.strip():
+        return None
+    url = url.strip()
+    if not url.startswith(("http://", "https://")):
+        return None
+    try:
+        from urllib.request import Request, urlopen
+        req = Request(url, headers={"User-Agent": "gemini-audio-service/1.0"})
+        with urlopen(req, timeout=timeout) as resp:
+            data = resp.read()
+            ctype = resp.headers.get("Content-Type", "").split(";")[0].strip().lower()
+            if "png" in ctype:
+                mime = "image/png"
+            elif "webp" in ctype:
+                mime = "image/webp"
+            else:
+                mime = "image/jpeg"
+            if len(data) > 7 * 1024 * 1024:  # 7MB limit for Gemini inline
+                logger.warning(f"[档案照片] 图片过大 ({len(data)} bytes)，跳过")
+                return None
+            return (data, mime)
+    except Exception as e:
+        logger.warning(f"[档案照片] 下载失败 url={url[:80]}...: {e}")
+        return None
+
+
+def _fetch_profile_image_from_oss(user_id: str, profile_id: str) -> Optional[Tuple[bytes, str]]:
+    """
+    从 OSS 直接读取档案照片，用于图片生成参考（避免 API 需 JWT 的问题）。
+    路径: images/{user_id}/profile_{profile_id}/0.png
+    """
+    if not USE_OSS or oss_bucket is None:
+        return None
+    try:
+        oss_key = f"images/{user_id}/profile_{profile_id}/0.png"
+        obj = oss_bucket.get_object(oss_key)
+        data = obj.read()
+        if len(data) > 7 * 1024 * 1024:
+            logger.warning(f"[档案照片] OSS 图片过大 ({len(data)} bytes)，跳过")
+            return None
+        if len(data) >= 2 and data[0:2] == b"\xff\xd8":
+            mime = "image/jpeg"
+        elif len(data) >= 4 and data[0:4] == b"\x89PNG":
+            mime = "image/png"
+        else:
+            mime = "image/jpeg"
+        return (data, mime)
+    except Exception as e:
+        logger.debug(f"[档案照片] OSS 读取失败 profile_id={profile_id}: {e}")
+        return None
+
+
+async def _get_profile_reference_images(session_id: str, user_id: str, db: AsyncSession) -> List[Tuple[bytes, str]]:
+    """
+    根据 speaker_mapping 获取左右人物（用户/对方）的档案照片，用于图片生成参考。
+    优先从 OSS 直接读取（路径 images/{user_id}/profile_{id}/0.png），避免 API 需 JWT。
+    返回 [(left_bytes, mime), (right_bytes, mime), ...]，顺序为左侧（用户）、右侧（对方）。
+    """
+    result = []
+    try:
+        ar_q = await db.execute(
+            select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+        )
+        ar = ar_q.scalar_one_or_none()
+        if not ar or not isinstance(getattr(ar, "speaker_mapping", None), dict):
+            logger.info(f"[档案照片] session_id={session_id} 无 speaker_mapping，无法获取参考图")
+            return result
+        speaker_mapping = ar.speaker_mapping
+        profile_ids = [str(pid) for pid in speaker_mapping.values()]
+        if not profile_ids:
+            logger.info(f"[档案照片] session_id={session_id} speaker_mapping 为空")
+            return result
+        logger.info(f"[档案照片] speaker_mapping={speaker_mapping} profile_ids={profile_ids}")
+        
+        prof_q = await db.execute(
+            select(Profile).where(
+                Profile.user_id == uuid.UUID(user_id),
+                Profile.id.in_([uuid.UUID(pid) for pid in profile_ids])
+            )
+        )
+        profiles = {str(p.id): p for p in prof_q.scalars().all()}
+        left_pid, right_pid = None, None
+        for sp, pid in speaker_mapping.items():
+            pid_str = str(pid)
+            if pid_str not in profiles:
+                continue
+            rel = getattr(profiles[pid_str], "relationship_type", "") or ""
+            if rel == "自己":
+                left_pid = pid_str
+            else:
+                right_pid = pid_str
+        if not left_pid and profile_ids:
+            left_pid = next((p for p in profile_ids if p in profiles), None)
+        if not right_pid and len(profiles) >= 2 and left_pid:
+            right_pid = next((p for p in profile_ids if p in profiles and p != left_pid), None)
+        
+        for pid in [left_pid, right_pid]:
+            if not pid:
+                continue
+            p = profiles.get(pid)
+            if not p:
+                continue
+            photo_url = getattr(p, "photo_url", None)
+            fetched = None
+            # 优先从 OSS 直接读取（不依赖 JWT，且档案上传后 OSS 必有文件）
+            if USE_OSS and oss_bucket:
+                fetched = _fetch_profile_image_from_oss(user_id, pid)
+            if not fetched and photo_url and photo_url.startswith(("http://", "https://")):
+                # 若为直连 OSS CDN 等公开 URL，可尝试 HTTP 拉取（/api/v1/images 需 JWT 会失败）
+                if "/api/v1/images/" not in photo_url:
+                    fetched = _fetch_image_bytes(photo_url)
+            if fetched:
+                result.append(fetched)
+                logger.info(f"[档案照片] 已加载参考图: profile_id={pid} name={getattr(p,'name','')} rel={getattr(p,'relationship_type','')}")
+            else:
+                logger.warning(f"[档案照片] 无法加载 profile_id={pid} photo_url={bool(photo_url)} OSS={USE_OSS and oss_bucket is not None}")
+    except Exception as e:
+        logger.warning(f"[档案照片] 获取参考图失败: {e}", exc_info=True)
+    return result
+
+
+def generate_image_from_prompt(
+    image_prompt: str,
+    user_id: str,
+    session_id: str,
+    image_index: int,
+    reference_images: Optional[List[Tuple[bytes, str]]] = None,
+    max_retries: int = 3,
+) -> Optional[str]:
+    """
+    使用 Gemini Nano Banana 生成图片并上传到 OSS。
+    支持多模态输入：可传入档案照片作为参考图，提升人物一致性。
     
     Args:
         image_prompt: 图片生成提示词
-        user_id: 用户 ID（用于 OSS 文件路径）
-        session_id: 会话 ID（用于 OSS 文件路径）
-        image_index: 图片索引（用于 OSS 文件路径）
-        max_retries: 最大重试次数（默认 3 次）
+        user_id: 用户 ID
+        session_id: 会话 ID
+        image_index: 图片索引
+        reference_images: 可选，参考图列表 [(bytes, mime_type), ...]，最多2张（左=用户，右=对方）
+        max_retries: 最大重试次数
         
     Returns:
-        图片 URL（如果 OSS 启用）或 Base64 编码的图片数据（如果 OSS 未启用或失败），如果失败返回 None
+        图片 URL 或 Base64，失败返回 None
     """
     from google.genai.errors import ClientError
     
     client = genai_new.Client(api_key=GEMINI_API_KEY)
     
-    # 配置图片生成参数
     config = genai_types.GenerateContentConfig(
-        image_config=genai_types.ImageConfig(
-            aspect_ratio="4:3"  # 1184x864，接近 1024x768
-        )
+        image_config=genai_types.ImageConfig(aspect_ratio="4:3")
     )
+    
+    # 构建 contents：参考图 + 文本 prompt
+    style_prefix = "宫崎骏吉卜力动画风格，温暖自然色调，柔和笔触。"
+    if reference_images and len(reference_images) >= 1:
+        ref_desc = "第一张图为左侧人物（用户）的参考照片"
+        if len(reference_images) >= 2:
+            ref_desc += "，第二张图为右侧人物（对方）的参考照片"
+        ref_desc += "。请保持人物面部与气质与参考图一致。\n\n"
+        full_prompt = style_prefix + ref_desc + image_prompt
+    else:
+        full_prompt = style_prefix + image_prompt
+    
+    contents_list = []
+    if reference_images:
+        for img_bytes, mime_type in reference_images[:2]:  # 最多2张
+            contents_list.append(genai_types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
+        logger.info(f"[图片生成] 使用 {len(contents_list)} 张档案照片作为参考图")
+    contents_list.append(full_prompt)
     
     for attempt in range(max_retries):
         try:
@@ -550,15 +701,14 @@ def generate_image_from_prompt(image_prompt: str, user_id: str, session_id: str,
             else:
                 logger.info(f"========== 开始生成图片 ==========")
             
-            logger.info(f"提示词长度: {len(image_prompt)} 字符")
-            logger.debug(f"提示词内容: {image_prompt[:200]}...")
-            logger.info(f"调用模型: gemini-2.5-flash-image")
-            logger.info(f"宽高比: 4:3 (1184x864)")
+            logger.info(f"提示词长度: {len(full_prompt)} 字符 (含参考图说明)")
+            logger.debug(f"提示词内容: {full_prompt[:200]}...")
+            logger.info(f"调用模型: gemini-2.5-flash-image 参考图数={len(reference_images) if reference_images else 0}")
             
             start_time = time.time()
             response = client.models.generate_content(
                 model="gemini-2.5-flash-image",
-                contents=[image_prompt],
+                contents=contents_list,
                 config=config
             )
             generate_time = time.time() - start_time
@@ -2151,14 +2301,21 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             call2_result = compose_results(skill_results)
         logger.info(f"[策略流程] 步骤2.3a: 完成 关键时刻={len(call2_result.visual)} 策略数={len(call2_result.strategies)}")
         
-        # 5. 为每个关键时刻生成图片
+        # 5. 为每个关键时刻生成图片（含档案照片参考图）
         logger.info(f"========== 步骤 5: 生成图片 ==========")
-        logger.info(f"开始为 {len(call2_result.visual)} 个关键时刻生成图片")
+        reference_images = await _get_profile_reference_images(session_id, user_id, db)
+        logger.info(f"开始为 {len(call2_result.visual)} 个关键时刻生成图片，参考图数={len(reference_images)}")
         updated_visual_list = []
         for idx, visual_data in enumerate(call2_result.visual):
             try:
                 logger.info(f"生成图片 {idx+1}/{len(call2_result.visual)}: transcript_index={visual_data.transcript_index}, speaker={visual_data.speaker}")
-                image_result = generate_image_from_prompt(visual_data.image_prompt, user_id, session_id, idx)
+                image_result = generate_image_from_prompt(
+                    visual_data.image_prompt,
+                    user_id,
+                    session_id,
+                    idx,
+                    reference_images=reference_images if reference_images else None,
+                )
                 if image_result:
                     # 判断返回的是 URL 还是 Base64
                     if image_result.startswith('http://') or image_result.startswith('https://'):
@@ -2374,10 +2531,11 @@ async def classify_scene_endpoint(
 @app.post("/api/v1/tasks/sessions/{session_id}/strategies")
 async def generate_strategies(
     session_id: str,
+    force_regenerate: bool = Query(False, description="强制重新生成（用于更新为最新风格如宫崎骏）"),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """生成策略分析（Call #2）- 情商教练（v0.4 技能化架构，需要JWT认证，仅能访问自己的任务）"""
+    """生成策略分析（Call #2）- 情商教练（v0.4 技能化架构，需要JWT认证，仅能访问自己的任务）。force_regenerate=true 时删除旧数据并重新生成。"""
     from datetime import datetime
     
     try:
@@ -2400,7 +2558,14 @@ async def generate_strategies(
             select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
         )
         existing_strategy = strategy_query.scalar_one_or_none()
-        logger.info(f"[策略流程] 步骤0: 完成 existing={existing_strategy is not None}")
+        logger.info(f"[策略流程] 步骤0: 完成 existing={existing_strategy is not None} force_regenerate={force_regenerate}")
+        
+        if force_regenerate and existing_strategy:
+            from sqlalchemy import delete
+            await db.execute(delete(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id)))
+            await db.commit()
+            logger.info(f"[策略流程] 已删除旧策略分析，将重新生成: {session_id}")
+            existing_strategy = None
         
         if existing_strategy and existing_strategy.visual_data and existing_strategy.strategies:
             logger.info(f"从数据库读取已生成的策略分析: {session_id}")

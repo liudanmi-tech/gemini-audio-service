@@ -52,7 +52,17 @@ struct ImageLoaderView: View {
     }
     
     private func loadImage() {
-        // 优先使用 imageUrl
+        // 优先检查本地缓存
+        if let url = imageUrl, let cached = ImageCacheManager.shared.image(for: url) {
+            image = cached
+            isLoading = false
+            return
+        }
+        if let b64 = imageBase64, !b64.isEmpty, let cached = ImageCacheManager.shared.image(forBase64: b64) {
+            image = cached
+            isLoading = false
+            return
+        }
         if let imageUrl = imageUrl {
             loadImageFromURL(imageUrl)
         } else if let imageBase64 = imageBase64 {
@@ -134,6 +144,7 @@ struct ImageLoaderView: View {
                 print("✅ [ImageLoaderView] 图片加载成功，尺寸: \(uiImage.size)")
                 self.image = uiImage
                 self.isLoading = false
+                ImageCacheManager.shared.cache(uiImage, for: urlString)
             }
         }.resume()
     }
@@ -148,5 +159,6 @@ struct ImageLoaderView: View {
         
         image = uiImage
         isLoading = false
+        ImageCacheManager.shared.cache(uiImage, forBase64: base64String)
     }
 }

@@ -145,7 +145,7 @@ async def execute_skill(
                 visual_raw = [{
                     "transcript_index": 0,
                     "speaker": first_item.get("speaker", "Speaker_0"),
-                    "image_prompt": "米色背景，极简火柴人线稿。左侧为用户，右侧为对方。",
+                    "image_prompt": "宫崎骏吉卜力动画风格，温暖自然色调。左侧为用户，右侧为对方。",
                     "emotion": "未知",
                     "subtext": "",
                     "context": "对话开始",
@@ -159,8 +159,8 @@ async def execute_skill(
         if len(visual_raw) > 5:
             logger.warning(f"关键时刻数量过多 ({len(visual_raw)} 个)，只保留前 5 个")
             visual_raw = visual_raw[:5]
-        elif len(visual_raw) < 2:
-            logger.warning(f"关键时刻数量较少 ({len(visual_raw)} 个)，建议至少 2 个")
+        elif len(visual_raw) < 3:
+            logger.warning(f"关键时刻数量较少 ({len(visual_raw)} 个)，将尝试从策略补足至至少 3 个")
         
         # 构建 VisualData 列表
         visual_list = []
@@ -195,7 +195,7 @@ async def execute_skill(
             logger.error(f"visual 数据: {visual_raw}")
             raise Exception(f"构建视觉数据失败: {str(e)}")
         
-        # 构建策略列表
+        # 构建策略列表（需在补足 visual 前完成，因补足逻辑依赖 strategies）
         strategies_list = []
         try:
             for s in analysis_data.get("strategies", []):
@@ -210,6 +210,33 @@ async def execute_skill(
             logger.error(f"构建策略列表失败: {e}")
             logger.error(f"strategies 数据: {analysis_data.get('strategies')}")
             raise Exception(f"构建策略列表失败: {str(e)}")
+        
+        # 7b. 兜底：不足 3 个 visual 时，从 strategies 补足（推荐策略类图片）
+        if len(visual_list) < 3 and strategies_list:
+            strategies_to_use = [s for s in strategies_list if s.id and s.id != "s0"]
+            if not strategies_to_use:
+                strategies_to_use = strategies_list[:3]
+            last_ti = visual_list[-1].transcript_index if visual_list else 0
+            last_speaker = visual_list[-1].speaker if visual_list else "Speaker_0"
+            idx = 0
+            while len(visual_list) < 3 and strategies_to_use:
+                s = strategies_to_use[idx % len(strategies_to_use)]
+                idx += 1
+                content_preview = (s.content or "").replace("\n", " ").strip()
+                if len(content_preview) > 80:
+                    content_preview = content_preview[:80] + "…"
+                image_prompt = f"宫崎骏吉卜力动画风格，温暖自然色调。画面表现推荐策略「{s.title or s.label}」：{content_preview or '该策略的核心建议'}。左侧为用户采纳该策略时的自信姿态，右侧为对方反应。"
+                visual_list.append(VisualData(
+                    transcript_index=last_ti,
+                    speaker=last_speaker,
+                    image_prompt=image_prompt,
+                    emotion="策略建议",
+                    subtext="",
+                    context=f"推荐策略: {s.title}",
+                    my_inner="",
+                    other_inner=""
+                ))
+                logger.info(f"补足 visual: 策略「{s.title}」-> 第 {len(visual_list)} 张")
         
         # 8. 后处理（可选）
         # TODO: 如果存在 scripts/postprocess.py，执行后处理

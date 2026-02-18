@@ -78,6 +78,14 @@ struct RemoteImageView: View {
             return
         }
         
+        // 优先从本地缓存读取
+        if let cached = ImageCacheManager.shared.image(for: url.absoluteString) {
+            image = cached
+            isLoading = false
+            lastLoadedURL = url
+            return
+        }
+        
         // 检查URL是否变化
         if let lastURL = lastLoadedURL, lastURL == url, image != nil && !isLoading {
             print("📷 [RemoteImageView] URL未变化且已有图片，跳过加载: \(url.absoluteString)")
@@ -123,6 +131,7 @@ struct RemoteImageView: View {
                 await MainActor.run {
                     self.image = loadedImage
                     self.isLoading = false
+                    ImageCacheManager.shared.cache(loadedImage, for: url.absoluteString)
                     print("✅ [RemoteImageView] 图片加载成功: \(url.absoluteString)")
                 }
             } catch {

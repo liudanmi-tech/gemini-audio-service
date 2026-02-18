@@ -73,7 +73,8 @@ def extract_prompt_template(markdown_content: str) -> str:
     """
     从 Markdown 内容中提取 Prompt 模板
     
-    查找 "## Prompt模板" 部分，提取 ```prompt 代码块中的内容
+    查找 "## Prompt模板" 部分，提取 ```prompt 代码块中的内容。
+    注意：prompt 块内可能包含 ## 子标题，故需在全文匹配代码块而非截断到下一个 ##。
     
     Args:
         markdown_content: Markdown 内容
@@ -81,40 +82,41 @@ def extract_prompt_template(markdown_content: str) -> str:
     Returns:
         str: Prompt 模板内容
     """
-    # 查找 "## Prompt模板" 部分（只在「新行开头的 ## 标题」处结束，避免被内容里的 ### 等截断）
-    prompt_section_pattern = r'##\s*Prompt模板\s*\n(.*?)(?=\n##\s|\n##$|$)'
-    match = re.search(prompt_section_pattern, markdown_content, re.DOTALL | re.IGNORECASE)
-    
-    if not match:
+    content = markdown_content.replace('\r\n', '\n').replace('\r', '\n')
+    if '## Prompt模板' not in content and '## prompt模板' not in content.lower():
         raise ValueError("SKILL.md 中未找到 '## Prompt模板' 部分")
     
-    prompt_section = match.group(1)
-    # 统一换行为 \n，避免 CRLF 导致正则不匹配
-    prompt_section = prompt_section.replace('\r\n', '\n').replace('\r', '\n')
-    
-    # 1) 正则提取 ```prompt 或 ``` 代码块
+    # 1) 优先：在全文匹配 ## Prompt模板 后的 ```prompt ... ``` 代码块（块内可含 ##）
     for pattern in [
-        r'```prompt\s*\n(.*?)```',
-        r'```\s*\n(.*?)```',
+        r'##\s*Prompt模板\s*\n```prompt\s*\n(.*?)```',
+        r'##\s*Prompt模板\s*\n```\s*\n(.*?)```',
     ]:
-        match = re.search(pattern, prompt_section, re.DOTALL)
+        match = re.search(pattern, content, re.DOTALL | re.IGNORECASE)
         if match:
             prompt_template = match.group(1).strip()
             if prompt_template:
                 return prompt_template
     
-    # 2) 兜底：按第一个 ``` 到下一个 ``` 截取（不依赖正则细节）
-    start = prompt_section.find('```')
-    if start >= 0:
-        start = prompt_section.find('\n', start) + 1
-        if start > 0:
-            end = prompt_section.find('```', start)
-            if end > start:
-                prompt_template = prompt_section[start:end].strip()
-                if prompt_template:
-                    return prompt_template
+    # 2) 兜底：旧逻辑，截取到下一个 ## 再找代码块
+    prompt_section_pattern = r'##\s*Prompt模板\s*\n(.*?)(?=\n##\s|\n##$|$)'
+    match = re.search(prompt_section_pattern, content, re.DOTALL | re.IGNORECASE)
+    if match:
+        prompt_section = match.group(1)
+        for pat in [r'```prompt\s*\n(.*?)```', r'```\s*\n(.*?)```']:
+            m = re.search(pat, prompt_section, re.DOTALL)
+            if m and m.group(1).strip():
+                return m.group(1).strip()
+        start = prompt_section.find('```')
+        if start >= 0:
+            start = prompt_section.find('\n', start) + 1
+            if start > 0:
+                end = prompt_section.find('```', start)
+                if end > start:
+                    t = prompt_section[start:end].strip()
+                    if t:
+                        return t
     
-    logger.debug("Prompt模板节内容长度=%s 前200字=%s", len(prompt_section), repr(prompt_section[:200]))
+    logger.debug("Prompt模板节内容长度=%s 前200字=%s", len(content), repr(content[:200]))
     raise ValueError("Prompt模板部分未找到代码块")
 
 

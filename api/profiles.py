@@ -311,6 +311,20 @@ async def upload_profile_photo(
         # 返回完整 API URL（OSS 为私有，需经后端 /api/v1/images/{session_id}/{index} 代理）
         api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213")
         photo_url = f"{api_base.rstrip('/')}/api/v1/images/{session_id}/0"
+        
+        # 有 profile_id 时同步更新 Profile.photo_url，确保策略图片生成能获取参考图
+        if profile_id and profile_id.strip() and session_id.startswith("profile_"):
+            try:
+                r = await db.execute(select(Profile).where(Profile.id == uuid.UUID(profile_id), Profile.user_id == uuid.UUID(user_id)))
+                prof = r.scalar_one_or_none()
+                if prof:
+                    prof.photo_url = photo_url
+                    await db.commit()
+                    logger.info(f"[档案照片] 已更新 Profile.photo_url: profile_id={profile_id}")
+            except Exception as e:
+                logger.warning(f"[档案照片] 更新 Profile.photo_url 失败: {e}")
+                await db.rollback()
+        
         response_data = {"photo_url": photo_url}
         logger.info(f"[档案照片] 返回 photo_url={photo_url}")
         return response_data

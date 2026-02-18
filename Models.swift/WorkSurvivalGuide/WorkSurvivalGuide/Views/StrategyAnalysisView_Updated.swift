@@ -105,10 +105,10 @@ struct StrategyAnalysisView_Updated: View {
                 VStack(alignment: .leading, spacing: 0) {
                     // 内容区域（根据Figma设计，场景还原图片在最上方）
                     VStack(alignment: .leading, spacing: 0) {
-                        // 场景还原图片（使用第一个visual moment，放在最上方）
-                        if let firstVisual = analysis.visual.first {
-                            SceneRestoreImageView(
-                                visualData: firstVisual,
+                        // 场景还原图片轮播（支持左右滑动查看多张）
+                        if !analysis.visual.isEmpty {
+                            SceneRestoreImageCarouselView(
+                                visualList: analysis.visual,
                                 baseURL: baseURL
                             )
                             .padding(.horizontal, 0.69) // 根据Figma: padding horizontal 0.69px
@@ -472,6 +472,33 @@ struct StrategyPouchSheet: View {
                 .stroke(Color(hex: "#E8DCC6"), lineWidth: 1)
         )
         .cornerRadius(16)
+    }
+}
+
+// 场景还原图片轮播（支持左右滑动查看多张）
+struct SceneRestoreImageCarouselView: View {
+    let visualList: [VisualData]
+    let baseURL: String
+    @State private var currentIndex: Int = 0
+    
+    var body: some View {
+        GeometryReader { geo in
+            let side = geo.size.width
+            TabView(selection: $currentIndex) {
+                ForEach(Array(visualList.enumerated()), id: \.element.id) { index, visualData in
+                    SceneRestoreImageView(visualData: visualData, baseURL: baseURL)
+                        .frame(width: side, height: side)
+                        .tag(index)
+                }
+            }
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: visualList.count > 1 ? .automatic : .never))
+            .frame(width: side, height: side)
+            .onAppear {
+                UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(red: 94/255, green: 124/255, blue: 139/255, alpha: 1)
+                UIPageControl.appearance().pageIndicatorTintColor = UIColor(red: 232/255, green: 220/255, blue: 198/255, alpha: 1)
+            }
+        }
+        .aspectRatio(1, contentMode: .fit)
     }
 }
 
