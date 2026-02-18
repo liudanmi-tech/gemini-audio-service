@@ -13,17 +13,16 @@ struct RecordingButtonView: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            // 本地上传按钮
+            // 本地上传按钮 - 毛玻璃效果 + 边缘部分亮变
             Button(action: onUploadTap) {
                 ZStack {
                     Circle()
-                        .fill(AppColors.recordButton.opacity(0.9))
+                        .fill(.regularMaterial)
                         .frame(width: 48, height: 48)
                         .overlay(
                             Circle()
-                                .stroke(AppColors.recordButtonBorder, lineWidth: 2.5)
+                                .stroke(edgeBrighteningGradient, lineWidth: 2)
                         )
-                        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
                     
                     Image(systemName: "doc.badge.plus")
                         .font(.system(size: 20))
@@ -32,7 +31,7 @@ struct RecordingButtonView: View {
             }
             .disabled(viewModel.isRecording || viewModel.isUploading)
             
-            // 录音按钮
+            // 录音按钮 - 毛玻璃效果 + 边缘部分亮变
             Button(action: {
                 if viewModel.isRecording {
                     viewModel.stopRecordingAndUpload()
@@ -42,30 +41,38 @@ struct RecordingButtonView: View {
             }) {
                 ZStack {
                     Circle()
-                        .fill(AppColors.recordButton)
+                        .fill(.regularMaterial)
                         .frame(width: 64, height: 64)
                         .overlay(
                             Circle()
-                                .stroke(AppColors.recordButtonBorder, lineWidth: 3.45)
+                                .stroke(edgeBrighteningGradient, lineWidth: 2.5)
                         )
-                        .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
                     
                     if viewModel.isRecording {
-                        VStack(spacing: 4) {
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 24))
-                                .foregroundColor(.white)
-                                .frame(width: 8, height: 17.33)
-                        }
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 24))
+                            .foregroundColor(.white)
                     } else {
                         Image(systemName: "mic.fill")
                             .font(.system(size: 24))
                             .foregroundColor(.white)
-                            .frame(width: 32, height: 32)
                     }
                 }
             }
             .disabled(viewModel.isUploading)
         }
+    }
+    
+    /// 边缘部分亮变：上下弧亮，左右渐隐（非全圈亮）
+    private var edgeBrighteningGradient: AngularGradient {
+        AngularGradient(
+            colors: [
+                Color.white.opacity(0.65),
+                Color.white.opacity(0.15),
+                Color.white.opacity(0.65),
+                Color.white.opacity(0.15)
+            ],
+            center: .center
+        )
     }
 }

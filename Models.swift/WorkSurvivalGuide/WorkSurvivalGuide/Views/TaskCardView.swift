@@ -35,31 +35,38 @@ struct TaskCardView: View {
                 placeholderContent
             }
             
-            // 底部约 50% 半透明蒙层
+            // 底部渐变蒙层
             overlayGradient
             
-            // 蒙层上的文字：archived 显示总结（3行内）+时间，其他状态仅显示时间
-            VStack(alignment: .leading, spacing: 4) {
-                if task.status == .archived {
-                    Text(task.overlaySummary)
-                        .font(.system(size: 14, weight: .semibold, design: .rounded))
-                        .foregroundColor(.white)
-                        .lineLimit(3)
-                        .multilineTextAlignment(.leading)
+            // 文字总结区域：毛玻璃 + 总结/时间/时长
+            VStack {
+                Spacer()
+                VStack(alignment: .leading, spacing: 4) {
+                    if task.status == .archived {
+                        Text(task.overlaySummary)
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundColor(.white)
+                            .lineLimit(3)
+                            .multilineTextAlignment(.leading)
+                    }
+                    HStack {
+                        Text(formattedTime)
+                            .font(.system(size: 12, weight: .regular, design: .rounded))
+                            .foregroundColor(.white.opacity(0.9))
+                        Spacer()
+                        Text(task.durationString)
+                            .font(.system(size: 12, weight: .regular, design: .rounded))
+                            .foregroundColor(.white.opacity(0.9))
+                    }
                 }
-                HStack {
-                    Text(formattedTime)
-                        .font(.system(size: 12, weight: .regular, design: .rounded))
-                        .foregroundColor(.white.opacity(0.9))
-                    Spacer()
-                    Text(task.durationString)
-                        .font(.system(size: 12, weight: .regular, design: .rounded))
-                        .foregroundColor(.white.opacity(0.9))
-                }
+                .padding(.leading, 12)
+                .padding(.trailing, 12)
+                .padding(.bottom, 12)
+                .padding(.top, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.25))
             }
-            .padding(.leading, 12)
-            .padding(.trailing, 12)
-            .padding(.bottom, 12)
         }
         .frame(maxWidth: .infinity)
         .aspectRatio(1, contentMode: .fit)
@@ -83,13 +90,13 @@ struct TaskCardView: View {
     private var placeholderBackground: Color {
         switch task.status {
         case .recording:
-            return Color(hex: "#E8F4FD")
+            return Color(hex: "#1E3A5F").opacity(0.9)
         case .analyzing:
-            return AppColors.Status.analyzingBg
+            return Color(hex: "#4A3F00").opacity(0.9)
         case .archived:
-            return Color(hex: "#F3F4F6")
+            return Color(white: 0.15)
         case .burned, .failed:
-            return Color(hex: "#FEE2E2")
+            return Color(hex: "#4A1C1C").opacity(0.9)
         }
     }
     
@@ -99,17 +106,17 @@ struct TaskCardView: View {
             case .recording:
                 Image(systemName: "icloud.and.arrow.up")
                     .font(.system(size: 36))
-                    .foregroundColor(Color(hex: "#3B82F6"))
+                    .foregroundColor(Color(hex: "#60A5FA"))
             case .analyzing:
                 Image(systemName: "waveform")
                     .font(.system(size: 36))
-                    .foregroundColor(AppColors.Status.analyzingText)
+                    .foregroundColor(Color(hex: "#FBBF24"))
             case .archived:
-                QuotationMarkView(size: 32, color: Color(hex: "#9CA3AF"), opacity: 0.7, isGrayStyle: true)
+                QuotationMarkView(size: 32, color: Color.white.opacity(0.6), opacity: 0.7, isGrayStyle: true)
             case .burned, .failed:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 36))
-                    .foregroundColor(Color(hex: "#DC2626"))
+                    .foregroundColor(Color(hex: "#F87171"))
             }
         }
     }
@@ -132,13 +139,13 @@ struct TaskCardView: View {
     private var placeholderTextColor: Color {
         switch task.status {
         case .recording:
-            return Color(hex: "#3B82F6").opacity(0.9)
+            return Color(hex: "#60A5FA")
         case .analyzing:
-            return AppColors.Status.analyzingText
+            return Color(hex: "#FBBF24")
         case .archived:
-            return Color(hex: "#6B7280")
+            return Color.white.opacity(0.6)
         case .burned, .failed:
-            return Color(hex: "#DC2626").opacity(0.9)
+            return Color(hex: "#F87171")
         }
     }
     

@@ -30,10 +30,11 @@ struct LoginView: View {
                     
                     Text("欢迎使用")
                         .font(.system(size: 28, weight: .bold))
+                        .foregroundColor(.white)
                     
                     Text("请登录以继续")
                         .font(.system(size: 16))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 .padding(.bottom, 40)
                 
@@ -43,7 +44,7 @@ struct LoginView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("手机号")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.white.opacity(0.8))
                         
                         TextField("请输入11位手机号", text: $phoneText)
                             .keyboardType(.numberPad)
@@ -71,7 +72,7 @@ struct LoginView: View {
                         HStack {
                             Text("验证码")
                                 .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.secondary)
+                                .foregroundColor(.white.opacity(0.8))
                             
                             Spacer()
                             
@@ -153,13 +154,15 @@ struct LoginView: View {
                 VStack(spacing: 4) {
                     Text("开发阶段验证码: 123456")
                         .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.5))
                     Text("手机号格式: 11位数字")
                         .font(.system(size: 12))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(.white.opacity(0.5))
                 }
                 .padding(.bottom, 30)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black)
             .navigationBarHidden(true)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {

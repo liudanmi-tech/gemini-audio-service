@@ -102,7 +102,7 @@ struct ProfileListView: View {
                 .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 12)
-                .background(AppColors.headerText)
+                .background(Color(hex: "#EF4444"))
                 .cornerRadius(8)
                 .padding(.horizontal, 24)
                 .padding(.top, 16)
@@ -136,7 +136,7 @@ struct ProfileHeaderView: View {
                     Button(action: onSettingsTap) {
                         ZStack {
                             Circle()
-                                .fill(AppColors.headerText.opacity(0.1))
+                                .fill(Color.white.opacity(0.2))
                                 .frame(width: 39.98, height: 39.98)
                             
                             Image(systemName: "gearshape")
@@ -149,8 +149,8 @@ struct ProfileHeaderView: View {
                 Button(action: onAddTap) {
                     ZStack {
                         Circle()
-                            .fill(AppColors.headerText.opacity(0.1)) // rgba(94, 75, 53, 0.1)
-                            .frame(width: 39.98, height: 39.98) // 根据Figma: 39.98 x 39.98px
+                            .fill(Color.white.opacity(0.2))
+                            .frame(width: 39.98, height: 39.98)
                         
                         Image(systemName: "plus")
                             .font(.system(size: 19.99, weight: .bold))
@@ -162,7 +162,7 @@ struct ProfileHeaderView: View {
         .padding(.horizontal, 23.990530014038086) // 根据Figma: padding horizontal 23.99px
         .padding(.vertical, 0)
         .frame(height: 87.97) // 根据Figma: height 87.97px
-        .background(Color(hex: "#F2E6D6").opacity(0.9)) // 根据Figma: rgba(242, 230, 214, 0.9)
+        .background(Color.black)
     }
 }
 
@@ -330,14 +330,14 @@ struct ProfileCardView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 16)
-                        .fill(Color(hex: "#F2E6D6").opacity(0.3)) // rgba(242, 230, 214, 0.3)
+                        .fill(Color.white.opacity(0.08))
                 )
                 .padding(.top, 260.64 - 196.66 - 39.99) // 根据Figma计算间距
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 23.990509033203125) // 根据Figma: padding vertical 23.99px
-        .background(Color(hex: "#FFFAF5")) // 根据Figma: #FFFAF5
+        .background(AppColors.cardBackground)
         .cornerRadius(32) // 根据Figma: borderRadius 32px
         .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
             
@@ -348,7 +348,7 @@ struct ProfileCardView: View {
                         .font(.system(size: 18, weight: .medium))
                         .foregroundColor(AppColors.headerText.opacity(0.7))
                         .frame(width: 36, height: 36)
-                        .background(Circle().fill(Color(hex: "#F2E6D6").opacity(0.9)))
+                        .background(Circle().fill(Color.white.opacity(0.2)))
                 }
                 .padding(.top, 20)
                 .padding(.trailing, 20)

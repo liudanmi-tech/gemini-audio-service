@@ -17,11 +17,11 @@ struct AnalysisStrategyView: View {
             // 标题（深色背景）
             Text("回放分析与策略")
                 .font(AppFonts.cardTitle)
-                .foregroundColor(AppColors.cardBackground)
+                .foregroundColor(.white)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 15.99)
                 .padding(.vertical, 15.37)
-                .background(AppColors.headerText)
+                .background(Color.white.opacity(0.15))
             
             VStack(alignment: .leading, spacing: 16) {
                 // 火柴人动画区域（场景重现，包含叠加的场景描述卡片）
@@ -78,7 +78,7 @@ struct SceneReplayView: View {
     var body: some View {
         // 背景（灰色）
         RoundedRectangle(cornerRadius: 8)
-            .fill(Color(hex: "#F3F4F6"))
+            .fill(Color.white.opacity(0.08))
             .overlay(
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(Color(hex: "#D1D5DC"), lineWidth: 1.38)
@@ -110,7 +110,7 @@ struct SceneDescriptionCard: View {
         .padding(.horizontal, 17.37)
         .padding(.vertical, 17.37)
         .frame(width: 217.05, height: 98.74)
-        .background(Color.white.opacity(0.9))
+        .background(Color.white.opacity(0.15))
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.black, lineWidth: 1.38)
@@ -155,7 +155,7 @@ struct StrategyButton: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 16)
             .frame(maxWidth: .infinity)
-            .background(backgroundColor)
+            .background(Color.white.opacity(0.12))
             .overlay(
                 RoundedRectangle(cornerRadius: 999)
                     .stroke(AppColors.border, lineWidth: 1.38)
@@ -166,25 +166,14 @@ struct StrategyButton: View {
         .buttonStyle(PlainButtonStyle())
     }
     
-    private var backgroundColor: Color {
-        switch type {
-        case .highEQ:
-            return Color(hex: "#DBEAFE") // 蓝色
-        case .aggressive:
-            return Color(hex: "#FFE2E2") // 红色
-        case .evasive:
-            return Color(hex: "#DCFCE7") // 绿色
-        }
-    }
-    
     private var textColor: Color {
         switch type {
         case .highEQ:
-            return Color(hex: "#1447E6") // 深蓝
+            return Color(hex: "#60A5FA")
         case .aggressive:
-            return Color(hex: "#C10007") // 深红
+            return Color(hex: "#F87171")
         case .evasive:
-            return Color(hex: "#008236") // 深绿
+            return Color(hex: "#34D399")
         }
     }
     

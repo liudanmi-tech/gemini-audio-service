@@ -119,6 +119,6 @@ struct SkillsHeaderView: View {
         .padding(.horizontal, 23.99053192138672) // 根据Figma: padding horizontal 23.99px
         .padding(.vertical, 0)
         .frame(height: 79.98) // 根据Figma: height 79.98px
-        .background(Color(hex: "#F2E6D6").opacity(0.9)) // 根据Figma: rgba(242, 230, 214, 0.9)
+        .background(Color.black)
     }
 }

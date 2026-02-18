@@ -72,15 +72,14 @@ struct SkillCardView: View {
                 }
             }
         }
-        .padding(17.373191833496094) // 根据Figma: padding 17.37px
+        .padding(17.373191833496094)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(hex: "#FFFAF5")) // 技能卡片填充颜色 #FFFAF5
+        .background(.regularMaterial)
         .overlay(
-            RoundedRectangle(cornerRadius: 24) // 根据Figma: borderRadius 24px
-                .stroke(Color(hex: "#E8DCC6"), lineWidth: 0.69) // 根据Figma: #E8DCC6, strokeWeight 0.69px
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(0.2), lineWidth: 0.69)
         )
         .cornerRadius(24)
-        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
     }
     
     // 根据技能类型返回图标背景色

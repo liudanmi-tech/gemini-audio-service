@@ -29,15 +29,30 @@ struct BottomNavView: View {
     
     var body: some View {
         ZStack {
-            // 背景层
-            Color(hex: "#F2E6D6") // 根据要求：填充色值 #F2E6D6
-                .clipShape(RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight]))
+            // 毛玻璃背景层
+            RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight])
+                .fill(.ultraThinMaterial)
                 .overlay(
-                    // 顶部边缘线（Stroke）
                     RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight])
-                        .stroke(AppColors.BottomNav.borderLine, lineWidth: 1.38) // 根据 Figma: Stroke weight 1.38, color #8FA5B0
+                        .stroke(AppColors.BottomNav.borderLine, lineWidth: 1)
                 )
-                .shadow(color: Color.black.opacity(0.05), radius: 6, x: 0, y: -4) // Drop shadow 效果
+                .overlay(
+                    // 顶部边缘部分亮变：中间亮，向两侧渐隐
+                    VStack {
+                        LinearGradient(
+                            colors: [
+                                Color.clear,
+                                Color.white.opacity(0.5),
+                                Color.white.opacity(0.5),
+                                Color.clear
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(height: 2)
+                        Spacer()
+                    }
+                )
             
             // 内容层
             HStack(spacing: 0) {
@@ -76,6 +91,11 @@ struct BottomNavItem: View {
                         Circle()
                             .fill(AppColors.BottomNav.activeIconBg)
                             .frame(width: 40, height: 40)
+                            .overlay(
+                                Circle()
+                                    .stroke(bottomNavEdgeGradient, lineWidth: 1.5)
+                                    .frame(width: 40, height: 40)
+                            )
                     }
                     Image(systemName: tab.iconName)
                         .font(.system(size: 24))
@@ -89,6 +109,19 @@ struct BottomNavItem: View {
             }
         }
         .frame(maxWidth: .infinity)
+    }
+    
+    /// 底部导航图标边缘部分亮变：上下弧亮，左右渐隐
+    private var bottomNavEdgeGradient: AngularGradient {
+        AngularGradient(
+            colors: [
+                Color.white.opacity(0.6),
+                Color.white.opacity(0.12),
+                Color.white.opacity(0.6),
+                Color.white.opacity(0.12)
+            ],
+            center: .center
+        )
     }
 }
 

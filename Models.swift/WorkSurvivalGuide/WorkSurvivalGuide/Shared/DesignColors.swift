@@ -7,28 +7,28 @@
 
 import SwiftUI
 
-/// Figma设计稿的颜色配置
+/// Figma设计稿的颜色配置（黑色主题）
 struct AppColors {
-    // 背景色
-    static let background = Color(hex: "#F2E6D6") // App底色（根据设计稿）
-    static let cardBackground = Color(hex: "#FFFAF5") // 卡片背景（根据设计稿）
+    // 背景色 - 黑色主题
+    static let background = Color.black
+    static let cardBackground = Color(white: 0.12) // 深灰卡片背景
     
-    // 文字颜色
-    static let primaryText = Color(hex: "#4A4A4A") // 主文字颜色（根据设计稿）
-    static let secondaryText = Color(hex: "#6A7282") // 次文字颜色
-    static let headerText = Color(hex: "#5E4B35") // Header文字颜色（根据设计稿）
+    // 文字颜色 - 适配黑底
+    static let primaryText = Color.white
+    static let secondaryText = Color.white.opacity(0.7)
+    static let headerText = Color.white
     
     // 日期颜色
-    static let dateNumber = Color(hex: "#FF5733") // 日期大号数字颜色
-    static let timeText = Color(hex: "#CFCACA").opacity(0.9) // 时间文字颜色 rgba(207, 202, 202, 0.9)
-    static let statusText = Color(hex: "#F59E0B") // 状态文字颜色
+    static let dateNumber = Color(hex: "#FF5733")
+    static let timeText = Color.white.opacity(0.8)
+    static let statusText = Color(hex: "#F59E0B")
     
     // Header 背景
-    static let headerBackground = Color(hex: "#F2E6D6").opacity(0.9) // Header背景（根据设计稿）
+    static let headerBackground = Color.black
     
-    // 边框和分割线
-    static let border = Color(hex: "#5E7C8B") // 边框颜色
-    static let divider = Color(hex: "#5E7C8B") // 分割线颜色
+    // 边框和分割线 - 黑底
+    static let border = Color.white.opacity(0.25)
+    static let divider = Color.white.opacity(0.2)
     
     // 状态颜色
     struct Status {
@@ -53,16 +53,16 @@ struct AppColors {
     static let recordButton = Color(hex: "#FF6B6B") // 录音按钮
     static let recordButtonBorder = Color.white // 录音按钮边框
     
-    // 底部导航
+    // 底部导航 - 适配黑色主题
     struct BottomNav {
-        static let activeText = Color(hex: "#5E7C8B") // 激活文字
-        static let inactiveText = Color(hex: "#5E7C8B").opacity(0.6) // 非激活文字
-        static let activeIconBg = Color(hex: "#FFD59E") // 激活图标背景
-        static let borderLine = Color(hex: "#8FA5B0") // 边缘线颜色
+        static let activeText = Color.white
+        static let inactiveText = Color.white.opacity(0.5)
+        static let activeIconBg = Color.white.opacity(0.25)
+        static let borderLine = Color.white.opacity(0.2)
     }
     
-    // 信纸网格
-    static let gridLine = Color(hex: "#D4C4AF").opacity(0.8) // 网格线条颜色（比背景色稍深，半透明）
+    // 信纸网格 - 黑底下可见
+    static let gridLine = Color.white.opacity(0.08)
 }
 
 extension Color {

@@ -94,10 +94,10 @@ struct DialogueReviewView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading) // 确保填充宽度但不超出父容器
-        .background(Color(hex: "#FFFAF5")) // 根据Figma: #FFFAF5
+        .background(AppColors.cardBackground)
         .overlay(
-            RoundedRectangle(cornerRadius: 24) // 根据Figma: borderRadius 24px
-                .stroke(Color(hex: "#E8DCC6"), lineWidth: 0.69) // 根据Figma: #E8DCC6, strokeWeight 0.69px
+            RoundedRectangle(cornerRadius: 24)
+                .stroke(Color.white.opacity(0.2), lineWidth: 0.69)
         )
         .cornerRadius(24)
         .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
@@ -121,7 +121,7 @@ struct DialogueBubbleView: View {
                         .foregroundColor(AppColors.primaryText)
                         .padding(.horizontal, 12.69)
                         .padding(.vertical, 11.68)
-                        .background(Color(hex: "#FFD59E").opacity(0.3))
+                        .background(Color.white.opacity(0.15))
                         .overlay(
                             RoundedRectangle(cornerRadius: 16)
                                 .stroke(Color(hex: "#FFD6A7"), lineWidth: 0.69)
@@ -165,7 +165,7 @@ struct DialogueBubbleView: View {
                     .foregroundColor(AppColors.primaryText)
                     .padding(.horizontal, 12.69)
                     .padding(.vertical, 11.68)
-                    .background(Color.white)
+                    .background(Color.white.opacity(0.12))
                     .overlay(
                         RoundedRectangle(cornerRadius: 16)
                             .stroke(Color(hex: "#E5E7EB"), lineWidth: 0.69)

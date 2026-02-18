@@ -62,7 +62,7 @@ struct StrategyAnalysisView_Updated: View {
             .padding(.top, 0.69) // 根据Figma: padding top 0.69px
             .padding(.bottom, 0.69) // 根据Figma: padding bottom 0.69px
             .frame(height: 68.98) // 根据Figma: height 68.98px
-            .background(Color(hex: "#EEE6D7")) // 根据Figma: #EEE6D7
+            .background(Color.white.opacity(0.1))
             
             if isLoading {
                 // 静默加载，不显示明显的加载提示，只显示一个小的加载指示器
@@ -115,72 +115,81 @@ struct StrategyAnalysisView_Updated: View {
                             .padding(.top, 0) // 对齐标题，不留距离
                         }
                         
-                        // 情商亮点和待提升点（最多2行，超过可展开/收起）
-                        VStack(alignment: .leading, spacing: 7.9968414306640625) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("情商亮点：")
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundColor(Color(hex: "#5E7C8B"))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                        // 情商亮点 + 待提升点 + 推荐应对策略（底纹由整卡 .background 提供）
+                        VStack(alignment: .leading, spacing: 0) {
+                            // 情商亮点和待提升点
+                            VStack(alignment: .leading, spacing: 7.9968414306640625) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("情商亮点：")
+                                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .foregroundColor(Color(hex: "#5E7C8B"))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        
+                                    ExpandableTextBlock(
+                                        text: StrategyAnalysisView_Updated.extractHighlights(from: analysis.strategies),
+                                        isExpanded: $highlightsExpanded
+                                    )
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 
-                                ExpandableTextBlock(
-                                    text: StrategyAnalysisView_Updated.extractHighlights(from: analysis.strategies),
-                                    isExpanded: $highlightsExpanded
-                                )
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("待提升点：")
+                                            .font(.system(size: 14, weight: .bold, design: .rounded))
+                                        .foregroundColor(Color(hex: "#5E7C8B"))
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    
+                                    ExpandableTextBlock(
+                                        text: StrategyAnalysisView_Updated.extractImprovements(from: analysis.strategies),
+                                        isExpanded: $improvementsExpanded
+                                    )
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                             
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("待提升点：")
-                                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                                    .foregroundColor(Color(hex: "#5E7C8B"))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            // 推荐应对策略
+                            VStack(alignment: .leading, spacing: 11.99520492553711) {
+                                Text("推荐应对策略")
+                                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                                    .foregroundColor(AppColors.headerText.opacity(0.5))
+                                    .tracking(1.2)
+                                    .textCase(.uppercase)
+                                    .frame(height: 15.99)
+                                    .frame(maxWidth: .infinity)
                                 
-                                ExpandableTextBlock(
-                                    text: StrategyAnalysisView_Updated.extractImprovements(from: analysis.strategies),
-                                    isExpanded: $improvementsExpanded
-                                )
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .topLeading) // 自适应宽度
-                        .padding(.leading, 23.99) // 根据Figma: padding left 23.99px
-                        .padding(.trailing, 23.99) // 右侧padding保持一致
-                        .padding(.top, 24) // 场景还原图片下方间距
-                        
-                        // 推荐应对策略
-                        VStack(alignment: .leading, spacing: 11.99520492553711) { // 根据Figma: gap 11.99px
-                            // 策略标题
-                            Text("推荐应对策略")
-                                .font(.system(size: 12, weight: .bold, design: .rounded)) // Nunito 700, 12px
-                                .foregroundColor(AppColors.headerText.opacity(0.5)) // rgba(94, 75, 53, 0.5)
-                                .tracking(1.2) // letterSpacing 10% of 12px = 1.2pt
-                                .textCase(.uppercase)
-                                .frame(height: 15.99) // 根据Figma: height 15.99px
-                                .frame(maxWidth: .infinity) // 居中
-                            
-                            // 策略按钮列表（最多3个，点击弹出锦囊）
-                            VStack(spacing: 11.995338439941406) {
-                                ForEach(Array(analysis.strategies.prefix(3).enumerated()), id: \.element.id) { index, strategy in
-                                    StrategyButtonView(
-                                        strategy: strategy,
-                                        index: index
-                                    ) {
-                                        strategyPopupItem = strategy
+                                VStack(spacing: 11.995338439941406) {
+                                    ForEach(Array(analysis.strategies.prefix(3).enumerated()), id: \.element.id) { index, strategy in
+                                        StrategyButtonView(
+                                            strategy: strategy,
+                                            index: index
+                                        ) {
+                                            strategyPopupItem = strategy
+                                        }
                                     }
                                 }
                             }
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                            .padding(.top, 24)
                         }
-                        .frame(maxWidth: .infinity, alignment: .topLeading) // 自适应宽度
-                        .padding(.leading, 23.99) // 根据Figma: padding left 23.99px
-                        .padding(.trailing, 23.99) // 右侧padding保持一致
-                        .padding(.top, 24) // 情商亮点下方间距
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(.leading, 23.99)
+                        .padding(.trailing, 23.99)
+                        .padding(.top, 24)
+                        .padding(.bottom, 24)
                     }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading) // 确保填充宽度但不超出父容器
-        .background(Color.white) // 根据Figma: #FFFFFF
+        .background(
+            Group {
+                if let analysis = strategyAnalysis, let firstVisual = analysis.visual.first {
+                    FrostedGlassDiffractionBackground(visualData: firstVisual, baseURL: baseURL)
+                } else {
+                    AppColors.cardBackground
+                }
+            }
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 24)
                 .stroke(Color(hex: "#E8DCC6"), lineWidth: 0.69)
@@ -395,7 +404,7 @@ struct StrategyCardView: View {
     }
 }
 
-// 策略按钮视图（点击弹出锦囊）
+// 策略按钮视图（点击弹出锦囊）- 毛玻璃效果 + 白色文字
 struct StrategyButtonView: View {
     let strategy: StrategyItem
     let index: Int
@@ -404,27 +413,25 @@ struct StrategyButtonView: View {
     var body: some View {
         Button(action: onTap) {
             HStack(spacing: 8) {
-                // 图标或emoji（如果有）
                 if index == 2 {
-                    // 第三个按钮有emoji
                     Text("🙈")
                         .font(.system(size: 18))
                 } else {
                     Image(systemName: index == 0 ? "heart.fill" : "flame.fill")
                         .font(.system(size: 18))
-                        .foregroundColor(Color(hex: "#4A5565"))
+                        .foregroundColor(.white)
                 }
                 
                 Text(strategy.title)
-                    .font(.system(size: 16, weight: .bold, design: .rounded)) // Nunito 700, 16px
-                    .foregroundColor(Color(hex: "#4A5565")) // 根据Figma: #4A5565
+                    .font(.system(size: 16, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: index == 2 ? 61.36 : 57.37) // 根据Figma: 第三个按钮高度不同
-            .background(Color(hex: "#F3F4F6")) // 根据Figma: #F3F4F6
+            .frame(height: index == 2 ? 61.36 : 57.37)
+            .background(.regularMaterial)
             .overlay(
-                RoundedRectangle(cornerRadius: 12) // 根据Figma: borderRadius 12px
-                    .stroke(Color(hex: "#E5E7EB"), lineWidth: 0.69) // 根据Figma: #E5E7EB, strokeWeight 0.69px
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.white.opacity(0.3), lineWidth: 0.69)
             )
             .cornerRadius(12)
         }
@@ -466,12 +473,45 @@ struct StrategyPouchSheet: View {
                 .padding(24)
             }
         }
-        .background(Color(hex: "#FDFBF7"))
+        .background(AppColors.cardBackground)
         .overlay(
             RoundedRectangle(cornerRadius: 16)
                 .stroke(Color(hex: "#E8DCC6"), lineWidth: 1)
         )
         .cornerRadius(16)
+    }
+}
+
+// 毛玻璃衍射底纹（场景图强模糊，用作情商亮点区域背景）
+struct FrostedGlassDiffractionBackground: View {
+    let visualData: VisualData
+    let baseURL: String
+    
+    var body: some View {
+        Group {
+            if let imageURL = visualData.getAccessibleImageURL(baseURL: baseURL) {
+                ImageLoaderView(
+                    imageUrl: imageURL,
+                    imageBase64: visualData.imageBase64,
+                    placeholder: "",
+                    contentMode: .fill
+                )
+            } else if let b64 = visualData.imageBase64, !b64.isEmpty,
+                      let data = Data(base64Encoded: b64),
+                      let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else {
+                Color.clear
+            }
+        }
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+        .scaleEffect(1.15)
+        .blur(radius: 55)
+        .opacity(0.28)
+        .overlay(Color.black.opacity(0.12))
+        .clipped()
     }
 }
 
