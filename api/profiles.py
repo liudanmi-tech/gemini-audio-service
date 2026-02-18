@@ -1,10 +1,11 @@
 """
 档案管理API路由
 """
+import os
 import time
 from typing import List, Optional, Dict, Tuple, Any
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
@@ -176,6 +177,7 @@ async def update_profile(
     db: AsyncSession = Depends(get_db)
 ):
     """更新档案"""
+    logger.info(f"[档案更新] profile_id={profile_id} user_id={user_id} data={profile_data.model_dump(exclude_none=True)}")
     result = await db.execute(
         select(Profile).where(
             Profile.id == uuid.UUID(profile_id),
@@ -185,6 +187,7 @@ async def update_profile(
     profile = result.scalar_one_or_none()
     
     if not profile:
+        logger.warning(f"[档案更新] 档案不存在: profile_id={profile_id}")
         raise HTTPException(status_code=404, detail="档案不存在")
     
     # 更新字段
@@ -207,9 +210,9 @@ async def update_profile(
     if profile_data.audio_url is not None:
         profile.audio_url = profile_data.audio_url
     
-    # 提交更改
     await db.commit()
     _invalidate_profiles_cache(user_id)
+    logger.info(f"[档案更新] ✅ 成功 profile_id={profile_id} photo_url={profile.photo_url}")
     # 刷新对象以获取最新的updated_at（由数据库自动更新）
     await db.refresh(profile)
 
@@ -256,42 +259,60 @@ async def delete_profile(
 @router.post("/upload-photo", summary="上传档案照片")
 async def upload_profile_photo(
     file: UploadFile = File(...),
+    profile_id: Optional[str] = Query(None, description="档案ID，传入则照片与该档案绑定"),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
-    """上传档案照片到OSS并返回URL"""
+    """上传档案照片到OSS并返回URL。传入 profile_id 时照片与该档案绑定，路径固定为 profile_{profile_id}"""
     try:
-        # 读取文件内容
         file_content = await file.read()
         file_size = len(file_content)
         
-        logger.info(f"收到图片上传请求: 文件名={file.filename}, 大小={file_size} 字节, 用户={user_id}")
+        logger.info(f"[档案照片] 收到上传请求: 文件名={file.filename}, 大小={file_size} 字节, 用户={user_id}, profile_id={profile_id}")
         
-        # 导入OSS上传函数
         from main import upload_image_to_oss
         
-        # 生成唯一的图片ID
-        image_id = str(uuid.uuid4())
+        # 有 profile_id 时与档案绑定，路径固定；新建档案时用随机 id
+        if profile_id and profile_id.strip():
+            try:
+                pid = uuid.UUID(profile_id)
+                # 校验档案属于当前用户
+                r = await db.execute(select(Profile).where(Profile.id == pid, Profile.user_id == uuid.UUID(user_id)))
+                if r.scalar_one_or_none():
+                    session_id = f"profile_{profile_id}"
+                    logger.info(f"[档案照片] 与档案绑定: profile_id={profile_id}")
+                else:
+                    session_id = f"profile_{uuid.uuid4()}"
+                    logger.warning(f"[档案照片] profile_id 不属于当前用户，使用随机路径")
+            except (ValueError, TypeError):
+                session_id = f"profile_{uuid.uuid4()}"
+        else:
+            session_id = f"profile_{uuid.uuid4()}"
         
-        # 上传到OSS (使用 user_id 和 image_id 作为路径)
-        logger.info(f"开始上传图片到OSS: image_id={image_id}, user_id={user_id}")
-        photo_url = upload_image_to_oss(
+        # 上传到OSS (路径: images/{user_id}/profile_{uuid}/0.png)
+        content_type = file.content_type or "image/jpeg"
+        if content_type not in ("image/jpeg", "image/png", "image/webp"):
+            content_type = "image/jpeg"
+        logger.info(f"[档案照片] 开始上传OSS: session_id={session_id} type={content_type}")
+        oss_url = upload_image_to_oss(
             image_bytes=file_content,
             user_id=user_id,
-            session_id=f"profile_{image_id}",  # 使用 profile_ 前缀区分
-            image_index=0
+            session_id=session_id,
+            image_index=0,
+            content_type=content_type
         )
         
-        if not photo_url:
-            logger.error(f"❌ OSS上传返回None，可能OSS未启用或上传失败")
-            raise HTTPException(status_code=500, detail="图片上传失败：OSS上传返回空结果")
+        if not oss_url:
+            logger.error(f"[档案照片] ❌ OSS上传返回None，可能OSS未启用或上传失败")
+            raise HTTPException(status_code=500, detail="图片上传失败：OSS未启用或上传失败")
         
-        logger.info(f"✅ 图片上传成功: {photo_url}")
+        logger.info(f"[档案照片] ✅ OSS上传成功")
         
-        response_data = {
-            "photo_url": photo_url
-        }
-        logger.info(f"返回响应数据: {response_data}")
+        # 返回完整 API URL（OSS 为私有，需经后端 /api/v1/images/{session_id}/{index} 代理）
+        api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213")
+        photo_url = f"{api_base.rstrip('/')}/api/v1/images/{session_id}/0"
+        response_data = {"photo_url": photo_url}
+        logger.info(f"[档案照片] 返回 photo_url={photo_url}")
         return response_data
     except HTTPException:
         # 重新抛出HTTP异常

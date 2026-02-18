@@ -10,11 +10,9 @@ echo "========== 部署 main.py 并重启 =========="
 echo "服务器: $SERVER"
 echo ""
 
-echo "1. 上传 main.py、utils、scripts（含图片诊断）..."
-scp -o ConnectTimeout=25 "$SCRIPT_DIR/main.py" "$SERVER:~/gemini-audio-service/" || {
-  echo "❌ main.py 上传失败"
-  exit 1
-}
+echo "1. 上传 main.py、api/profiles.py、utils、scripts..."
+scp -o ConnectTimeout=25 "$SCRIPT_DIR/main.py" "$SERVER:~/gemini-audio-service/" || { echo "❌ main.py 上传失败"; exit 1; }
+scp -o ConnectTimeout=25 "$SCRIPT_DIR/api/profiles.py" "$SERVER:~/gemini-audio-service/api/" || { echo "❌ api/profiles.py 上传失败"; exit 1; }
 scp -o ConnectTimeout=25 "$SCRIPT_DIR/utils/audio_storage.py" "$SERVER:~/gemini-audio-service/utils/" 2>/dev/null || true
 scp -o ConnectTimeout=25 "$SCRIPT_DIR/scripts/check_visual_data.py" "$SERVER:~/gemini-audio-service/scripts/" 2>/dev/null || true
 

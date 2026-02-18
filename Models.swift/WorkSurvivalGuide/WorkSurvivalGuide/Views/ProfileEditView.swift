@@ -182,13 +182,13 @@ struct ProfileEditView: View {
                                             Circle()
                                                 .stroke(Color.white, lineWidth: 3)
                                         )
-                                } else if let photoUrl = viewModel.photoUrl, let url = URL(string: photoUrl) {
+                                } else if let photoUrl = Profile.getAccessiblePhotoURL(photoUrl: viewModel.photoUrl, baseURL: NetworkManager.shared.getBaseURL(), cacheBuster: profile.map { "\(Int($0.updatedAt.timeIntervalSince1970))" }), let url = URL(string: photoUrl) {
                                     RemoteImageView(
                                         url: url,
                                         width: 120,
                                         height: 120
                                     )
-                                    .id(photoUrl) // 添加id，确保URL变化时重新创建视图
+                                    .id(photoUrl)
                                     .overlay(
                                         Circle()
                                             .stroke(Color.white, lineWidth: 3)
@@ -442,8 +442,8 @@ struct ProfileEditView: View {
                         
                         // 上传图片到服务器
                         do {
-                            print("📤 [ProfileEditView] 开始上传图片...")
-                            let photoUrl = try await NetworkManager.shared.uploadProfilePhoto(imageData: data)
+                            print("📤 [ProfileEditView] 开始上传图片... profileId=\(profile?.id ?? "新建")")
+                            let photoUrl = try await NetworkManager.shared.uploadProfilePhoto(imageData: data, profileId: profile?.id)
                             await MainActor.run {
                                 viewModel.photoUrl = photoUrl
                                 isUploadingPhoto = false

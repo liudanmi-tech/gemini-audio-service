@@ -101,7 +101,12 @@ struct RemoteImageView: View {
         
         Task {
             do {
-                let (data, response) = try await URLSession.shared.data(from: url)
+                var request = URLRequest(url: url)
+                request.timeoutInterval = 60
+                if url.absoluteString.contains("/api/v1/"), let token = KeychainManager.shared.getToken(), !token.isEmpty {
+                    request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                }
+                let (data, response) = try await URLSession.shared.data(for: request)
                 
                 guard let httpResponse = response as? HTTPURLResponse else {
                     throw NSError(domain: "RemoteImageView", code: -1, userInfo: [NSLocalizedDescriptionKey: "无效的HTTP响应"])

@@ -994,9 +994,8 @@ class NetworkManager {
     
     // MARK: - 图片上传API
     
-    // 上传档案照片
-    func uploadProfilePhoto(imageData: Data) async throws -> String {
-        // 检查token是否为空
+    // 上传档案照片（profileId 可选，传入则照片与该档案绑定）
+    func uploadProfilePhoto(imageData: Data, profileId: String? = nil) async throws -> String {
         guard hasValidToken() else {
             throw NSError(
                 domain: "NetworkError",
@@ -1005,12 +1004,15 @@ class NetworkManager {
             )
         }
         
-        print("🌐 [NetworkManager] 上传档案照片")
+        var urlString = "\(baseURL)/profiles/upload-photo"
+        if let pid = profileId, !pid.isEmpty {
+            urlString += "?profile_id=\(pid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? pid)"
+        }
+        print("🌐 [NetworkManager] 上传档案照片 profileId=\(profileId ?? "nil")")
         print("  图片大小: \(imageData.count) 字节")
         
         let uploadTask = AF.upload(
             multipartFormData: { multipartFormData in
-                // 添加图片文件
                 multipartFormData.append(
                     imageData,
                     withName: "file",
@@ -1018,7 +1020,7 @@ class NetworkManager {
                     mimeType: "image/jpeg"
                 )
             },
-            to: "\(baseURL)/profiles/upload-photo",
+            to: urlString,
             method: .post,
             headers: [
                 "Authorization": "Bearer \(getAuthToken())"

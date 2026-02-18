@@ -109,6 +109,36 @@ struct Profile: Codable, Identifiable {
     }
 }
 
+// 档案照片 URL 转换（OSS 私有，需转 API URL）
+extension Profile {
+    /// 获取可访问的档案照片 URL（含 cacheBuster 防止修改后不刷新）
+    func getAccessiblePhotoURL(baseURL: String, cacheBuster: String? = nil) -> String? {
+        guard var url = Self.getAccessiblePhotoURL(photoUrl: photoUrl, baseURL: baseURL) else { return nil }
+        let ts = cacheBuster ?? "\(Int(updatedAt.timeIntervalSince1970))"
+        url += (url.contains("?") ? "&" : "?") + "t=\(ts)"
+        return url
+    }
+    static func getAccessiblePhotoURL(photoUrl: String?, baseURL: String, cacheBuster: String? = nil) -> String? {
+        guard let photoUrl = photoUrl, !photoUrl.isEmpty else { return nil }
+        var url: String
+        if photoUrl.contains("/api/v1/images/") { url = photoUrl.components(separatedBy: "?").first ?? photoUrl }
+        else if photoUrl.contains("/images/"), let pathRange = photoUrl.range(of: "/images/") {
+            let path = String(photoUrl[pathRange.upperBound...])
+            let parts = path.components(separatedBy: "/")
+            if parts.count >= 3 {
+                let sessionId = parts[1].components(separatedBy: "?").first ?? parts[1]
+                let indexPart = (parts[2].components(separatedBy: ".").first ?? parts[2]).replacingOccurrences(of: ".png", with: "")
+                let base = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+                url = "\(base)/images/\(sessionId)/\(indexPart)"
+            } else { url = photoUrl }
+        } else { url = photoUrl }
+        if let cb = cacheBuster, !cb.isEmpty {
+            url += (url.contains("?") ? "&" : "?") + "t=\(cb)"
+        }
+        return url
+    }
+}
+
 // 音频片段数据模型
 struct AudioSegment: Codable, Identifiable {
     let id: String

@@ -398,7 +398,8 @@ def wait_for_file_active(file: Any, max_wait_time=300) -> Any:
     return file
 
 
-def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image_index: int) -> Optional[str]:
+def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image_index: int,
+                        content_type: str = "image/png") -> Optional[str]:
     """
     上传图片到阿里云 OSS
     
@@ -407,6 +408,7 @@ def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image
         user_id: 用户 ID
         session_id: 会话 ID
         image_index: 图片索引
+        content_type: MIME 类型，默认 image/png
         
     Returns:
         OSS URL，如果失败返回 None
@@ -416,16 +418,14 @@ def upload_image_to_oss(image_bytes: bytes, user_id: str, session_id: str, image
         return None
     
     try:
-        # 构建 OSS 文件路径: images/{user_id}/{session_id}/{image_index}.png
+        # 统一使用 .png 后缀便于 API 拉取
         oss_key = f"images/{user_id}/{session_id}/{image_index}.png"
         
-        logger.info(f"上传图片到 OSS: {oss_key}")
+        logger.info(f"上传图片到 OSS: {oss_key} type={content_type}")
         logger.info(f"图片大小: {len(image_bytes)} 字节")
         
-        # 上传图片到 OSS（不设置 x-oss-object-acl，避免 bucket 策略导致 "Put public object acl is not allowed" 403）
-        # 图片保持私有，客户端通过后端 API GET /api/v1/images/{session_id}/{image_index} 访问
         start_time = time.time()
-        headers = {'Content-Type': 'image/png'}
+        headers = {'Content-Type': content_type}
         oss_bucket.put_object(oss_key, image_bytes, headers=headers)
         upload_time = time.time() - start_time
         
@@ -2545,17 +2545,22 @@ async def get_image(
         图片数据（PNG 格式）
     """
     try:
-        # 验证任务属于当前用户
-        result = await db.execute(
-            select(Session).where(
-                Session.id == uuid.UUID(session_id),
-                Session.user_id == uuid.UUID(user_id)
+        # 档案照片：session_id 为 profile_{uuid}，无需查 Session 表
+        # 策略图片：session_id 为任务 UUID，需验证归属
+        if session_id.startswith("profile_"):
+            # 档案照片路径 images/{user_id}/profile_xxx/0.png，仅校验 user_id 归属
+            pass
+        else:
+            # 策略图片：验证任务属于当前用户
+            result = await db.execute(
+                select(Session).where(
+                    Session.id == uuid.UUID(session_id),
+                    Session.user_id == uuid.UUID(user_id)
+                )
             )
-        )
-        db_session = result.scalar_one_or_none()
-        
-        if not db_session:
-            raise HTTPException(status_code=404, detail="任务不存在")
+            db_session = result.scalar_one_or_none()
+            if not db_session:
+                raise HTTPException(status_code=404, detail="任务不存在")
         
         # 如果 OSS 未启用，返回错误
         if not USE_OSS or oss_bucket is None:
@@ -2576,10 +2581,15 @@ async def get_image(
             
             logger.info(f"✅ 图片获取成功，大小: {len(image_data)} 字节，耗时: {fetch_time:.2f} 秒")
             
-            # 返回图片数据，设置缓存头
+            media_type = "image/png"
+            if len(image_data) >= 2 and image_data[0:2] == b"\xff\xd8":
+                media_type = "image/jpeg"
+            elif len(image_data) >= 4 and image_data[0:4] == b"\x89PNG":
+                media_type = "image/png"
+            
             return Response(
                 content=image_data,
-                media_type="image/png",
+                media_type=media_type,
                 headers={
                     "Cache-Control": "public, max-age=3600",  # 缓存 1 小时
                     "Content-Disposition": f'inline; filename="image_{image_index}.png"'

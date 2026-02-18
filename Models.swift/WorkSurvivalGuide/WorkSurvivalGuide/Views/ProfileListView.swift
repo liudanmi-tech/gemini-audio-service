@@ -60,6 +60,7 @@ struct ProfileListView: View {
                                         }
                                     }
                                 })
+                                    .id("\(profile.id)-\(profile.updatedAt.timeIntervalSince1970)")
                                     .padding(.horizontal, 19.992115020751953) // 根据Figma: padding horizontal 19.99px
                                     .onTapGesture {
                                         print("📋 [ProfileListView] 点击档案: \(profile.id)")
@@ -177,8 +178,8 @@ struct ProfileCardView: View {
             VStack(alignment: .leading, spacing: 0) {
             // 照片、名称、关系区域
             VStack(alignment: .center, spacing: 0) {
-                // 照片（圆形，带白色边框）
-                if let photoUrl = profile.photoUrl {
+                // 照片（圆形，带白色边框，OSS URL 需转换为 API URL）
+                if let photoUrl = profile.getAccessiblePhotoURL(baseURL: NetworkManager.shared.getBaseURL()) {
                     if let url = URL(string: photoUrl) {
                         RemoteImageView(
                             url: url,
