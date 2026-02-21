@@ -112,10 +112,12 @@ struct StrategyAnalysisView_Updated: View {
                             let content = SkillCardContent(
                                 sighCount: nil, hahaCount: nil, moodState: nil, moodEmoji: nil, charCount: nil,
                                 visual: analysis.visual.isEmpty ? nil : analysis.visual,
-                                strategies: analysis.strategies.isEmpty ? nil : analysis.strategies
+                                strategies: analysis.strategies.isEmpty ? nil : analysis.strategies,
+                                defenseEnergyPct: nil, dominantDefense: nil, statusAssessment: nil,
+                                cognitiveTriad: nil, insight: nil, strategy: nil, crisisAlert: nil
                             )
                             return skills.map { s in
-                                let name = (["workplace_jungle": "职场丛林", "family_relationship": "家庭关系", "emotion_recognition": "情绪识别"])[s.skillId] ?? s.skillId
+                                let name = (["workplace_jungle": "职场丛林", "family_relationship": "家庭关系", "emotion_recognition": "情绪识别", "depression_prevention": "防抑郁监控"])[s.skillId] ?? s.skillId
                                 let ct = s.skillId == "emotion_recognition" ? "emotion" : "strategy"
                                 return SkillCard(skillId: s.skillId, skillName: name, contentType: ct, content: content)
                             }
@@ -305,7 +307,8 @@ struct StrategyAnalysisView_Updated: View {
             "family_relationship": "家庭关系",
             "education_communication": "教育沟通",
             "brainstorm": "头脑风暴",
-            "emotion_recognition": "情绪识别"
+            "emotion_recognition": "情绪识别",
+            "depression_prevention": "防抑郁监控"
         ]
         return skills.map { names[$0.skillId] ?? $0.skillId }.joined(separator: "、")
     }
@@ -402,6 +405,8 @@ struct StrategySkillCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             if card.contentType == "emotion", let content = card.content?.emotionContent {
                 EmotionCardView(content: content)
+            } else if card.contentType == "mental_health", let content = card.content?.mentalHealthContent {
+                MentalHealthCardView(content: content)
             } else if let content = card.content?.strategyContent {
                 StrategyCardContent(content: content, baseURL: baseURL)
             } else {
@@ -435,6 +440,127 @@ struct EmotionCardView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
+    }
+}
+
+// 防抑郁监控卡片 UI
+struct MentalHealthCardView: View {
+    let content: SkillCardMentalHealthContent
+    
+    private func triadColor(_ status: String) -> Color {
+        switch status.lowercased() {
+        case "red": return Color.red
+        case "yellow": return Color.yellow
+        default: return Color.green
+        }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if content.crisisAlert {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                    Text("请重视当前状态，必要时寻求专业帮助")
+                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        .foregroundColor(.red)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity)
+                .background(Color.red.opacity(0.15))
+                .cornerRadius(8)
+                Text("危机热线：4001619995")
+                    .font(.system(size: 13, weight: .medium, design: .rounded))
+                    .foregroundColor(.red)
+            }
+            
+            // 防御能耗仪表盘
+            VStack(alignment: .leading, spacing: 8) {
+                Text("防御能耗")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(AppColors.headerText.opacity(0.6))
+                    .textCase(.uppercase)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.white.opacity(0.1))
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(content.defenseEnergyPct > 70 ? Color.red : (content.defenseEnergyPct > 40 ? Color.yellow : Color.green))
+                            .frame(width: max(0, geo.size.width * CGFloat(min(100, max(0, content.defenseEnergyPct))) / 100))
+                    }
+                }
+                .frame(height: 8)
+                Text("\(content.defenseEnergyPct)% · \(content.dominantDefense)")
+                    .font(.system(size: 13, design: .rounded))
+                    .foregroundColor(AppColors.headerText.opacity(0.8))
+                if !content.statusAssessment.isEmpty {
+                    Text(content.statusAssessment)
+                        .font(.system(size: 12, design: .rounded))
+                        .foregroundColor(AppColors.headerText.opacity(0.6))
+                }
+            }
+            
+            // 认知三联征
+            if let triad = content.cognitiveTriad {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("认知趋势")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(AppColors.headerText.opacity(0.6))
+                        .textCase(.uppercase)
+                    HStack(alignment: .top, spacing: 16) {
+                        if let s = triad.selfStatus {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Circle().fill(triadColor(s.status)).frame(width: 8, height: 8)
+                                Text("自我").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
+                                Text(s.reason).font(.system(size: 12, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.8))
+                            }
+                        }
+                        if let w = triad.world {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Circle().fill(triadColor(w.status)).frame(width: 8, height: 8)
+                                Text("世界").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
+                                Text(w.reason).font(.system(size: 12, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.8))
+                            }
+                        }
+                        if let f = triad.future {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Circle().fill(triadColor(f.status)).frame(width: 8, height: 8)
+                                Text("未来").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
+                                Text(f.reason).font(.system(size: 12, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.8))
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if !content.insight.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("军师洞察")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(AppColors.headerText.opacity(0.6))
+                        .textCase(.uppercase)
+                    Text(content.insight)
+                        .font(.system(size: 14, design: .rounded))
+                        .foregroundColor(AppColors.headerText)
+                        .lineSpacing(4)
+                }
+            }
+            
+            if !content.strategy.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("破局策略")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .foregroundColor(AppColors.headerText.opacity(0.6))
+                        .textCase(.uppercase)
+                    Text(content.strategy)
+                        .font(.system(size: 14, design: .rounded))
+                        .foregroundColor(AppColors.headerText)
+                        .lineSpacing(4)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 16)
     }
 }
 

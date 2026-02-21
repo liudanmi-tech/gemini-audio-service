@@ -163,6 +163,41 @@ def _supplement_scenes_by_participants(transcript: list, scenes: list) -> list:
     return scenes
 
 
+# 防抑郁监控触发关键词（源于认知三联征 + 语言指纹）
+_DEPRESSION_CRISIS_KEYWORDS = ["不想活", "想活了", "活不下去", "死了算了", "想死", "自杀"]
+_DEPRESSION_GENERAL_KEYWORDS = [
+    "搞砸", "没用", "失败", "我不配", "废物", "不行", "很差",
+    "针对", "没意思", "不公平", "没办法", "讨厌", "都怪我",
+    "完蛋", "没希望", "没救了", "不会好了",
+    "总是", "绝对", "从来", "永远", "每次",
+    "累", "烦", "焦虑", "抑郁", "崩溃", "压力大", "撑不住",
+]
+
+
+def _should_trigger_depression_prevention(transcript: list) -> bool:
+    """仅当用户话术命中关键词时触发防抑郁监控"""
+    user_lines = []
+    for item in transcript:
+        if item.get("is_me") is True:
+            text = item.get("text", item.get("content", ""))
+            if text:
+                user_lines.append(text)
+    user_text = "".join(user_lines)
+    char_count = len(user_text.replace(" ", "").replace("\n", ""))
+    # 强制触发：命中危机词
+    for kw in _DEPRESSION_CRISIS_KEYWORDS:
+        if kw in user_text:
+            logger.info(f"防抑郁监控触发(危机词): 命中「{kw}」")
+            return True
+    # 一般触发：字数>=50 且命中任一一般词
+    if char_count >= 50:
+        for kw in _DEPRESSION_GENERAL_KEYWORDS:
+            if kw in user_text:
+                logger.info(f"防抑郁监控触发: 字数={char_count} 命中「{kw}」")
+                return True
+    return False
+
+
 async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = None) -> List[Dict]:
     """
     根据场景分类结果匹配技能
@@ -220,16 +255,22 @@ async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = 
     
     # 情绪识别技能：所有对话都运行，单独追加（category=emotion 不参与场景匹配）
     for skill in all_skills:
-        if skill["category"] == "emotion" and skill["skill_id"] not in [s["skill_id"] for s in matched_skills]:
-            matched_skills.append({
-                "skill_id": skill["skill_id"],
-                "name": skill["name"],
-                "category": skill["category"],
-                "priority": skill["priority"],
-                "confidence": 0.9,  # 情绪技能始终高置信
-                "scene_reasoning": "情绪识别适用于所有对话"
-            })
-            logger.debug(f"  ✅ 追加情绪技能: {skill['skill_id']}")
+        if skill["category"] != "emotion" or skill["skill_id"] in [s["skill_id"] for s in matched_skills]:
+            continue
+        # 防抑郁监控：仅当 transcript 满足触发条件时追加
+        if skill["skill_id"] == "depression_prevention":
+            if not _should_trigger_depression_prevention(transcript or []):
+                logger.debug(f"  ⏭️ 跳过 depression_prevention: 未命中触发关键词")
+                continue
+        matched_skills.append({
+            "skill_id": skill["skill_id"],
+            "name": skill["name"],
+            "category": skill["category"],
+            "priority": skill["priority"],
+            "confidence": 0.9,  # 情绪技能始终高置信
+            "scene_reasoning": "情绪识别适用于所有对话"
+        })
+        logger.debug(f"  ✅ 追加情绪技能: {skill['skill_id']}")
     
     # 去重（同一个技能可能匹配多个场景）
     seen = set()

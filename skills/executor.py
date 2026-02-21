@@ -140,6 +140,100 @@ async def _execute_emotion_skill(
         }
 
 
+async def _execute_depression_skill(
+    skill: Dict,
+    transcript: List[Dict],
+    context: Dict,
+    model=None
+) -> Dict:
+    """执行防抑郁监控技能：解析 LLM 返回的 JSON，输出 mental_health_insight"""
+    if model is None:
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
+    skill_id = skill.get("skill_id", "depression_prevention")
+    skill_name = skill.get("name", "防抑郁监控")
+    prompt_template = skill.get("prompt_template", "")
+    start_time = time.time()
+
+    try:
+        # 1. 提取用户自己的话术（is_me=True）
+        user_lines = []
+        for item in transcript:
+            if item.get("is_me") is True:
+                text = item.get("text", item.get("content", ""))
+                if text:
+                    user_lines.append(text)
+        user_text = "\n".join(user_lines) if user_lines else ""
+
+        if not user_text.strip():
+            logger.info(f"防抑郁监控跳过: 用户无话术")
+            return {
+                "skill_id": skill_id,
+                "name": skill_name,
+                "result": None,
+                "mental_health_insight": None,
+                "execution_time_ms": int((time.time() - start_time) * 1000),
+                "success": False,
+                "error_message": "用户无话术",
+                "priority": skill.get("priority", 45),
+                "confidence": skill.get("confidence", 0.9),
+            }
+
+        # 2. 组装 prompt 并调用 LLM
+        prompt = prompt_template.replace("{transcript_json}", json.dumps(user_lines, ensure_ascii=False, indent=2))
+        prompt = prompt.replace("{session_id}", context.get("session_id", ""))
+        prompt = prompt.replace("{user_id}", context.get("user_id", ""))
+        prompt = prompt.replace("{memory_context}", context.get("memory_context", ""))
+        response = model.generate_content(prompt)
+
+        # 3. 解析 JSON 响应
+        data = parse_gemini_response(response.text)
+        if not isinstance(data, dict):
+            raise ValueError("LLM 未返回有效 JSON 对象")
+
+        # 4. 构建 mental_health_insight 结构
+        triad = data.get("cognitive_triad", {}) or {}
+        mental_health_insight = {
+            "defense_energy_pct": data.get("defense_energy_pct", 50),
+            "dominant_defense": data.get("dominant_defense", ""),
+            "status_assessment": data.get("status_assessment", ""),
+            "cognitive_triad": {
+                "self": triad.get("self", {"status": "green", "reason": ""}),
+                "world": triad.get("world", {"status": "green", "reason": ""}),
+                "future": triad.get("future", {"status": "green", "reason": ""}),
+            },
+            "insight": data.get("insight", ""),
+            "strategy": data.get("strategy", ""),
+            "crisis_alert": data.get("crisis_alert", False),
+        }
+
+        execution_time_ms = int((time.time() - start_time) * 1000)
+        logger.info(f"防抑郁监控完成: crisis_alert={mental_health_insight['crisis_alert']} energy={mental_health_insight['defense_energy_pct']}%")
+        return {
+            "skill_id": skill_id,
+            "name": skill_name,
+            "result": None,
+            "mental_health_insight": mental_health_insight,
+            "execution_time_ms": execution_time_ms,
+            "success": True,
+            "priority": skill.get("priority", 45),
+            "confidence": skill.get("confidence", 0.9),
+        }
+    except Exception as e:
+        execution_time_ms = int((time.time() - start_time) * 1000) if 'start_time' in locals() else 0
+        logger.error(f"防抑郁监控失败: {e}")
+        return {
+            "skill_id": skill_id,
+            "name": skill_name,
+            "result": None,
+            "mental_health_insight": None,
+            "execution_time_ms": execution_time_ms,
+            "success": False,
+            "error_message": str(e),
+            "priority": skill.get("priority", 45),
+            "confidence": skill.get("confidence", 0.9),
+        }
+
+
 async def execute_skill(
     skill: Dict,
     transcript: List[Dict],
@@ -148,7 +242,7 @@ async def execute_skill(
 ) -> Dict:
     """
     执行单个技能
-    
+
     Args:
         skill: 技能信息（包含 prompt_template）
         transcript: 对话转录列表
@@ -161,6 +255,8 @@ async def execute_skill(
     skill_id = skill.get("skill_id", "unknown")
     if skill_id == "emotion_recognition":
         return await _execute_emotion_skill(skill, transcript, context, model)
+    if skill_id == "depression_prevention":
+        return await _execute_depression_skill(skill, transcript, context, model)
     
     if model is None:
         model = genai.GenerativeModel(GEMINI_FLASH_MODEL)

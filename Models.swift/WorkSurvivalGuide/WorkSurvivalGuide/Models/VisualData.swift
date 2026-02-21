@@ -53,6 +53,44 @@ struct SkillCardStrategyContent: Codable {
     }
 }
 
+// 技能卡片内容：防抑郁监控型
+struct SkillCardMentalHealthContent: Codable {
+    let defenseEnergyPct: Int
+    let dominantDefense: String
+    let statusAssessment: String
+    let cognitiveTriad: CognitiveTriad?
+    let insight: String
+    let strategy: String
+    let crisisAlert: Bool
+    
+    enum CodingKeys: String, CodingKey {
+        case defenseEnergyPct = "defense_energy_pct"
+        case dominantDefense = "dominant_defense"
+        case statusAssessment = "status_assessment"
+        case cognitiveTriad = "cognitive_triad"
+        case insight
+        case strategy
+        case crisisAlert = "crisis_alert"
+    }
+}
+
+struct CognitiveTriad: Codable {
+    let selfStatus: TriadItem?
+    let world: TriadItem?
+    let future: TriadItem?
+    
+    enum CodingKeys: String, CodingKey {
+        case selfStatus = "self"
+        case world
+        case future
+    }
+}
+
+struct TriadItem: Codable {
+    let status: String  // red | yellow | green
+    let reason: String
+}
+
 // 技能卡片内容：情绪型
 struct SkillCardEmotionContent: Codable {
     let sighCount: Int
@@ -86,7 +124,7 @@ struct SkillCard: Codable, Identifiable {
     }
 }
 
-// 技能卡片内容（支持 strategy / emotion），统一解码后按 contentType 使用
+// 技能卡片内容（支持 strategy / emotion / mental_health），统一解码后按 contentType 使用
 struct SkillCardContent: Codable {
     let sighCount: Int?
     let hahaCount: Int?
@@ -95,6 +133,13 @@ struct SkillCardContent: Codable {
     let charCount: Int?
     let visual: [VisualData]?
     let strategies: [StrategyItem]?
+    let defenseEnergyPct: Int?
+    let dominantDefense: String?
+    let statusAssessment: String?
+    let cognitiveTriad: CognitiveTriad?
+    let insight: String?
+    let strategy: String?
+    let crisisAlert: Bool?
     
     enum CodingKeys: String, CodingKey {
         case sighCount = "sigh_count"
@@ -104,6 +149,27 @@ struct SkillCardContent: Codable {
         case charCount = "char_count"
         case visual
         case strategies
+        case defenseEnergyPct = "defense_energy_pct"
+        case dominantDefense = "dominant_defense"
+        case statusAssessment = "status_assessment"
+        case cognitiveTriad = "cognitive_triad"
+        case insight
+        case strategy
+        case crisisAlert = "crisis_alert"
+    }
+    
+    var isMentalHealth: Bool { defenseEnergyPct != nil || insight != nil }
+    var mentalHealthContent: SkillCardMentalHealthContent? {
+        guard isMentalHealth else { return nil }
+        return SkillCardMentalHealthContent(
+            defenseEnergyPct: defenseEnergyPct ?? 50,
+            dominantDefense: dominantDefense ?? "",
+            statusAssessment: statusAssessment ?? "",
+            cognitiveTriad: cognitiveTriad,
+            insight: insight ?? "",
+            strategy: strategy ?? "",
+            crisisAlert: crisisAlert ?? false
+        )
     }
     
     var isEmotion: Bool { moodState != nil || moodEmoji != nil }

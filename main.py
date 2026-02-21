@@ -2175,6 +2175,7 @@ _SKILL_ID_TO_NAME = {
     "education_communication": "教育沟通",
     "brainstorm": "头脑风暴",
     "emotion_recognition": "情绪识别",
+    "depression_prevention": "防抑郁监控",
 }
 
 
@@ -2375,6 +2376,25 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
                     }
                 })
                 logger.info(f"  ✅ 情绪卡: {skill_id} mood={emotion_insight.get('mood_state')} sigh={emotion_insight.get('sigh_count')} haha={emotion_insight.get('haha_count')}")
+                continue
+            # 防抑郁监控技能
+            if skill_result.get("mental_health_insight") is not None:
+                mh = skill_result["mental_health_insight"]
+                skill_cards.append({
+                    "skill_id": skill_id,
+                    "skill_name": skill_name,
+                    "content_type": "mental_health",
+                    "content": {
+                        "defense_energy_pct": mh.get("defense_energy_pct", 50),
+                        "dominant_defense": mh.get("dominant_defense", ""),
+                        "status_assessment": mh.get("status_assessment", ""),
+                        "cognitive_triad": mh.get("cognitive_triad", {}),
+                        "insight": mh.get("insight", ""),
+                        "strategy": mh.get("strategy", ""),
+                        "crisis_alert": mh.get("crisis_alert", False),
+                    }
+                })
+                logger.info(f"  ✅ 防抑郁卡: {skill_id} crisis_alert={mh.get('crisis_alert')} energy={mh.get('defense_energy_pct')}%")
                 continue
             # 策略技能
             result = skill_result.get("result")
