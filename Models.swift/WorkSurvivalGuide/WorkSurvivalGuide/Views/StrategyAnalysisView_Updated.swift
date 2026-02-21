@@ -103,79 +103,61 @@ struct StrategyAnalysisView_Updated: View {
                 .padding()
             } else if let analysis = strategyAnalysis {
                 VStack(alignment: .leading, spacing: 0) {
-                    // 内容区域（根据Figma设计，场景还原图片在最上方）
-                    VStack(alignment: .leading, spacing: 0) {
-                        // 场景还原图片轮播（支持左右滑动查看多张）
-                        if !analysis.visual.isEmpty {
-                            SceneRestoreImageCarouselView(
-                                visualList: analysis.visual,
-                                baseURL: baseURL
+                    // 优先使用 skill_cards 多卡片滑动，无则尝试从 applied_skills+visual+strategies 构造兜底卡片
+                    let cardsToShow: [SkillCard] = {
+                        if let cards = analysis.skillCards, !cards.isEmpty { return cards }
+                        // skill_cards 解码失败时的兜底：从 visual+strategies+appliedSkills 构造
+                        if let skills = analysis.appliedSkills, skills.count >= 1,
+                           !analysis.visual.isEmpty || !analysis.strategies.isEmpty {
+                            let content = SkillCardContent(
+                                sighCount: nil, hahaCount: nil, moodState: nil, moodEmoji: nil, charCount: nil,
+                                visual: analysis.visual.isEmpty ? nil : analysis.visual,
+                                strategies: analysis.strategies.isEmpty ? nil : analysis.strategies
                             )
-                            .padding(.horizontal, 0.69) // 根据Figma: padding horizontal 0.69px
-                            .padding(.top, 0) // 对齐标题，不留距离
+                            return skills.map { s in
+                                let name = (["workplace_jungle": "职场丛林", "family_relationship": "家庭关系", "emotion_recognition": "情绪识别"])[s.skillId] ?? s.skillId
+                                let ct = s.skillId == "emotion_recognition" ? "emotion" : "strategy"
+                                return SkillCard(skillId: s.skillId, skillName: name, contentType: ct, content: content)
+                            }
                         }
-                        
-                        // 情商亮点 + 待提升点 + 推荐应对策略（底纹由整卡 .background 提供）
+                        return []
+                    }()
+                    if !cardsToShow.isEmpty {
+                        SkillCardsTabView(cards: cardsToShow, baseURL: baseURL)
+                            .padding(.horizontal, 0.69)
+                            .padding(.top, 0)
+                    } else {
+                        // 兼容旧数据：场景还原图片 + 情商亮点等
                         VStack(alignment: .leading, spacing: 0) {
-                            // 情商亮点和待提升点
-                            VStack(alignment: .leading, spacing: 7.9968414306640625) {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("情商亮点：")
-                                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                                        .foregroundColor(Color(hex: "#5E7C8B"))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        
-                                    ExpandableTextBlock(
-                                        text: StrategyAnalysisView_Updated.extractHighlights(from: analysis.strategies),
-                                        isExpanded: $highlightsExpanded
-                                    )
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text("待提升点：")
-                                            .font(.system(size: 14, weight: .bold, design: .rounded))
-                                        .foregroundColor(Color(hex: "#5E7C8B"))
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    
-                                    ExpandableTextBlock(
-                                        text: StrategyAnalysisView_Updated.extractImprovements(from: analysis.strategies),
-                                        isExpanded: $improvementsExpanded
-                                    )
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                            
-                            // 推荐应对策略
-                            VStack(alignment: .leading, spacing: 11.99520492553711) {
-                                Text("推荐应对策略")
-                                    .font(.system(size: 12, weight: .bold, design: .rounded))
-                                    .foregroundColor(AppColors.headerText.opacity(0.5))
-                                    .tracking(1.2)
-                                    .textCase(.uppercase)
-                                    .frame(height: 15.99)
-                                    .frame(maxWidth: .infinity)
-                                
-                                VStack(spacing: 11.995338439941406) {
-                                    ForEach(Array(analysis.strategies.prefix(3).enumerated()), id: \.element.id) { index, strategy in
-                                        StrategyButtonView(
-                                            strategy: strategy,
-                                            index: index
-                                        ) {
-                                            strategyPopupItem = strategy
-                                        }
+                            // 旧数据无 skill_cards 时，提供重新生成入口
+                            if analysis.skillCards == nil || (analysis.skillCards?.isEmpty == true), !analysis.visual.isEmpty {
+                                Button(action: { loadStrategyAnalysis(forceRegenerate: true) }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "arrow.clockwise")
+                                        Text("重新生成（含情绪分析）")
                                     }
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundColor(Color(hex: "#5E7C8B"))
                                 }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
                             }
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                            .padding(.top, 24)
+                            if !analysis.visual.isEmpty {
+                                SceneRestoreImageCarouselView(
+                                    visualList: analysis.visual,
+                                    baseURL: baseURL
+                                )
+                                .padding(.horizontal, 0.69)
+                                .padding(.top, 0)
+                            }
+                            
+                            LegacyStrategyContent(
+                                analysis: analysis,
+                                highlightsExpanded: $highlightsExpanded,
+                                improvementsExpanded: $improvementsExpanded,
+                                strategyPopupItem: $strategyPopupItem
+                            )
                         }
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                        .padding(.leading, 23.99)
-                        .padding(.trailing, 23.99)
-                        .padding(.top, 24)
-                        .padding(.bottom, 24)
                     }
                 }
             }
@@ -183,8 +165,14 @@ struct StrategyAnalysisView_Updated: View {
         .frame(maxWidth: .infinity, alignment: .leading) // 确保填充宽度但不超出父容器
         .background(
             Group {
-                if let analysis = strategyAnalysis, let firstVisual = analysis.visual.first {
-                    FrostedGlassDiffractionBackground(visualData: firstVisual, baseURL: baseURL)
+                if let analysis = strategyAnalysis {
+                    let firstVisual: VisualData? = analysis.visual.first
+                        ?? analysis.skillCards?.compactMap { $0.content?.strategyContent?.visual?.first }.first
+                    if let v = firstVisual {
+                        FrostedGlassDiffractionBackground(visualData: v, baseURL: baseURL)
+                    } else {
+                        AppColors.cardBackground
+                    }
                 } else {
                     AppColors.cardBackground
                 }
@@ -217,11 +205,16 @@ struct StrategyAnalysisView_Updated: View {
         }
     }
     
-    private func loadStrategyAnalysis() {
+    private func loadStrategyAnalysis(forceRegenerate: Bool = false) {
         let cacheManager = DetailCacheManager.shared
         
-        // 先检查缓存
-        if let cachedStrategy = cacheManager.getCachedStrategy(sessionId: sessionId) {
+        // 强制重新生成时清除缓存
+        if forceRegenerate {
+            cacheManager.clearCache(for: sessionId)
+        }
+        
+        // 非强制时先检查缓存
+        if !forceRegenerate, let cachedStrategy = cacheManager.getCachedStrategy(sessionId: sessionId) {
             print("✅ [StrategyAnalysisView] 使用缓存的策略分析数据: \(sessionId)")
             Task { @MainActor in
                 strategyAnalysis = cachedStrategy
@@ -254,9 +247,9 @@ struct StrategyAnalysisView_Updated: View {
                 // 设置加载状态
                 cacheManager.setLoadingStrategy(true, for: sessionId)
                 
-                print("📊 [StrategyAnalysisView] 开始加载策略分析，sessionId: \(sessionId)")
+                print("📊 [StrategyAnalysisView] 开始加载策略分析，sessionId: \(sessionId) forceRegenerate=\(forceRegenerate)")
                 
-                let response = try await NetworkManager.shared.getStrategyAnalysis(sessionId: sessionId)
+                let response = try await NetworkManager.shared.getStrategyAnalysis(sessionId: sessionId, forceRegenerate: forceRegenerate)
                 
                 print("✅ [StrategyAnalysisView] 策略分析加载成功")
                 print("  关键时刻数量: \(response.visual.count)")
@@ -268,6 +261,11 @@ struct StrategyAnalysisView_Updated: View {
                 await MainActor.run {
                     strategyAnalysis = response
                     isLoading = false
+                    if let cards = response.skillCards, !cards.isEmpty {
+                        print("✅ [StrategyAnalysisView] 使用 skill_cards 展示，共 \(cards.count) 张")
+                    } else {
+                        print("⚠️ [StrategyAnalysisView] skillCards 为空或 nil，回退到旧版 visual+strategies")
+                    }
                 }
             } catch {
                 print("❌ [StrategyAnalysisView] 策略分析加载失败: \(error.localizedDescription)")
@@ -306,7 +304,8 @@ struct StrategyAnalysisView_Updated: View {
             "workplace_jungle": "职场丛林",
             "family_relationship": "家庭关系",
             "education_communication": "教育沟通",
-            "brainstorm": "头脑风暴"
+            "brainstorm": "头脑风暴",
+            "emotion_recognition": "情绪识别"
         ]
         return skills.map { names[$0.skillId] ?? $0.skillId }.joined(separator: "、")
     }
@@ -325,6 +324,227 @@ struct StrategyAnalysisView_Updated: View {
             return strategies[1].content
         }
         return "在表达拒绝时可以更加委婉，避免直接冲突。"
+    }
+}
+
+// 技能卡片视图（顶部 Tab 切换 + 内容区）
+struct SkillCardsTabView: View {
+    let cards: [SkillCard]
+    let baseURL: String
+    @State private var selectedIndex = 0
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if cards.isEmpty {
+                Text("暂无技能分析")
+                    .font(.system(size: 14, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 120)
+            } else {
+                // 顶部：命中技能 Tab，多则横向滚动
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
+                                SkillTabButton(
+                                    title: card.skillName,
+                                    isSelected: index == selectedIndex
+                                ) {
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        selectedIndex = index
+                                    }
+                                    proxy.scrollTo(index, anchor: .center)
+                                }
+                                .id(index)
+                            }
+                        }
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 8)
+                    }
+                    .background(Color.black.opacity(0.08))
+                }
+                
+                // 下方：当前选中技能的内容
+                StrategySkillCardView(card: cards[selectedIndex], baseURL: baseURL)
+                    .frame(minHeight: 200)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            }
+        }
+    }
+}
+
+// 单个技能 Tab 按钮
+private struct SkillTabButton: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 14, weight: isSelected ? .semibold : .regular, design: .rounded))
+                .foregroundColor(isSelected ? .white : AppColors.headerText.opacity(0.8))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(isSelected ? Color(hex: "#5E7C8B") : Color.white.opacity(0.15))
+                .cornerRadius(8)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// 单张技能卡片（策略型 / 情绪型）- 用于策略分析页，与 SkillsView 的 SkillCardView 区分
+struct StrategySkillCardView: View {
+    let card: SkillCard
+    let baseURL: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if card.contentType == "emotion", let content = card.content?.emotionContent {
+                EmotionCardView(content: content)
+            } else if let content = card.content?.strategyContent {
+                StrategyCardContent(content: content, baseURL: baseURL)
+            } else {
+                Text("暂无内容")
+                    .font(.system(size: 14, design: .rounded))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 100)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 16)
+    }
+}
+
+// 情绪卡片 UI（emoji + 统计数据）
+struct EmotionCardView: View {
+    let content: SkillCardEmotionContent
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Text(content.moodEmoji)
+                .font(.system(size: 64))
+            Text(content.moodState)
+                .font(.system(size: 18, weight: .bold, design: .rounded))
+                .foregroundColor(AppColors.headerText)
+            HStack(spacing: 24) {
+                StatItem(label: "叹气", value: "\(content.sighCount)")
+                StatItem(label: "哈哈", value: "\(content.hahaCount)")
+                StatItem(label: "字数", value: "\(content.charCount)")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+}
+
+struct StatItem: View {
+    let label: String
+    let value: String
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(value)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .foregroundColor(Color(hex: "#5E7C8B"))
+            Text(label)
+                .font(.system(size: 12, design: .rounded))
+                .foregroundColor(AppColors.headerText.opacity(0.6))
+        }
+    }
+}
+
+// 策略卡片内容（visual + strategies）
+struct StrategyCardContent: View {
+    let content: SkillCardStrategyContent
+    let baseURL: String
+    @State private var strategyPopupItem: StrategyItem?
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if let visual = content.visual, !visual.isEmpty {
+                SceneRestoreImageCarouselView(visualList: visual, baseURL: baseURL)
+            }
+            if let strategies = content.strategies, !strategies.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("推荐应对策略")
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(AppColors.headerText.opacity(0.5))
+                        .textCase(.uppercase)
+                    ForEach(Array(strategies.prefix(3).enumerated()), id: \.element.id) { index, strategy in
+                        StrategyButtonView(strategy: strategy, index: index) {
+                            strategyPopupItem = strategy
+                        }
+                    }
+                }
+                .sheet(item: $strategyPopupItem) { strategy in
+                    StrategyPouchSheet(strategy: strategy) {
+                        strategyPopupItem = nil
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 兼容旧数据的策略内容区域
+struct LegacyStrategyContent: View {
+    let analysis: StrategyAnalysisResponse
+    @Binding var highlightsExpanded: Bool
+    @Binding var improvementsExpanded: Bool
+    @Binding var strategyPopupItem: StrategyItem?
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 7.9968414306640625) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("情商亮点：")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(hex: "#5E7C8B"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ExpandableTextBlock(
+                        text: StrategyAnalysisView_Updated.extractHighlights(from: analysis.strategies),
+                        isExpanded: $highlightsExpanded
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("待提升点：")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundColor(Color(hex: "#5E7C8B"))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    ExpandableTextBlock(
+                        text: StrategyAnalysisView_Updated.extractImprovements(from: analysis.strategies),
+                        isExpanded: $improvementsExpanded
+                    )
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            VStack(alignment: .leading, spacing: 11.99520492553711) {
+                Text("推荐应对策略")
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundColor(AppColors.headerText.opacity(0.5))
+                    .tracking(1.2)
+                    .textCase(.uppercase)
+                    .frame(height: 15.99)
+                    .frame(maxWidth: .infinity)
+                VStack(spacing: 11.995338439941406) {
+                    ForEach(Array(analysis.strategies.prefix(3).enumerated()), id: \.element.id) { index, strategy in
+                        StrategyButtonView(strategy: strategy, index: index) {
+                            strategyPopupItem = strategy
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(.top, 24)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .padding(.leading, 23.99)
+        .padding(.trailing, 23.99)
+        .padding(.top, 24)
+        .padding(.bottom, 24)
     }
 }
 
@@ -516,29 +736,32 @@ struct FrostedGlassDiffractionBackground: View {
 }
 
 // 场景还原图片轮播（支持左右滑动查看多张）
+// 图片生成使用 4:3 比例，此处与后端一致避免拉伸/裁剪
 struct SceneRestoreImageCarouselView: View {
     let visualList: [VisualData]
     let baseURL: String
     @State private var currentIndex: Int = 0
+    private let imageAspectRatio: CGFloat = 4.0 / 3.0
     
     var body: some View {
         GeometryReader { geo in
-            let side = geo.size.width
+            let width = geo.size.width
+            let height = width / imageAspectRatio
             TabView(selection: $currentIndex) {
                 ForEach(Array(visualList.enumerated()), id: \.element.id) { index, visualData in
                     SceneRestoreImageView(visualData: visualData, baseURL: baseURL)
-                        .frame(width: side, height: side)
+                        .frame(width: width, height: height)
                         .tag(index)
                 }
             }
             .tabViewStyle(PageTabViewStyle(indexDisplayMode: visualList.count > 1 ? .automatic : .never))
-            .frame(width: side, height: side)
+            .frame(width: width, height: height)
             .onAppear {
                 UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(red: 94/255, green: 124/255, blue: 139/255, alpha: 1)
                 UIPageControl.appearance().pageIndicatorTintColor = UIColor(red: 232/255, green: 220/255, blue: 198/255, alpha: 1)
             }
         }
-        .aspectRatio(1, contentMode: .fit)
+        .aspectRatio(imageAspectRatio, contentMode: .fit)
     }
 }
 
@@ -575,7 +798,7 @@ struct SceneRestoreImageView: View {
                 }
             }
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-            .aspectRatio(1, contentMode: .fill)
+            .aspectRatio(4/3, contentMode: .fill)
             .clipped()
             
             // 底部渐变遮罩
@@ -588,7 +811,7 @@ struct SceneRestoreImageView: View {
                 endPoint: .top
             )
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-            .aspectRatio(1, contentMode: .fill)
+            .aspectRatio(4/3, contentMode: .fill)
             .allowsHitTesting(false)
             
             // 底部文字内容
@@ -610,7 +833,7 @@ struct SceneRestoreImageView: View {
             .padding(.bottom, 24) // 底部内边距
         }
         .frame(maxWidth: .infinity)
-        .aspectRatio(1, contentMode: .fit) // 1:1 方框，不超出父容器
+        .aspectRatio(4/3, contentMode: .fit) // 与后端生成 4:3 图片一致
         .clipped()
         .cornerRadius(24)
     }

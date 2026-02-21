@@ -540,7 +540,8 @@ class NetworkManager {
     }
     
     // 获取策略分析（包含图片）
-    func getStrategyAnalysis(sessionId: String) async throws -> StrategyAnalysisResponse {
+    /// - Parameter forceRegenerate: 为 true 时强制重新生成，可修复旧数据无 skill_cards / 图片失败等问题
+    func getStrategyAnalysis(sessionId: String, forceRegenerate: Bool = false) async throws -> StrategyAnalysisResponse {
         // 如果使用 Mock 数据
         if config.useMockData {
             print("📦 [Mock] 使用 Mock 数据获取策略分析")
@@ -552,9 +553,12 @@ class NetworkManager {
         }
         
         // 使用真实 API：先取原始响应，按状态码分支解码，避免 4xx/5xx 时用成功结构解码导致 "data is missing"
-        print("🌐 [Real] 使用真实 API 获取策略分析")
+        print("🌐 [Real] 使用真实 API 获取策略分析 forceRegenerate=\(forceRegenerate)")
+        let url = forceRegenerate
+            ? "\(baseURL)/tasks/sessions/\(sessionId)/strategies?force_regenerate=true"
+            : "\(baseURL)/tasks/sessions/\(sessionId)/strategies"
         let dataResponse = await AF.request(
-            "\(baseURL)/tasks/sessions/\(sessionId)/strategies",
+            url,
             method: .post,
             headers: [
                 "Content-Type": "application/json",
@@ -594,7 +598,39 @@ class NetworkManager {
         print("✅ [NetworkManager] 策略分析获取成功")
         print("  关键时刻数量: \(data.visual.count)")
         print("  策略数量: \(data.strategies.count)")
+        print("  技能卡片数量: \(data.skillCards?.count ?? 0)")
         
+        return data
+    }
+    
+    // 获取心情趋势（跨对话）
+    func getEmotionTrend(limit: Int = 30) async throws -> EmotionTrendResponse {
+        if config.useMockData {
+            return EmotionTrendResponse(points: [])
+        }
+        let dataResponse = await AF.request(
+            "\(baseURL)/tasks/emotion-trend",
+            parameters: ["limit": limit],
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 30 }
+        )
+        .serializingData()
+        .response
+        
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        if statusCode != 200 {
+            let message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
+                ?? "请求失败 (HTTP \(statusCode))"
+            throw NSError(domain: "NetworkError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        let decoded = try JSONDecoder().decode(APIResponse<EmotionTrendResponse>.self, from: responseData)
+        guard decoded.code == 200, let data = decoded.data else {
+            throw NSError(domain: "NetworkError", code: decoded.code, userInfo: [NSLocalizedDescriptionKey: decoded.message])
+        }
         return data
     }
     

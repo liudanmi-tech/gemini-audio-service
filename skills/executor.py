@@ -4,6 +4,7 @@
 """
 import os
 import json
+import re
 import time
 import logging
 from typing import Dict, List, Optional
@@ -16,6 +17,15 @@ logger = logging.getLogger(__name__)
 
 # 策略模型名，可通过环境变量 GEMINI_FLASH_MODEL 覆盖
 GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
+
+# 情绪状态 -> emoji 映射（与 SKILL.md 一致）
+MOOD_EMOJI_MAP = {
+    "高兴": "😊",
+    "焦虑": "😰",
+    "平常心": "😐",
+    "亢奋": "🤩",
+    "悲伤": "😢",
+}
 
 
 def execute_skill_scripts(skill_id: str, script_name: str, input_data: dict) -> dict:
@@ -37,6 +47,99 @@ def execute_skill_scripts(skill_id: str, script_name: str, input_data: dict) -> 
     return input_data
 
 
+def _extract_emotion_counts(user_text: str) -> dict:
+    """从用户话术中提取叹气、哈哈哈次数和字数（规则统计）"""
+    sigh_pattern = re.compile(r'唉|哎|唉声叹气|唉呀|哎呦|哎哟', re.IGNORECASE)
+    haha_pattern = re.compile(r'哈哈+|呵呵+|嘿哈|嘻哈', re.IGNORECASE)
+    sigh_count = len(sigh_pattern.findall(user_text))
+    haha_count = len(haha_pattern.findall(user_text))
+    char_count = len(user_text.replace(" ", "").replace("\n", ""))
+    return {"sigh_count": sigh_count, "haha_count": haha_count, "char_count": char_count}
+
+
+async def _execute_emotion_skill(
+    skill: Dict,
+    transcript: List[Dict],
+    context: Dict,
+    model=None
+) -> Dict:
+    """执行情绪识别技能：提取用户话术，规则统计+LLM判断状态"""
+    if model is None:
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
+    skill_id = skill.get("skill_id", "emotion_recognition")
+    skill_name = skill.get("name", "情绪识别")
+    prompt_template = skill.get("prompt_template", "")
+    start_time = time.time()
+    
+    try:
+        # 1. 提取用户自己的话术（is_me=True）
+        user_lines = []
+        for item in transcript:
+            if item.get("is_me") is True:
+                text = item.get("text", item.get("content", ""))
+                if text:
+                    user_lines.append(text)
+        user_text = "\n".join(user_lines) if user_lines else ""
+        
+        # 2. 规则统计
+        counts = _extract_emotion_counts(user_text)
+        sigh_count = counts["sigh_count"]
+        haha_count = counts["haha_count"]
+        char_count = counts["char_count"]
+        
+        # 3. LLM 判断 mood_state（若用户无话则默认平常心）
+        mood_state = "平常心"
+        mood_emoji = "😐"
+        if user_text.strip():
+            prompt = prompt_template.replace("{transcript_json}", json.dumps(user_lines, ensure_ascii=False, indent=2))
+            prompt = prompt.replace("{session_id}", context.get("session_id", ""))
+            prompt = prompt.replace("{user_id}", context.get("user_id", ""))
+            prompt = prompt.replace("{memory_context}", context.get("memory_context", ""))
+            response = model.generate_content(prompt)
+            try:
+                data = parse_gemini_response(response.text)
+                if isinstance(data, dict):
+                    raw_state = data.get("mood_state", "平常心")
+                    mood_state = raw_state if raw_state in MOOD_EMOJI_MAP else "平常心"
+                    mood_emoji = data.get("mood_emoji", MOOD_EMOJI_MAP.get(mood_state, "😐"))
+            except Exception as e:
+                logger.warning(f"情绪 LLM 解析失败，使用默认: {e}")
+        
+        execution_time_ms = int((time.time() - start_time) * 1000)
+        emotion_insight = {
+            "sigh_count": sigh_count,
+            "haha_count": haha_count,
+            "mood_state": mood_state,
+            "mood_emoji": mood_emoji,
+            "char_count": char_count,
+        }
+        logger.info(f"情绪识别完成: sigh={sigh_count} haha={haha_count} mood={mood_state} chars={char_count}")
+        return {
+            "skill_id": skill_id,
+            "name": skill_name,
+            "result": None,
+            "emotion_insight": emotion_insight,
+            "execution_time_ms": execution_time_ms,
+            "success": True,
+            "priority": skill.get("priority", 50),
+            "confidence": skill.get("confidence", 0.9),
+        }
+    except Exception as e:
+        execution_time_ms = int((time.time() - start_time) * 1000) if 'start_time' in locals() else 0
+        logger.error(f"情绪识别失败: {e}")
+        return {
+            "skill_id": skill_id,
+            "name": skill_name,
+            "result": None,
+            "emotion_insight": None,
+            "execution_time_ms": execution_time_ms,
+            "success": False,
+            "error_message": str(e),
+            "priority": skill.get("priority", 50),
+            "confidence": skill.get("confidence", 0.9),
+        }
+
+
 async def execute_skill(
     skill: Dict,
     transcript: List[Dict],
@@ -53,12 +156,15 @@ async def execute_skill(
         model: Gemini 模型实例（如果为 None，则使用默认模型）
         
     Returns:
-        dict: 策略分析结果（Call2Response 格式）
+        dict: 策略分析结果（Call2Response 格式）或 emotion_insight（情绪技能）
     """
+    skill_id = skill.get("skill_id", "unknown")
+    if skill_id == "emotion_recognition":
+        return await _execute_emotion_skill(skill, transcript, context, model)
+    
     if model is None:
         model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
     
-    skill_id = skill.get("skill_id", "unknown")
     prompt_template = skill.get("prompt_template", "")
     
     if not prompt_template:

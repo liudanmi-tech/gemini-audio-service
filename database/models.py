@@ -80,11 +80,12 @@ class StrategyAnalysis(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, unique=True, index=True)
-    visual_data = Column(JSONB, nullable=False)  # VisualData数组
-    strategies = Column(JSONB, nullable=False)  # StrategyItem数组
+    visual_data = Column(JSONB, nullable=False)  # VisualData数组（兼容旧数据）
+    strategies = Column(JSONB, nullable=False)  # StrategyItem数组（兼容旧数据）
     applied_skills = Column(JSONB, default=[])  # 应用的技能列表 [{"skill_id": "workplace_jungle", "priority": 100}]
     scene_category = Column(String(50))  # 识别的场景类别
     scene_confidence = Column(Float)  # 场景识别置信度（与文档/迁移一致）
+    skill_cards = Column(JSONB, default=[])  # 每技能一张卡片 [{skill_id, skill_name, content_type, content}, ...]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

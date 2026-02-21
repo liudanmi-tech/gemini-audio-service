@@ -42,6 +42,87 @@ struct AppliedSkill: Codable, Identifiable {
     }
 }
 
+// 技能卡片内容：策略型
+struct SkillCardStrategyContent: Codable {
+    let visual: [VisualData]?
+    let strategies: [StrategyItem]?
+    
+    enum CodingKeys: String, CodingKey {
+        case visual
+        case strategies
+    }
+}
+
+// 技能卡片内容：情绪型
+struct SkillCardEmotionContent: Codable {
+    let sighCount: Int
+    let hahaCount: Int
+    let moodState: String
+    let moodEmoji: String
+    let charCount: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case sighCount = "sigh_count"
+        case hahaCount = "haha_count"
+        case moodState = "mood_state"
+        case moodEmoji = "mood_emoji"
+        case charCount = "char_count"
+    }
+}
+
+// 技能卡片（多技能滑动卡片）
+struct SkillCard: Codable, Identifiable {
+    var id: String { skillId }
+    let skillId: String
+    let skillName: String
+    let contentType: String  // "strategy" | "emotion"
+    let content: SkillCardContent?
+    
+    enum CodingKeys: String, CodingKey {
+        case skillId = "skill_id"
+        case skillName = "skill_name"
+        case contentType = "content_type"
+        case content
+    }
+}
+
+// 技能卡片内容（支持 strategy / emotion），统一解码后按 contentType 使用
+struct SkillCardContent: Codable {
+    let sighCount: Int?
+    let hahaCount: Int?
+    let moodState: String?
+    let moodEmoji: String?
+    let charCount: Int?
+    let visual: [VisualData]?
+    let strategies: [StrategyItem]?
+    
+    enum CodingKeys: String, CodingKey {
+        case sighCount = "sigh_count"
+        case hahaCount = "haha_count"
+        case moodState = "mood_state"
+        case moodEmoji = "mood_emoji"
+        case charCount = "char_count"
+        case visual
+        case strategies
+    }
+    
+    var isEmotion: Bool { moodState != nil || moodEmoji != nil }
+    var emotionContent: SkillCardEmotionContent? {
+        guard isEmotion else { return nil }
+        return SkillCardEmotionContent(
+            sighCount: sighCount ?? 0,
+            hahaCount: hahaCount ?? 0,
+            moodState: moodState ?? "平常心",
+            moodEmoji: moodEmoji ?? "😐",
+            charCount: charCount ?? 0
+        )
+    }
+    var strategyContent: SkillCardStrategyContent? {
+        guard visual != nil || strategies != nil else { return nil }
+        return SkillCardStrategyContent(visual: visual, strategies: strategies)
+    }
+}
+
 // 策略分析响应模型
 struct StrategyAnalysisResponse: Codable {
     let visual: [VisualData]
@@ -49,6 +130,7 @@ struct StrategyAnalysisResponse: Codable {
     let appliedSkills: [AppliedSkill]?
     let sceneCategory: String?
     let sceneConfidence: Double?
+    let skillCards: [SkillCard]?
     
     enum CodingKeys: String, CodingKey {
         case visual
@@ -56,14 +138,16 @@ struct StrategyAnalysisResponse: Codable {
         case appliedSkills = "applied_skills"
         case sceneCategory = "scene_category"
         case sceneConfidence = "scene_confidence"
+        case skillCards = "skill_cards"
     }
     
-    init(visual: [VisualData], strategies: [StrategyItem], appliedSkills: [AppliedSkill]? = nil, sceneCategory: String? = nil, sceneConfidence: Double? = nil) {
+    init(visual: [VisualData], strategies: [StrategyItem], appliedSkills: [AppliedSkill]? = nil, sceneCategory: String? = nil, sceneConfidence: Double? = nil, skillCards: [SkillCard]? = nil) {
         self.visual = visual
         self.strategies = strategies
         self.appliedSkills = appliedSkills
         self.sceneCategory = sceneCategory
         self.sceneConfidence = sceneConfidence
+        self.skillCards = skillCards
     }
     
     init(from decoder: Decoder) throws {
@@ -74,16 +158,18 @@ struct StrategyAnalysisResponse: Codable {
         sceneCategory = try? container.decode(String.self, forKey: .sceneCategory)
         sceneConfidence = (try? container.decode(Double.self, forKey: .sceneConfidence))
             ?? (try? container.decode(Float.self, forKey: .sceneConfidence)).map { Double($0) }
+        skillCards = try? container.decode([SkillCard].self, forKey: .skillCards)
     }
 }
 
-// 策略项模型（对应后端的 StrategyItem）
+// 策略项模型（对应后端的 StrategyItem，含 id/label/emoji/title/content）
 struct StrategyItem: Codable, Identifiable {
-    let id: String  // 使用 title 作为 id
+    let id: String
     let title: String
     let content: String
     
     enum CodingKeys: String, CodingKey {
+        case id
         case title
         case content
     }
@@ -91,9 +177,45 @@ struct StrategyItem: Codable, Identifiable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         title = try container.decode(String.self, forKey: .title)
-        id = title  // 使用 title 作为 id
         content = try container.decode(String.self, forKey: .content)
+        id = (try? container.decode(String.self, forKey: .id)) ?? title
     }
+}
+
+// 心情趋势点（emotion-trend API）
+struct EmotionTrendPoint: Codable, Identifiable {
+    var id: String { "\(sessionId)_\(createdAt ?? "")" }
+    let sessionId: String
+    let createdAt: String?
+    let moodState: String
+    let moodEmoji: String
+    let sighCount: Int
+    let hahaCount: Int
+    let charCount: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case sessionId = "session_id"
+        case createdAt = "created_at"
+        case moodState = "mood_state"
+        case moodEmoji = "mood_emoji"
+        case sighCount = "sigh_count"
+        case hahaCount = "haha_count"
+        case charCount = "char_count"
+    }
+    
+    init(sessionId: String, createdAt: String?, moodState: String, moodEmoji: String, sighCount: Int, hahaCount: Int, charCount: Int) {
+        self.sessionId = sessionId
+        self.createdAt = createdAt
+        self.moodState = moodState
+        self.moodEmoji = moodEmoji
+        self.sighCount = sighCount
+        self.hahaCount = hahaCount
+        self.charCount = charCount
+    }
+}
+
+struct EmotionTrendResponse: Codable {
+    let points: [EmotionTrendPoint]
 }
 
 // 图片 URL 转换工具

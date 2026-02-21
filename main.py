@@ -170,7 +170,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from skills.router import classify_scene, match_skills
 from skills.registry import get_skill, initialize_skills
 from skills.executor import execute_skill
-from skills.composer import compose_results
 
 # 配置 Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -2170,6 +2169,37 @@ async def generate_strategies_async(session_id: str, user_id: str):
             logger.error(traceback.format_exc())
 
 
+_SKILL_ID_TO_NAME = {
+    "workplace_jungle": "职场丛林",
+    "family_relationship": "家庭关系",
+    "education_communication": "教育沟通",
+    "brainstorm": "头脑风暴",
+    "emotion_recognition": "情绪识别",
+}
+
+
+def _build_legacy_skill_cards(visual_data: list, strategies: list, applied_skills: list) -> list:
+    """从旧格式 visual_data + strategies 构造兼容的 skill_cards 结构"""
+    if not visual_data and not strategies:
+        return []
+    skill_id = applied_skills[0]["skill_id"] if applied_skills else "unknown"
+    skill_name = applied_skills[0].get("name") or _SKILL_ID_TO_NAME.get(skill_id, skill_id)
+    def _to_dict(x):
+        if isinstance(x, dict):
+            return x
+        if hasattr(x, "model_dump"):
+            return x.model_dump()
+        return x.__dict__ if hasattr(x, "__dict__") else {}
+    v_dicts = [_to_dict(v) for v in visual_data]
+    s_dicts = [_to_dict(s) for s in strategies]
+    return [{
+        "skill_id": skill_id,
+        "skill_name": skill_name,
+        "content_type": "strategy",
+        "content": {"visual": v_dicts, "strategies": s_dicts}
+    }]
+
+
 async def _generate_strategies_core(session_id: str, user_id: str, transcript: list, db: AsyncSession):
     """策略生成核心逻辑（v0.4 技能化架构）"""
     from datetime import datetime
@@ -2191,7 +2221,7 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         
         # 2.2 技能匹配（若此处报 PG type 114，可能是 skills 表 meta_data 列为 json）
         logger.info("[策略流程] 步骤2.2: 技能匹配(match_skills/查 skills 表)...")
-        matched_skills = await match_skills(scene_result, db)
+        matched_skills = await match_skills(scene_result, db, transcript=transcript)
         logger.info(f"[策略流程] 步骤2.2: 完成 匹配到 {len(matched_skills)} 个技能")
         
         if not matched_skills:
@@ -2316,56 +2346,85 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         
         await db.commit()
         
-        # 4. 结果融合（如果多技能）
-        logger.info("[策略流程] 步骤2.3a: 结果融合(compose_results)...")
-        if len(skill_results) == 1 and skill_results[0].get("success"):
-            # 单个技能，直接使用结果
-            call2_result = skill_results[0]["result"]
-        else:
-            # 多技能，需要融合
-            call2_result = compose_results(skill_results)
-        logger.info(f"[策略流程] 步骤2.3a: 完成 关键时刻={len(call2_result.visual)} 策略数={len(call2_result.strategies)}")
-        
-        # 5. 为每个关键时刻生成图片（含档案照片参考图）
-        logger.info(f"========== 步骤 5: 生成图片 ==========")
+        # 4. 构建 skill_cards（每个技能一张卡片，不再用 compose_results 合并）
+        logger.info("[策略流程] 步骤2.3a: 构建 skill_cards...")
+        skill_cards = []
+        all_visuals_for_compat = []  # 用于兼容 visual_data
+        all_strategies_for_compat = []  # 用于兼容 strategies
+        global_image_index = 0
         reference_images = await _get_profile_reference_images(session_id, user_id, db)
-        logger.info(f"开始为 {len(call2_result.visual)} 个关键时刻生成图片，参考图数={len(reference_images)}")
-        updated_visual_list = []
-        for idx, visual_data in enumerate(call2_result.visual):
-            try:
-                logger.info(f"生成图片 {idx+1}/{len(call2_result.visual)}: transcript_index={visual_data.transcript_index}, speaker={visual_data.speaker}")
-                image_result = generate_image_from_prompt(
-                    visual_data.image_prompt,
-                    user_id,
-                    session_id,
-                    idx,
-                    reference_images=reference_images if reference_images else None,
-                )
-                if image_result:
-                    # 判断返回的是 URL 还是 Base64
-                    if image_result.startswith('http://') or image_result.startswith('https://'):
-                        # 是 URL，更新 image_url 字段
-                        updated_visual = visual_data.model_copy(update={"image_url": image_result})
-                        logger.info(f"✅ 图片 {idx+1} 生成成功，URL: {image_result}")
-                    else:
-                        # 是 Base64，更新 image_base64 字段（向后兼容）
-                        updated_visual = visual_data.model_copy(update={"image_base64": image_result})
-                        logger.info(f"✅ 图片 {idx+1} 生成成功，Base64 大小: {len(image_result)} 字符")
-                    updated_visual_list.append(updated_visual)
-                else:
-                    # 即使生成失败，也保留 visual_data
-                    updated_visual_list.append(visual_data)
-                    logger.warning(f"⚠️ 图片 {idx+1} 生成失败，保留 visual_data")
-            except Exception as e:
-                logger.error(f"❌ 生成图片 {idx+1} 时出错: {e}")
-                logger.error(traceback.format_exc())
-                # 即使出错，也保留 visual_data
-                updated_visual_list.append(visual_data)
         
-        call2_result.visual = updated_visual_list
-        url_count = sum(1 for v in updated_visual_list if getattr(v, "image_url", None))
-        b64_count = sum(1 for v in updated_visual_list if getattr(v, "image_base64", None))
-        logger.info(f"[策略流程] 步骤2.3b: 图片生成完成 session_id={session_id} 共{len(updated_visual_list)}个 含image_url={url_count} 含image_base64={b64_count}")
+        for skill_result in skill_results:
+            skill_id = skill_result.get("skill_id", "unknown")
+            skill_name = skill_result.get("name", skill_id)
+            if not skill_result.get("success"):
+                continue
+            # 情绪技能
+            if skill_result.get("emotion_insight") is not None:
+                emotion_insight = skill_result["emotion_insight"]
+                skill_cards.append({
+                    "skill_id": skill_id,
+                    "skill_name": skill_name,
+                    "content_type": "emotion",
+                    "content": {
+                        "sigh_count": emotion_insight.get("sigh_count", 0),
+                        "haha_count": emotion_insight.get("haha_count", 0),
+                        "mood_state": emotion_insight.get("mood_state", "平常心"),
+                        "mood_emoji": emotion_insight.get("mood_emoji", "😐"),
+                        "char_count": emotion_insight.get("char_count", 0),
+                    }
+                })
+                logger.info(f"  ✅ 情绪卡: {skill_id} mood={emotion_insight.get('mood_state')} sigh={emotion_insight.get('sigh_count')} haha={emotion_insight.get('haha_count')}")
+                continue
+            # 策略技能
+            result = skill_result.get("result")
+            if result and hasattr(result, "visual") and hasattr(result, "strategies"):
+                # 为策略技能的 visual 生成图片
+                updated_visual_list = []
+                for v in result.visual:
+                    try:
+                        image_result = generate_image_from_prompt(
+                            v.image_prompt,
+                            user_id,
+                            session_id,
+                            global_image_index,
+                            reference_images=reference_images if reference_images else None,
+                        )
+                        if image_result:
+                            if image_result.startswith('http://') or image_result.startswith('https://'):
+                                updated_visual = v.model_copy(update={"image_url": image_result})
+                            else:
+                                updated_visual = v.model_copy(update={"image_base64": image_result})
+                            updated_visual_list.append(updated_visual)
+                        else:
+                            updated_visual_list.append(v)
+                    except Exception as e:
+                        logger.error(f"生成图片失败 {skill_id} idx={global_image_index}: {e}")
+                        updated_visual_list.append(v)
+                    global_image_index += 1
+                card_content = {
+                    "visual": [v.dict() for v in updated_visual_list],
+                    "strategies": [s.dict() for s in result.strategies]
+                }
+                skill_cards.append({
+                    "skill_id": skill_id,
+                    "skill_name": skill_name,
+                    "content_type": "strategy",
+                    "content": card_content
+                })
+                all_visuals_for_compat.extend(updated_visual_list)
+                all_strategies_for_compat.extend(result.strategies)
+                logger.info(f"  ✅ 策略卡: {skill_id} visual={len(updated_visual_list)} strategies={len(result.strategies)}")
+        
+        # 兼容：从 skill_cards 反推 call2_result（首张策略卡或合并）
+        if all_visuals_for_compat or all_strategies_for_compat:
+            all_visuals_for_compat.sort(key=lambda x: x.transcript_index)
+            if len(all_visuals_for_compat) > 5:
+                all_visuals_for_compat = all_visuals_for_compat[:5]
+            call2_result = Call2Response(visual=all_visuals_for_compat, strategies=all_strategies_for_compat)
+        else:
+            call2_result = Call2Response(visual=[], strategies=[])
+        logger.info(f"[策略流程] 步骤2.3a: 完成 skill_cards={len(skill_cards)} 兼容visual={len(call2_result.visual)} 兼容strategies={len(call2_result.strategies)}")
         
         # v0.6 记忆补充（C 钩子）：策略文本写入 Mem0
         if call2_result.strategies:
@@ -2425,7 +2484,8 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             strategies=[s.dict() for s in call2_result.strategies],
             applied_skills=applied_skills,
             scene_category=primary_scene,
-            scene_confidence=primary_scene_confidence
+            scene_confidence=primary_scene_confidence,
+            skill_cards=skill_cards
         )
         
         # 如果已存在则更新，否则创建
@@ -2439,6 +2499,7 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             existing.applied_skills = applied_skills
             existing.scene_category = primary_scene
             existing.scene_confidence = primary_scene_confidence
+            existing.skill_cards = skill_cards
             await db.commit()
             logger.info(f"[策略流程] 步骤2.4: 已更新到数据库: {session_id}")
         else:
@@ -2524,8 +2585,8 @@ async def classify_scene_endpoint(
         model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
         scene_result = classify_scene(transcript, model)
         
-        # 技能匹配
-        matched_skills = await match_skills(scene_result, db)
+        # 技能匹配（传入 transcript 用于参与者关键词补充）
+        matched_skills = await match_skills(scene_result, db, transcript=transcript)
         
         return APIResponse(
             code=200,
@@ -2592,21 +2653,22 @@ async def generate_strategies(
             logger.info(f"[策略流程] 已删除旧策略分析，将重新生成: {session_id}")
             existing_strategy = None
         
-        if existing_strategy and existing_strategy.visual_data and existing_strategy.strategies:
+        if existing_strategy:
             logger.info(f"从数据库读取已生成的策略分析: {session_id}")
-            # 构建返回数据
+            # 构建返回数据（兼容 visual_data/strategies 为空或仅 emotion 卡）
             visual_list = []
-            for idx, v in enumerate(existing_strategy.visual_data):
+            for idx, v in enumerate(existing_strategy.visual_data or []):
                 vdict = v if isinstance(v, dict) else (v.__dict__ if hasattr(v, '__dict__') else {})
                 has_url = bool(vdict.get("image_url"))
                 has_b64 = bool(vdict.get("image_base64"))
                 b64_len = len(vdict.get("image_base64") or "")
                 logger.info(f"[策略-图片] session_id={session_id} visual[{idx}] image_url={has_url} image_base64={bool(has_b64)} b64_len={b64_len}")
-                visual_list.append(VisualData(**v))
+                visual_list.append(VisualData(**vdict))
             
             strategies_list = []
-            for s in existing_strategy.strategies:
-                strategies_list.append(StrategyItem(**s))
+            for s in (existing_strategy.strategies or []):
+                sdict = s if isinstance(s, dict) else (s.__dict__ if hasattr(s, '__dict__') else {})
+                strategies_list.append(StrategyItem(**sdict))
             
             call2_result = Call2Response(
                 visual=visual_list,
@@ -2618,6 +2680,16 @@ async def generate_strategies(
             applied_skills = existing_strategy.applied_skills or []
             scene_category = existing_strategy.scene_category
             scene_confidence = existing_strategy.scene_confidence
+            # 优先使用 skill_cards，无则从 visual_data+strategies 构造兼容结构
+            skill_cards_raw = getattr(existing_strategy, "skill_cards", None) or []
+            if skill_cards_raw:
+                result_dict["skill_cards"] = skill_cards_raw
+            else:
+                result_dict["skill_cards"] = _build_legacy_skill_cards(
+                    existing_strategy.visual_data or [],
+                    existing_strategy.strategies or [],
+                    applied_skills
+                )
             
             logger.info(f"技能信息: applied_skills={applied_skills}, scene_category={scene_category}, scene_confidence={scene_confidence}")
             # 日志：返回给前端的 visual 中每个的 image_url / image_base64 情况
@@ -2686,6 +2758,16 @@ async def generate_strategies(
             applied_skills = strategy_after.applied_skills or []
             scene_category = strategy_after.scene_category
             scene_confidence = strategy_after.scene_confidence
+            # 优先使用 skill_cards
+            skill_cards_raw = getattr(strategy_after, "skill_cards", None) or []
+            if skill_cards_raw:
+                result_dict["skill_cards"] = skill_cards_raw
+            else:
+                result_dict["skill_cards"] = _build_legacy_skill_cards(
+                    strategy_after.visual_data or [],
+                    strategy_after.strategies or [],
+                    applied_skills
+                )
             
             logger.info(f"技能信息: applied_skills={applied_skills}, scene_category={scene_category}, scene_confidence={scene_confidence}")
             
@@ -2697,6 +2779,7 @@ async def generate_strategies(
             result_dict["applied_skills"] = []
             result_dict["scene_category"] = None
             result_dict["scene_confidence"] = None
+            result_dict["skill_cards"] = []
         
         return APIResponse(
             code=200,
@@ -2711,6 +2794,54 @@ async def generate_strategies(
         logger.error(f"生成策略失败: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"生成策略失败: {str(e)}")
+
+
+@app.get("/api/v1/tasks/emotion-trend")
+async def get_emotion_trend(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(30, ge=1, le=100)
+):
+    """
+    获取心情趋势：从各 session 的 skill_cards 中提取 content_type=emotion 的数据，按时间排序。
+    """
+    try:
+        sa_result = await db.execute(
+            select(StrategyAnalysis, Session.created_at)
+            .join(Session, StrategyAnalysis.session_id == Session.id)
+            .where(Session.user_id == uuid.UUID(user_id))
+            .order_by(Session.created_at.desc())
+            .limit(limit * 3)
+        )
+        rows = sa_result.all()
+        points = []
+        for sa, created_at in rows:
+            skill_cards = getattr(sa, "skill_cards", None) or []
+            for card in skill_cards:
+                if isinstance(card, dict) and card.get("content_type") == "emotion":
+                    content = card.get("content") or {}
+                    points.append({
+                        "session_id": str(sa.session_id),
+                        "created_at": created_at.isoformat() if created_at else None,
+                        "mood_state": content.get("mood_state", "平常心"),
+                        "mood_emoji": content.get("mood_emoji", "😐"),
+                        "sigh_count": content.get("sigh_count", 0),
+                        "haha_count": content.get("haha_count", 0),
+                        "char_count": content.get("char_count", 0),
+                    })
+                    break
+            if len(points) >= limit:
+                break
+        return APIResponse(
+            code=200,
+            message="success",
+            data={"points": points[:limit]},
+            timestamp=datetime.now().isoformat()
+        )
+    except Exception as e:
+        logger.error(f"获取心情趋势失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取心情趋势失败: {str(e)}")
 
 
 @app.get("/api/v1/images/{session_id}/{image_index}")
