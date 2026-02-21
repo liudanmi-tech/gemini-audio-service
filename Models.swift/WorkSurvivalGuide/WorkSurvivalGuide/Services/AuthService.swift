@@ -11,18 +11,21 @@ import Alamofire
 class AuthService {
     static let shared = AuthService()
     
-    private let baseURL = "http://47.79.254.213/api/v1"
-    
+    private let config = AppConfig.shared
+    private var baseURLForWrite: String { config.writeBaseURL }
+    private var baseURLForRead: String { config.useBeijingRead ? config.readBaseURL : config.writeBaseURL }
+
     private init() {}
     
     // 发送验证码（非 200 时按 FastAPI 错误解析，避免解码失败）
     func sendVerificationCode(phone: String) async throws -> SendCodeResponse {
         let dataResponse = await AF.request(
-            "\(baseURL)/auth/send-code",
+            "\(baseURLForWrite)/auth/send-code",
             method: .post,
             parameters: ["phone": phone],
             encoding: JSONEncoding.default,
-            headers: ["Content-Type": "application/json"]
+            headers: ["Content-Type": "application/json"],
+            requestModifier: { $0.timeoutInterval = 30 }
         )
         .serializingData()
         .response
@@ -41,14 +44,19 @@ class AuthService {
             }
             return data
         }
-        let message = Self.parseFastAPIErrorDetail(responseData) ?? "发送验证码失败"
+        let message: String
+        if statusCode >= 500 {
+            message = Self.parseFastAPIErrorDetail(responseData) ?? "服务器繁忙，请稍后重试"
+        } else {
+            message = Self.parseFastAPIErrorDetail(responseData) ?? "发送验证码失败"
+        }
         throw NSError(domain: "AuthError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
     }
     
     // 登录（先取原始响应，再按状态码解码，避免 4xx 时 FastAPI 返回 detail 导致解码失败）
     func login(phone: String, code: String) async throws -> LoginResponse {
         let dataResponse = await AF.request(
-            "\(baseURL)/auth/login",
+            "\(baseURLForWrite)/auth/login",
             method: .post,
             parameters: [
                 "phone": phone,
@@ -113,6 +121,7 @@ class AuthService {
     }
     
     // 获取当前用户信息（先取原始响应再解码，避免 4xx/格式异常时直接抛解码错误）
+    // 使用 writeBaseURL（新加坡）：/auth/me 属于认证流程，与登录同源可避免北京节点不可达时失败
     func getCurrentUser() async throws -> UserInfo {
         guard let token = KeychainManager.shared.getToken() else {
             throw NSError(
@@ -123,7 +132,7 @@ class AuthService {
         }
         
         let dataResponse = await AF.request(
-            "\(baseURL)/auth/me",
+            "\(baseURLForWrite)/auth/me",
             method: .get,
             headers: [
                 "Authorization": "Bearer \(token)",

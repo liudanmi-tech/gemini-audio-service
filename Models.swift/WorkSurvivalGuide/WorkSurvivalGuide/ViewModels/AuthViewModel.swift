@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 
+@MainActor
 class AuthViewModel: ObservableObject {
     @Published var phone: String = ""
     @Published var code: String = ""

@@ -8,6 +8,7 @@
 import Foundation
 import Combine
 
+@MainActor
 class AuthManager: ObservableObject {
     static let shared = AuthManager()
     
@@ -37,7 +38,7 @@ class AuthManager: ObservableObject {
             } catch {
                 // Token可能已过期，清除登录状态
                 if (error as NSError).code == 401 {
-                    logout()
+                    await MainActor.run { self.logout() }
                 }
             }
         }

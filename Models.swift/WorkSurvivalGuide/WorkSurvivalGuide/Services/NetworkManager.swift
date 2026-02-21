@@ -19,14 +19,15 @@ class NetworkManager {
     private let config = AppConfig.shared
     private let mockService = MockNetworkService.shared
     
-    // ⚠️ 重要：修改为你的后端 API 地址
-    // 开发阶段：使用 localhost（本地测试）
-    // 生产阶段：使用 80 端口经 Nginx 转发（安全组已放行 80）
-    private let baseURL = "http://47.79.254.213/api/v1"
+    /// 读接口 baseURL（方案二：北京只读时走北京，否则走新加坡）
+    private var baseURLForRead: String { config.useBeijingRead ? config.readBaseURL : config.writeBaseURL }
     
-    // 获取 baseURL（供外部使用，用于图片 URL 转换）
+    /// 写接口 baseURL（始终走新加坡）
+    private var baseURLForWrite: String { config.writeBaseURL }
+    
+    /// 获取 baseURL（供外部使用，用于图片 URL 转换。启用北京读时返回北京地址）
     func getBaseURL() -> String {
-        return baseURL
+        return baseURLForRead
     }
     
     private init() {}
@@ -65,6 +66,13 @@ class NetworkManager {
         
         // 使用真实 API
         print("🌐 [Real] 使用真实 API 获取任务列表")
+        let token = getAuthToken()
+        guard !token.isEmpty else {
+            print("⚠️ [NetworkManager] Token 为空，跳过请求并清除登录状态")
+            Task { @MainActor in AuthManager.shared.logout() }
+            throw NSError(domain: "NetworkError", code: 401, userInfo: [NSLocalizedDescriptionKey: "请先登录"])
+        }
+        
         let requestStartTime = Date()
         
         var parameters: [String: Any] = [
@@ -82,7 +90,7 @@ class NetworkManager {
             parameters["status"] = status
         }
         
-        let requestURL = "\(baseURL)/tasks/sessions"
+        let requestURL = "\(baseURLForRead)/tasks/sessions"
         print("📡 [NetworkManager] 请求URL: \(requestURL)")
         print("📡 [NetworkManager] 请求参数: \(parameters)")
         print("📡 [NetworkManager] 请求开始时间: \(requestStartTime)")
@@ -93,7 +101,7 @@ class NetworkManager {
             parameters: parameters,
             headers: [
                 "Content-Type": "application/json",
-                "Authorization": "Bearer \(getAuthToken())"
+                "Authorization": "Bearer \(token)"
             ],
             requestModifier: { request in
                 request.timeoutInterval = 120 // 任务列表跨网+服务器负载高时可能较慢，120秒超时
@@ -119,7 +127,7 @@ class NetworkManager {
         if let statusCode = httpResponse?.statusCode {
             if statusCode == 401 {
                 print("🔐 [NetworkManager] 🔴 检测到 401 状态码，立即清除登录状态")
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     AuthManager.shared.logout()
                 }
                 
@@ -209,7 +217,7 @@ class NetworkManager {
                 
                 if statusCode == 401 {
                     print("🔐 [NetworkManager] 🔴 收到 401 错误，立即清除登录状态")
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         AuthManager.shared.logout()
                     }
                 }
@@ -249,7 +257,7 @@ class NetworkManager {
         
         // 使用真实 API
         print("🌐 [NetworkManager] 使用真实 API 上传音频")
-        print("🌐 [NetworkManager] API 地址: \(baseURL)/audio/upload")
+        print("🌐 [NetworkManager] API 地址: \(baseURLForWrite)/audio/upload")
         
         // 大文件（>20MB）分段提示：服务端会自动切分后分析
         let fileSizeLimitMB: Int64 = 20
@@ -284,7 +292,7 @@ class NetworkManager {
                     )
                 }
             },
-            to: "\(baseURL)/audio/upload",
+            to: "\(baseURLForWrite)/audio/upload",
             method: .post,
             headers: [
                 "Authorization": "Bearer \(getAuthToken())"
@@ -335,7 +343,7 @@ class NetworkManager {
             // 如果是 401，立即清除登录状态
             if statusCode == 401 {
                 print("🔐 [NetworkManager] 🔴 检测到 401 状态码，立即清除登录状态")
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     AuthManager.shared.logout()
                 }
                 
@@ -408,7 +416,7 @@ class NetworkManager {
                 
                 if statusCode == 401 {
                     print("🔐 [NetworkManager] 🔴 收到 401 错误，立即清除登录状态")
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         AuthManager.shared.logout()
                     }
                 }
@@ -448,7 +456,7 @@ class NetworkManager {
         // 使用真实 API：先取原始响应，非 200 时按错误体解码，避免 "data is missing"
         print("🌐 [Real] 使用真实 API 获取任务详情")
         let dataResponse = await AF.request(
-            "\(baseURL)/tasks/sessions/\(sessionId)",
+            "\(baseURLForRead)/tasks/sessions/\(sessionId)",
             method: .get,
             headers: [
                 "Content-Type": "application/json",
@@ -498,7 +506,7 @@ class NetworkManager {
         // 使用真实 API：分析期间 OSS 下载等同步操作会阻塞，120s 超时；超时后轮询会继续重试
         print("🌐 [Real] 使用真实 API 获取任务状态")
         let dataResponse = await AF.request(
-            "\(baseURL)/tasks/sessions/\(sessionId)/status",
+            "\(baseURLForRead)/tasks/sessions/\(sessionId)/status",
             method: .get,
             headers: [
                 "Content-Type": "application/json",
@@ -555,8 +563,8 @@ class NetworkManager {
         // 使用真实 API：先取原始响应，按状态码分支解码，避免 4xx/5xx 时用成功结构解码导致 "data is missing"
         print("🌐 [Real] 使用真实 API 获取策略分析 forceRegenerate=\(forceRegenerate)")
         let url = forceRegenerate
-            ? "\(baseURL)/tasks/sessions/\(sessionId)/strategies?force_regenerate=true"
-            : "\(baseURL)/tasks/sessions/\(sessionId)/strategies"
+            ? "\(baseURLForWrite)/tasks/sessions/\(sessionId)/strategies?force_regenerate=true"
+            : "\(baseURLForRead)/tasks/sessions/\(sessionId)/strategies"
         let dataResponse = await AF.request(
             url,
             method: .post,
@@ -570,8 +578,8 @@ class NetworkManager {
         .response
         
         let statusCode = dataResponse.response?.statusCode ?? 0
-        let responseData = dataResponse.data ?? Data()
-        
+        var responseData = dataResponse.data ?? Data()
+
         if statusCode != 200 {
             let message: String
             if let errResp = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
@@ -585,7 +593,38 @@ class NetworkManager {
             }
             throw NSError(domain: "NetworkError", code: statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
-        
+
+        // 方案二：北京返回 need_generate 时，切换新加坡生成
+        if config.useBeijingRead, !forceRegenerate,
+           let json = try? JSONSerialization.jsonObject(with: responseData) as? [String: Any],
+           let data = json["data"] as? [String: Any],
+           (data["need_generate"] as? Bool) == true,
+           let writeBase = (data["write_base_url"] as? String)?.trimmingCharacters(in: .whitespaces),
+           !writeBase.isEmpty {
+            print("📡 [NetworkManager] 北京返回 need_generate，切换新加坡生成策略: \(writeBase)")
+            let base = writeBase.hasSuffix("/") ? String(writeBase.dropLast()) : writeBase
+            let writeURL = "\(base)/api/v1/tasks/sessions/\(sessionId)/strategies"
+            let retryResponse = await AF.request(
+                writeURL,
+                method: .post,
+                headers: [
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer \(getAuthToken())"
+                ],
+                requestModifier: { $0.timeoutInterval = 600 }
+            )
+            .serializingData()
+            .response
+            if retryResponse.response?.statusCode == 200, let retryData = retryResponse.data, !retryData.isEmpty {
+                responseData = retryData
+            } else {
+                let msg = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: retryResponse.data ?? Data()))?.detail
+                    ?? "策略生成请求失败，请稍后重试"
+                throw NSError(domain: "NetworkError", code: retryResponse.response?.statusCode ?? 500,
+                              userInfo: [NSLocalizedDescriptionKey: msg])
+            }
+        }
+
         let decoded = try JSONDecoder().decode(APIResponse<StrategyAnalysisResponse>.self, from: responseData)
         guard decoded.code == 200, let data = decoded.data else {
             throw NSError(
@@ -594,12 +633,12 @@ class NetworkManager {
                 userInfo: [NSLocalizedDescriptionKey: decoded.message]
             )
         }
-        
+
         print("✅ [NetworkManager] 策略分析获取成功")
         print("  关键时刻数量: \(data.visual.count)")
         print("  策略数量: \(data.strategies.count)")
         print("  技能卡片数量: \(data.skillCards?.count ?? 0)")
-        
+
         return data
     }
     
@@ -609,7 +648,7 @@ class NetworkManager {
             return EmotionTrendResponse(points: [])
         }
         let dataResponse = await AF.request(
-            "\(baseURL)/tasks/emotion-trend",
+            "\(baseURLForRead)/tasks/emotion-trend",
             parameters: ["limit": limit],
             headers: [
                 "Content-Type": "application/json",
@@ -666,7 +705,7 @@ class NetworkManager {
         }
         
         let dataTask = AF.request(
-            "\(baseURL)/skills",
+            "\(baseURLForRead)/skills",
             method: .get,
             parameters: parameters,
             headers: [
@@ -750,7 +789,7 @@ class NetworkManager {
         }
         
         let dataTask = AF.request(
-            "\(baseURL)/profiles",
+            "\(baseURLForRead)/profiles",
             method: .get,
             headers: [
                 "Content-Type": "application/json",
@@ -836,7 +875,7 @@ class NetworkManager {
         ]
         
         let response = try await AF.request(
-            "\(baseURL)/profiles",
+            "\(baseURLForWrite)/profiles",
             method: .post,
             parameters: parameters,
             encoding: JSONEncoding.default,
@@ -937,11 +976,11 @@ class NetworkManager {
         }
         
         print("📤 [NetworkManager] 更新档案请求:")
-        print("   URL: \(baseURL)/profiles/\(profile.id)")
+        print("   URL: \(baseURLForWrite)/profiles/\(profile.id)")
         print("   参数: \(parameters)")
         
         let dataTask = AF.request(
-            "\(baseURL)/profiles/\(profile.id)",
+            "\(baseURLForWrite)/profiles/\(profile.id)",
             method: .put,
             parameters: parameters,
             encoding: JSONEncoding.default,
@@ -1013,7 +1052,7 @@ class NetworkManager {
         // 使用真实 API
         print("🌐 [Real] 使用真实 API 删除档案")
         let response = try await AF.request(
-            "\(baseURL)/profiles/\(profileId)",
+            "\(baseURLForWrite)/profiles/\(profileId)",
             method: .delete,
             headers: [
                 "Content-Type": "application/json",
@@ -1040,7 +1079,7 @@ class NetworkManager {
             )
         }
         
-        var urlString = "\(baseURL)/profiles/upload-photo"
+        var urlString = "\(baseURLForWrite)/profiles/upload-photo"
         if let pid = profileId, !pid.isEmpty {
             urlString += "?profile_id=\(pid.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? pid)"
         }
@@ -1136,7 +1175,7 @@ class NetworkManager {
         // 使用真实 API
         print("🌐 [Real] 使用真实 API 获取音频片段列表")
         let dataResponse = try await AF.request(
-            "\(baseURL)/tasks/sessions/\(sessionId)/audio-segments",
+            "\(baseURLForRead)/tasks/sessions/\(sessionId)/audio-segments",
             method: .get,
             headers: [
                 "Content-Type": "application/json",
@@ -1182,7 +1221,7 @@ class NetworkManager {
         ]
         
         let dataResponse = await AF.request(
-            "\(baseURL)/tasks/sessions/\(sessionId)/extract-segment",
+            "\(baseURLForWrite)/tasks/sessions/\(sessionId)/extract-segment",
             method: .post,
             parameters: parameters,
             encoding: JSONEncoding.default,

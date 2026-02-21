@@ -75,8 +75,8 @@ struct TaskDetailView: View {
                                     .padding(.horizontal, 21.5)
                                     .padding(.top, 21.5)
                                 
-                                // 如果有总结，显示总结
-                                if let summary = detail.summary, !summary.isEmpty {
+                                // 如果有总结，显示总结（优先 detail，无则用 task 列表的总结）
+                                if let summary = (detail.summary ?? task.summary), !summary.isEmpty {
                                     Text(summary)
                                         .font(.system(size: 14, weight: .regular, design: .rounded))
                                         .foregroundColor(AppColors.headerText.opacity(0.8))
@@ -105,9 +105,9 @@ struct TaskDetailView: View {
                             .shadow(color: AppColors.border, radius: 0, x: 3, y: 3)
                             .padding(.bottom, 21.5)
                         } else {
-                            // 有对话内容，正常显示
+                            // 有对话内容，正常显示（优先 detail.summary，无则 fallback 到 task.summary）
                             DialogueReviewView(
-                                summary: detail.summary,
+                                summary: detail.summary ?? task.summary,
                                 dialogues: detail.dialogues
                             )
                         }
@@ -223,7 +223,7 @@ struct TaskDetailView: View {
             speakerCount: task.speakerCount,
             dialogues: [], // 暂时为空，等待完整数据加载
             risks: [],
-            summary: nil,
+            summary: task.summary, // 使用列表接口返回的总结，确保即时显示
             createdAt: dateFormatter.string(from: task.startTime),
             updatedAt: dateFormatter.string(from: task.endTime ?? task.startTime)
         )
