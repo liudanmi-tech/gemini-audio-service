@@ -547,6 +547,42 @@ class NetworkManager {
         return data
     }
     
+    /// 同步用户图片风格偏好到服务端（供新录音自动生成时使用）
+    func updateUserPreferences(imageStyle: String) async {
+        guard !config.useMockData else {
+            print("🎨 [NetworkManager] 跳过同步偏好: Mock 模式")
+            return
+        }
+        guard hasValidToken() else {
+            print("🎨 [NetworkManager] 跳过同步偏好: 无有效 Token")
+            return
+        }
+        let url = "\(baseURLForWrite)/users/me/preferences"
+        print("🎨 [NetworkManager] 同步偏好到服务端: image_style=\(imageStyle) url=\(url)")
+        let body: [String: Any] = ["image_style": imageStyle]
+        do {
+            let dataResponse = await AF.request(
+                url,
+                method: .put,
+                parameters: body,
+                encoding: JSONEncoding.default,
+                headers: [
+                    "Content-Type": "application/json",
+                    "Authorization": "Bearer \(getAuthToken())"
+                ]
+            )
+            .serializingData()
+            .response
+            let code = dataResponse.response?.statusCode ?? 0
+            print("🎨 [NetworkManager] 偏好同步结果: HTTP \(code)")
+            if code != 200, let data = dataResponse.data, let str = String(data: data, encoding: .utf8) {
+                print("🎨 [NetworkManager] 偏好同步失败: \(str.prefix(200))")
+            }
+        } catch {
+            print("🎨 [NetworkManager] 偏好同步异常: \(error.localizedDescription)")
+        }
+    }
+    
     // 获取策略分析（包含图片）
     /// - Parameter forceRegenerate: 为 true 时强制重新生成，可修复旧数据无 skill_cards / 图片失败等问题
     func getStrategyAnalysis(sessionId: String, forceRegenerate: Bool = false) async throws -> StrategyAnalysisResponse {
@@ -562,9 +598,15 @@ class NetworkManager {
         
         // 使用真实 API：先取原始响应，按状态码分支解码，避免 4xx/5xx 时用成功结构解码导致 "data is missing"
         print("🌐 [Real] 使用真实 API 获取策略分析 forceRegenerate=\(forceRegenerate)")
-        let url = forceRegenerate
-            ? "\(baseURLForWrite)/tasks/sessions/\(sessionId)/strategies?force_regenerate=true"
-            : "\(baseURLForRead)/tasks/sessions/\(sessionId)/strategies"
+        var url: String
+        if forceRegenerate {
+            let styleKey = UserDefaults.standard.string(forKey: "image_style") ?? "ghibli"
+            let encoded = styleKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? styleKey
+            url = "\(baseURLForWrite)/tasks/sessions/\(sessionId)/strategies?force_regenerate=true&image_style=\(encoded)"
+            print("🎨 [NetworkManager] 强制重新生成，使用风格: \(styleKey) URL: \(url)")
+        } else {
+            url = "\(baseURLForRead)/tasks/sessions/\(sessionId)/strategies"
+        }
         let dataResponse = await AF.request(
             url,
             method: .post,

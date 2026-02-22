@@ -6,16 +6,19 @@ struct ImageLoaderView: View {
     let imageBase64: String?
     let placeholder: String
     var contentMode: ContentMode = .fit
+    /// 404 等加载失败时回调，供父视图切换为占位内容
+    var onLoadFailed: (() -> Void)?
     
     @State private var image: UIImage?
     @State private var isLoading = true
     @State private var loadError: Error?
     
-    init(imageUrl: String?, imageBase64: String?, placeholder: String = "加载中...", contentMode: ContentMode = .fit) {
+    init(imageUrl: String?, imageBase64: String?, placeholder: String = "加载中...", contentMode: ContentMode = .fit, onLoadFailed: (() -> Void)? = nil) {
         self.imageUrl = imageUrl
         self.imageBase64 = imageBase64
         self.placeholder = placeholder
         self.contentMode = contentMode
+        self.onLoadFailed = onLoadFailed
     }
     
     var body: some View {
@@ -110,7 +113,7 @@ struct ImageLoaderView: View {
                 if let httpResponse = response as? HTTPURLResponse {
                     print("📡 [ImageLoaderView] HTTP 状态码: \(httpResponse.statusCode)")
                     if httpResponse.statusCode != 200 {
-                        // URL 失败（如 401）时尝试 Base64 回退
+                        // URL 失败（如 401、404）时尝试 Base64 回退
                         if let b64 = self.imageBase64, !b64.isEmpty {
                             DispatchQueue.main.async { self.loadImageFromBase64(b64) }
                             return
@@ -119,6 +122,10 @@ struct ImageLoaderView: View {
                         print("❌ [ImageLoaderView] HTTP 错误: \(httpResponse.statusCode)")
                         self.loadError = error
                         self.isLoading = false
+                        // 404 等失败时通知父视图，便于切换为占位内容
+                        if httpResponse.statusCode == 404 || httpResponse.statusCode >= 500 {
+                            self.onLoadFailed?()
+                        }
                         return
                     }
                 }

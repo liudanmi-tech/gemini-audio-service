@@ -15,10 +15,12 @@ def get_audio_duration_sec(local_path: str) -> float:
     """
     使用 ffprobe 获取音频总时长（秒）。
     若 ffprobe 不可用或失败，抛出 RuntimeError。
+    大文件（如 60MB+ 长音频）可能需要较长时间扫描，超时可通过 FFPROBE_TIMEOUT 配置。
     """
     import subprocess
     if not os.path.isfile(local_path):
         raise FileNotFoundError(f"文件不存在: {local_path}")
+    timeout_sec = int(os.getenv("FFPROBE_TIMEOUT", "120"))  # 默认 120s，适配 60MB+ 长音频
     try:
         result = subprocess.run(
             [
@@ -27,7 +29,7 @@ def get_audio_duration_sec(local_path: str) -> float:
                 local_path,
             ],
             capture_output=True,
-            timeout=30,
+            timeout=timeout_sec,
             check=False,
         )
         if result.returncode != 0:
@@ -38,7 +40,7 @@ def get_audio_duration_sec(local_path: str) -> float:
             raise RuntimeError("ffprobe 未返回时长")
         return float(out)
     except subprocess.TimeoutExpired:
-        raise RuntimeError("ffprobe 超时")
+        raise RuntimeError(f"ffprobe 超时（{timeout_sec}s），大文件可设 FFPROBE_TIMEOUT 环境变量增加超时")
     except ValueError as e:
         raise RuntimeError(f"无法解析时长: {e}")
 

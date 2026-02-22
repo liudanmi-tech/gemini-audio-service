@@ -224,6 +224,7 @@ struct TaskDetailView: View {
             dialogues: [], // 暂时为空，等待完整数据加载
             risks: [],
             summary: task.summary, // 使用列表接口返回的总结，确保即时显示
+            coverImageUrl: task.coverImageUrl,
             createdAt: dateFormatter.string(from: task.startTime),
             updatedAt: dateFormatter.string(from: task.endTime ?? task.startTime)
         )

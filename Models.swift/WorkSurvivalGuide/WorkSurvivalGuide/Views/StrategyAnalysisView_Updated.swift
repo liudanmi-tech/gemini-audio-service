@@ -47,6 +47,19 @@ struct StrategyAnalysisView_Updated: View {
                 
                 Spacer()
                 
+                // 用新风格重新生成（始终可见，便于更换图片风格）
+                if strategyAnalysis != nil {
+                    Button(action: { loadStrategyAnalysis(forceRegenerate: true) }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "photo.artframe")
+                            Text("用新风格重新生成")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundColor(AppColors.headerText.opacity(0.8))
+                    }
+                    .buttonStyle(.plain)
+                }
+                
                 // 命中的技能（右对齐）
                 if let analysis = strategyAnalysis, let skills = analysis.appliedSkills, !skills.isEmpty {
                     Text(formatAppliedSkills(skills))
@@ -242,60 +255,64 @@ struct StrategyAnalysisView_Updated: View {
             // 等待 0.3 秒，让详情页面先渲染
             try? await Task.sleep(nanoseconds: 300_000_000)
             
-            do {
-                isLoading = true
-                errorMessage = nil
-                
-                // 设置加载状态
-                cacheManager.setLoadingStrategy(true, for: sessionId)
-                
-                print("📊 [StrategyAnalysisView] 开始加载策略分析，sessionId: \(sessionId) forceRegenerate=\(forceRegenerate)")
-                
-                let response = try await NetworkManager.shared.getStrategyAnalysis(sessionId: sessionId, forceRegenerate: forceRegenerate)
-                
-                print("✅ [StrategyAnalysisView] 策略分析加载成功")
-                print("  关键时刻数量: \(response.visual.count)")
-                print("  策略数量: \(response.strategies.count)")
-                
-                // 缓存策略分析
-                cacheManager.cacheStrategy(response, for: sessionId)
-                
-                await MainActor.run {
-                    strategyAnalysis = response
-                    isLoading = false
-                    if let cards = response.skillCards, !cards.isEmpty {
-                        print("✅ [StrategyAnalysisView] 使用 skill_cards 展示，共 \(cards.count) 张")
-                    } else {
-                        print("⚠️ [StrategyAnalysisView] skillCards 为空或 nil，回退到旧版 visual+strategies")
+            isLoading = true
+            errorMessage = nil
+            cacheManager.setLoadingStrategy(true, for: sessionId)
+            
+            // 方案 A 短轮询：失败时自动重试，避免单次长请求超时导致二次等待
+            let maxRetries = 3
+            var lastError: Error?
+            for attempt in 1...maxRetries {
+                do {
+                    print("📊 [StrategyAnalysisView] 加载策略分析 sessionId=\(sessionId) 第\(attempt)/\(maxRetries)次")
+                    let response = try await NetworkManager.shared.getStrategyAnalysis(sessionId: sessionId, forceRegenerate: forceRegenerate)
+                    
+                    print("✅ [StrategyAnalysisView] 策略分析加载成功")
+                    print("  关键时刻数量: \(response.visual.count)")
+                    print("  策略数量: \(response.strategies.count)")
+                    
+                    cacheManager.cacheStrategy(response, for: sessionId)
+                    
+                    await MainActor.run {
+                        strategyAnalysis = response
+                        isLoading = false
+                        if let cards = response.skillCards, !cards.isEmpty {
+                            print("✅ [StrategyAnalysisView] 使用 skill_cards 展示，共 \(cards.count) 张")
+                        } else {
+                            print("⚠️ [StrategyAnalysisView] skillCards 为空或 nil，回退到旧版 visual+strategies")
+                        }
+                    }
+                    return
+                } catch {
+                    lastError = error
+                    print("❌ [StrategyAnalysisView] 第\(attempt)次加载失败: \(error.localizedDescription)")
+                    if attempt < maxRetries {
+                        let delay: UInt64 = 5
+                        print("🔄 [StrategyAnalysisView] \(delay)秒后重试...")
+                        try? await Task.sleep(nanoseconds: delay * 1_000_000_000)
                     }
                 }
-            } catch {
-                print("❌ [StrategyAnalysisView] 策略分析加载失败: \(error.localizedDescription)")
-                if let nsError = error as NSError? {
-                    print("  错误域: \(nsError.domain)")
-                    print("  错误码: \(nsError.code)")
-                    print("  用户信息: \(nsError.userInfo)")
-                }
-                
-                await MainActor.run {
-                    let detail = (error as NSError?)?.userInfo[NSLocalizedDescriptionKey] as? String ?? error.localizedDescription
-                    if let nsError = error as NSError? {
-                        if nsError.code == -1001 || nsError.code == -1005 || detail.contains("timeout") || detail.lowercased().contains("timed out") || detail.contains("连接中断") {
-                            errorMessage = "策略分析加载超时或连接中断，可能仍在生成中，请稍后重试"
-                        } else if nsError.code == 400 {
-                            errorMessage = detail
-                        } else if nsError.code == 404 {
-                            errorMessage = detail.isEmpty ? "策略分析不存在，可能正在生成中" : detail
-                        } else if !detail.isEmpty && detail != error.localizedDescription {
-                            errorMessage = detail
-                        } else {
-                            errorMessage = "加载失败: \(detail)"
-                        }
+            }
+            
+            // 全部重试失败
+            await MainActor.run {
+                let detail = (lastError as NSError?)?.userInfo[NSLocalizedDescriptionKey] as? String ?? lastError?.localizedDescription ?? "未知错误"
+                if let nsError = lastError as NSError? {
+                    if nsError.code == -1001 || nsError.code == -1005 || detail.contains("timeout") || detail.lowercased().contains("timed out") || detail.contains("连接中断") {
+                        errorMessage = "策略分析加载超时或连接中断，可能仍在生成中，请点击重试"
+                    } else if nsError.code == 400 {
+                        errorMessage = detail
+                    } else if nsError.code == 404 {
+                        errorMessage = detail.isEmpty ? "策略分析不存在，可能正在生成中" : detail
+                    } else if !detail.isEmpty && detail != (lastError?.localizedDescription ?? "") {
+                        errorMessage = detail
                     } else {
                         errorMessage = "加载失败: \(detail)"
                     }
-                    isLoading = false
+                } else {
+                    errorMessage = "加载失败: \(detail)"
                 }
+                isLoading = false
             }
         }
     }

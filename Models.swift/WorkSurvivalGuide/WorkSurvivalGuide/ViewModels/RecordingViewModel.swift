@@ -124,9 +124,10 @@ class RecordingViewModel: ObservableObject {
                 endTime: nil,
                 duration: recordingDuration,
                 tags: [],
-                status: .analyzing, // 状态改为"分析中"
+                status: .analyzing,
                 emotionScore: nil,
-                speakerCount: nil
+                speakerCount: nil,
+                progressDescription: "上传中"
             )
             
             print("🔄 [RecordingViewModel] 更新卡片状态为'分析中':")
@@ -210,7 +211,15 @@ class RecordingViewModel: ObservableObject {
                         onProgress: { [weak self] pct in
                             Task { @MainActor in
                                 self?.uploadProgress = pct
-                                self?.uploadPhaseDescription = pct >= 1.0 ? "正在处理，请稍候..." : "上传中"
+                                let text = pct >= 1.0 ? "上传完成" : "上传中 \(Int(pct * 100))%"
+                                self?.uploadPhaseDescription = text
+                                if let taskId = self?.currentRecordingTaskId {
+                                    NotificationCenter.default.post(
+                                        name: NSNotification.Name("TaskProgressUpdated"),
+                                        object: nil,
+                                        userInfo: ["taskId": taskId, "progressDescription": text]
+                                    )
+                                }
                             }
                         }
                     )
@@ -235,7 +244,7 @@ class RecordingViewModel: ObservableObject {
                         }
                     }
                     
-                    // 使用服务器返回的 sessionId 创建新任务，状态为"分析中"
+                    // 使用服务器返回的 sessionId 创建新任务
                     let newTask = TaskItem(
                         id: response.sessionId,
                         title: response.title,
@@ -245,7 +254,8 @@ class RecordingViewModel: ObservableObject {
                         tags: [],
                         status: .analyzing,
                         emotionScore: nil,
-                        speakerCount: nil
+                        speakerCount: nil,
+                        progressDescription: "上传完成"
                     )
                     
                     print("📝 [RecordingViewModel] 使用服务器 ID 创建任务:")
@@ -330,7 +340,7 @@ class RecordingViewModel: ObservableObject {
         let taskId = UUID().uuidString
         currentRecordingTaskId = taskId
         
-        // 创建本地任务卡片，状态为分析中
+        // 创建本地任务卡片
         let newTask = TaskItem(
             id: taskId,
             title: "本地上传 \(timeString)",
@@ -340,7 +350,8 @@ class RecordingViewModel: ObservableObject {
             tags: [],
             status: .analyzing,
             emotionScore: nil,
-            speakerCount: nil
+            speakerCount: nil,
+            progressDescription: "上传中"
         )
         
         Task { @MainActor in
@@ -390,7 +401,13 @@ class RecordingViewModel: ObservableObject {
                         onProgress: { [weak self] pct in
                             Task { @MainActor in
                                 self?.uploadProgress = pct
-                                self?.uploadPhaseDescription = pct >= 1.0 ? "正在处理，请稍候..." : "上传中"
+                                let text = pct >= 1.0 ? "上传完成" : "上传中 \(Int(pct * 100))%"
+                                self?.uploadPhaseDescription = text
+                                NotificationCenter.default.post(
+                                    name: NSNotification.Name("TaskProgressUpdated"),
+                                    object: nil,
+                                    userInfo: ["taskId": taskId, "progressDescription": text]
+                                )
                             }
                         }
                     )
@@ -409,7 +426,8 @@ class RecordingViewModel: ObservableObject {
                         tags: [],
                         status: .analyzing,
                         emotionScore: nil,
-                        speakerCount: nil
+                        speakerCount: nil,
+                        progressDescription: "上传完成"
                     )
                     
                     await MainActor.run {
@@ -461,11 +479,14 @@ class RecordingViewModel: ObservableObject {
             }
             
             var pollCount = 0
-            let maxPolls = 120  // 最多轮询 120 次（6分钟，因为音频分析可能需要更长时间）
-            
+            let maxPolls = 140  // 最多轮询 140 次（含策略阶段，约 7 分钟）
+            var archivedPollCount = 0  // 达到 archived 后的轮询次数，用于兼容旧服务端
+            let maxArchivedPolls = 25  // archived 后最多再轮询 25 次（约 75 秒）等待策略
+            var summaryFetched = false  // 避免重复拉取 summary（matching_profiles 或 strategy_* 时拉一次）
+
             while pollCount < maxPolls {
                 do {
-                    let waitSeconds: UInt64 = pollCount == 0 ? 8 : 3  // 首次等待 8 秒（给服务器 OSS 下载留时间）
+                    let waitSeconds: UInt64 = pollCount == 0 ? 8 : 3  // 首次等待 8 秒
                     print("🔄 [RecordingViewModel] 等待 \(waitSeconds) 秒后查询状态（第 \(pollCount + 1)/\(maxPolls) 次）...")
                     try await Task.sleep(nanoseconds: waitSeconds * 1_000_000_000)
                     
@@ -475,14 +496,54 @@ class RecordingViewModel: ObservableObject {
                     print("📊 [RecordingViewModel] 任务状态:")
                     print("   - status: \(status.status)")
                     print("   - progress: \(status.progress)")
-                    print("   - estimatedTimeRemaining: \(status.estimatedTimeRemaining)")
+                    print("   - analysisStage: \(status.analysisStage ?? "nil")")
                     if let stage = status.stageDisplayText {
                         print("   - stage: \(stage)")
-                        await MainActor.run { self.uploadPhaseDescription = stage }
+                        await MainActor.run {
+                            self.uploadPhaseDescription = stage
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("TaskProgressUpdated"),
+                                object: nil,
+                                userInfo: ["taskId": sessionId, "progressDescription": stage]
+                            )
+                        }
                     }
                     
-                    // 处理完成状态
+                    // 提前获取 summary：matching_profiles 或 strategy_* 阶段时拉取一次，供卡片滚动展示
+                    let stageForSummary = status.analysisStage ?? ""
+                    let hasSummaryStage = stageForSummary == "matching_profiles"
+                        || stageForSummary.hasPrefix("strategy_")
+                    if hasSummaryStage && !summaryFetched {
+                        summaryFetched = true
+                        do {
+                            let detail = try await networkManager.getTaskDetail(sessionId: sessionId, authToken: token)
+                            if let summary = detail.summary, !summary.isEmpty {
+                                print("📋 [RecordingViewModel] 提前获取 summary 成功，供卡片滚动展示")
+                                await MainActor.run {
+                                    NotificationCenter.default.post(
+                                        name: NSNotification.Name("TaskSummaryAvailable"),
+                                        object: nil,
+                                        userInfo: ["taskId": sessionId, "summary": summary]
+                                    )
+                                }
+                            }
+                        } catch {
+                            print("⚠️ [RecordingViewModel] 提前获取 summary 失败: \(error.localizedDescription)")
+                            summaryFetched = false
+                        }
+                    }
+                    
+                    // archived 后累计轮询次数，用于兼容旧服务端（无 strategy_done）
                     if status.status == "archived" || status.status == "completed" {
+                        archivedPollCount += 1
+                    }
+                    
+                    // 处理完成状态：strategy_done 或 completed 或 archived 后超时（兼容旧服务端）
+                    let strategyReady = status.analysisStage == "strategy_done"
+                    let shouldStop = (status.status == "archived" && strategyReady)
+                        || status.status == "completed"
+                        || (status.status == "archived" && archivedPollCount >= maxArchivedPolls)
+                    if shouldStop {
                         print("✅ [RecordingViewModel] 分析完成！获取详情...")
                         // 分析完成，获取详情并更新（使用缓存的 token）
                         let detail = try await networkManager.getTaskDetail(sessionId: sessionId, authToken: token)
@@ -494,7 +555,8 @@ class RecordingViewModel: ObservableObject {
                         print("   - dialogues count: \(detail.dialogues.count)")
                         print("   - risks count: \(detail.risks.count)")
                         
-                        // 转换为 TaskItem，包含summary字段
+                        // 转换为 TaskItem，包含 summary 和 coverImageUrl
+                        // 仅当服务端返回 cover_image_url 时使用，避免请求不存在的图片导致 404
                         let completedTask = TaskItem(
                             id: detail.sessionId,
                             title: detail.title,
@@ -505,7 +567,8 @@ class RecordingViewModel: ObservableObject {
                             status: .archived,
                             emotionScore: detail.emotionScore,
                             speakerCount: detail.speakerCount,
-                            summary: detail.summary
+                            summary: detail.summary,
+                            coverImageUrl: detail.coverImageUrl
                         )
                         
                         await MainActor.run {

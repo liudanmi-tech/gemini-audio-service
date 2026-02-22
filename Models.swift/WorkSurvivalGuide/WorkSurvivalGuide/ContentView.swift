@@ -58,24 +58,7 @@ struct ContentView: View {
                                     }
                                 }
                                 
-                                // 上传进度悬浮提示（100% 后显示「正在处理，请稍候...」）
-                                if recordingViewModel.isUploading {
-                                    Color.black.opacity(0.3)
-                                        .ignoresSafeArea()
-                                    VStack(spacing: 12) {
-                                        ProgressView()
-                                            .scaleEffect(1.2)
-                                        Text(recordingViewModel.uploadPhaseDescription)
-                                            .font(.system(size: 15, weight: .medium, design: .rounded))
-                                            .foregroundColor(.white)
-                                        Text("\(Int(recordingViewModel.uploadProgress * 100))%")
-                                            .font(.system(size: 14, weight: .regular, design: .rounded))
-                                            .foregroundColor(.white.opacity(0.9))
-                                    }
-                                    .padding(24)
-                                    .background(Color.black.opacity(0.6))
-                                    .cornerRadius(12)
-                                }
+                                // 进度已移至卡片内显示，不再使用悬浮层
                             }
                         }
                         

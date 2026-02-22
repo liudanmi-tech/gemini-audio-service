@@ -168,6 +168,48 @@ class TaskListViewModel: ObservableObject {
             print("⚠️ [TaskListViewModel] 未找到要更新的任务")
         }
     }
+
+    // 更新任务进度文案（用于卡片内显示 12 个进度节点）
+    func updateTaskProgress(taskId: String, progressDescription: String) {
+        guard let index = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        let current = tasks[index]
+        let updated = TaskItem(
+            id: current.id,
+            title: current.title,
+            startTime: current.startTime,
+            endTime: current.endTime,
+            duration: current.duration,
+            tags: current.tags,
+            status: current.status,
+            emotionScore: current.emotionScore,
+            speakerCount: current.speakerCount,
+            summary: current.summary,
+            coverImageUrl: current.coverImageUrl,
+            progressDescription: progressDescription
+        )
+        tasks[index] = updated
+    }
+    
+    // 更新任务 summary（7-12 步时提前获取，供卡片滚动展示）
+    func updateTaskSummary(taskId: String, summary: String) {
+        guard let index = tasks.firstIndex(where: { $0.id == taskId }) else { return }
+        let current = tasks[index]
+        let updated = TaskItem(
+            id: current.id,
+            title: current.title,
+            startTime: current.startTime,
+            endTime: current.endTime,
+            duration: current.duration,
+            tags: current.tags,
+            status: current.status,
+            emotionScore: current.emotionScore,
+            speakerCount: current.speakerCount,
+            summary: summary,
+            coverImageUrl: current.coverImageUrl,
+            progressDescription: current.progressDescription
+        )
+        tasks[index] = updated
+    }
     
     // 删除任务（用于替换本地创建的卡片）
     func deleteTask(taskId: String) {
@@ -213,18 +255,19 @@ class TaskListViewModel: ObservableObject {
         }
     }
     
-    // 合并任务列表，保留已有任务的 summary 字段
+    // 合并任务列表，保留已有任务的 summary、progressDescription 字段
     private func mergeTasks(apiTasks: [TaskItem]) -> [TaskItem] {
-        // 创建已有任务的 summary 映射表（以 task.id 为 key）
         let existingSummaries = Dictionary(uniqueKeysWithValues: tasks.compactMap { task in
             task.summary != nil ? (task.id, task.summary) : nil
         })
+        let existingProgress = Dictionary(uniqueKeysWithValues: tasks.compactMap { task in
+            (task.progressDescription != nil && !(task.progressDescription?.isEmpty ?? true)) ? (task.id, task.progressDescription!) : nil
+        })
         
-        // 更新 API 返回的任务，如果 API 任务没有 summary 但本地有，则保留本地的 summary
         return apiTasks.map { apiTask in
-            if apiTask.summary == nil || apiTask.summary?.isEmpty == true,
-               let existingSummary = existingSummaries[apiTask.id] {
-                // API 任务没有 summary，但本地有，创建新任务保留 summary
+            let keepSummary = (apiTask.summary == nil || apiTask.summary?.isEmpty == true) && existingSummaries[apiTask.id] != nil
+            let keepProgress = apiTask.status == .analyzing && existingProgress[apiTask.id] != nil
+            if keepSummary || keepProgress {
                 return TaskItem(
                     id: apiTask.id,
                     title: apiTask.title,
@@ -235,13 +278,12 @@ class TaskListViewModel: ObservableObject {
                     status: apiTask.status,
                     emotionScore: apiTask.emotionScore,
                     speakerCount: apiTask.speakerCount,
-                    summary: existingSummary,
-                    coverImageUrl: apiTask.coverImageUrl
+                    summary: keepSummary ? (existingSummaries[apiTask.id].flatMap { $0 } ?? apiTask.summary) : apiTask.summary,
+                    coverImageUrl: apiTask.coverImageUrl,
+                    progressDescription: keepProgress ? existingProgress[apiTask.id] : nil
                 )
-            } else {
-                // API 任务有 summary 或本地也没有，直接使用 API 任务
-                return apiTask
             }
+            return apiTask
         }
     }
     

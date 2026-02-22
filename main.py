@@ -4,6 +4,7 @@ FastAPI 音频分析微服务
 """
 
 import os
+import re
 import json
 import time
 import tempfile
@@ -644,6 +645,26 @@ async def _get_profile_reference_images(session_id: str, user_id: str, db: Async
     return result
 
 
+# 图片风格映射：客户端传入 style_key，用于策略图片生成
+IMAGE_STYLE_MAP = {
+    "ghibli": "宫崎骏吉卜力动画风格，温暖自然色调，柔和笔触。",
+    "shinkai": "新海诚动画风格，高饱和蓝天、细腻光影、蒸汽朋克细节，浪漫唯美，类似《你的名字》《天气之子》。",
+    "pixar": "皮克斯 3D 动画风格，圆润角色、柔和光照、细腻材质，温暖叙事感，类似《寻梦环游记》《心灵奇旅》。",
+    "cyberpunk": "赛博朋克风格，霓虹高饱和、暗部蓝紫、科技感线条，雨夜城市，类似《银翼杀手》《赛博朋克2077》。",
+    "watercolor": "水彩插画风格，晕染边缘、透明层次、留白笔触，清新自然，类似绘本插画。",
+    "ukiyoe": "日式浮世绘风格，平面构图、勾线描边、传统配色（靛蓝、朱红），如葛饰北斋或歌川广重。",
+    "line_art": "极简黑白线稿风格，细线条、留白为主、少阴影，类似漫画分镜或手绘本。",
+    "steampunk": "蒸汽朋克风格，铜黄机械、齿轮管道、维多利亚时代服饰，复古工业美学。",
+    "pop_art": "波普艺术风格，粗黑轮廓、高饱和纯色、网点纹理，类似安迪·沃霍尔。",
+    "scandinavian": "北欧插画风格，扁平色块、低饱和度、几何简约，温馨治愈感。",
+    "retro_manga": "昭和复古漫画风格，网点纸纹理、粗边框、怀旧色调，类似 80 年代日本漫画。",
+    "oil_painting": "古典油画风格，厚涂笔触、暖色光感、古典构图，类似伦勃朗或印象派。",
+    "pixel": "16-bit 像素风格，方色块、低分辨率、复古游戏感，类似《八方旅人》HD-2D。",
+    "chinese_ink": "中国水墨画风格，宣纸晕染、留白意境、墨色层次，淡雅诗意。",
+    "storybook": "欧洲童话绘本风格，柔和水彩、复古装帧感、梦幻氛围，类似《小王子》插图。",
+}
+
+
 def generate_image_from_prompt(
     image_prompt: str,
     user_id: str,
@@ -651,6 +672,7 @@ def generate_image_from_prompt(
     image_index: int,
     reference_images: Optional[List[Tuple[bytes, str]]] = None,
     max_retries: int = 3,
+    style_key: Optional[str] = None,
 ) -> Optional[str]:
     """
     使用 Gemini Nano Banana 生成图片并上传到 OSS。
@@ -676,15 +698,37 @@ def generate_image_from_prompt(
     )
     
     # 构建 contents：参考图 + 文本 prompt
-    style_prefix = "宫崎骏吉卜力动画风格，温暖自然色调，柔和笔触。"
+    key = (style_key or "ghibli").strip().lower()
+    style_prefix = IMAGE_STYLE_MAP.get(key, IMAGE_STYLE_MAP["ghibli"])
+    logger.info(f"[图片生成] style_key={style_key} -> key={key} prefix前60字={style_prefix[:60]}...")
+    
+    # 当使用非宫崎骏风格时，移除 image_prompt 中技能硬编码的宫崎骏风格描述，避免风格冲突
+    prompt_body = image_prompt
+    if key != "ghibli":
+        for prefix in (
+            "宫崎骏吉卜力动画风格，温暖自然色调。",
+            "宫崎骏吉卜力动画风格，温暖自然色调，柔和笔触。",
+            "宫崎骏风格，温暖自然色调。",
+            "宫崎骏/吉卜力动画风格，温暖自然色调，柔和笔触；",
+            "宫崎骏",
+        ):
+            if prompt_body.strip().startswith(prefix):
+                prompt_body = prompt_body.strip()[len(prefix):].strip()
+                # 移除可能紧随的句号、分号、逗号
+                while prompt_body and prompt_body[0] in "。；，、":
+                    prompt_body = prompt_body[1:].strip()
+                break
+        # 兜底：用正则移除开头的宫崎骏相关短语
+        prompt_body = re.sub(r"^宫崎骏[^。]*。?", "", prompt_body).strip()
+    
     if reference_images and len(reference_images) >= 1:
         ref_desc = "第一张图为左侧人物（用户）的参考照片"
         if len(reference_images) >= 2:
             ref_desc += "，第二张图为右侧人物（对方）的参考照片"
         ref_desc += "。请保持人物面部与气质与参考图一致。\n\n"
-        full_prompt = style_prefix + ref_desc + image_prompt
+        full_prompt = style_prefix + ref_desc + prompt_body
     else:
-        full_prompt = style_prefix + image_prompt
+        full_prompt = style_prefix + prompt_body
     
     contents_list = []
     if reference_images:
@@ -749,10 +793,9 @@ def generate_image_from_prompt(
             
             # 处理 429 配额超限错误
             if error_code == 429 or '429' in error_message or 'RESOURCE_EXHAUSTED' in error_message:
-                # 尝试从错误信息中提取重试延迟
+                # 尝试从错误信息中提取重试延迟（re 已在文件顶部 import）
                 retry_delay = 15  # 默认延迟 15 秒
                 if 'retry in' in error_message.lower() or 'retryDelay' in error_message:
-                    import re
                     delay_match = re.search(r'retry in ([\d.]+)s', error_message, re.IGNORECASE)
                     if delay_match:
                         retry_delay = max(15, int(float(delay_match.group(1))) + 2)  # 至少等待 15 秒，多加 2 秒缓冲
@@ -1188,6 +1231,32 @@ async def health_check():
     return {"message": "音频分析服务正在运行", "status": "ok"}
 
 
+# ==================== 用户偏好 API（供自动策略生成读取 image_style）====================
+
+class UserPreferencesUpdate(BaseModel):
+    """用户偏好更新请求"""
+    image_style: Optional[str] = None  # 如 pixar、ghibli、shinkai 等
+
+
+@app.put("/api/v1/users/me/preferences")
+async def update_user_preferences(
+    body: UserPreferencesUpdate,
+    user_id: str = Depends(get_current_user_id),
+):
+    """更新当前用户的偏好（如图片风格），供新录音自动生成策略时使用"""
+    logger.info(f"[用户偏好 API] 收到请求 user_id={user_id} image_style={body.image_style}")
+    from utils.user_preferences import set_user_image_style
+    if body.image_style:
+        set_user_image_style(user_id, body.image_style.strip().lower())
+        return APIResponse(
+            code=200,
+            message="success",
+            data={"image_style": body.image_style.strip().lower()},
+            timestamp=datetime.now().isoformat()
+        )
+    return APIResponse(code=200, message="success", data={}, timestamp=datetime.now().isoformat())
+
+
 # ==================== 任务管理 API ====================
 
 # 内存存储（临时，后续改为数据库）
@@ -1371,6 +1440,14 @@ async def upload_audio_api(
         temp_file_path = temp_file.name
         logger.info(f"[upload] 临时文件已创建: {temp_file_path}")
         
+        # 进度：上传完成
+        _uq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _us = _uq.scalar_one_or_none()
+        if _us:
+            _us.analysis_stage = "upload_done"
+            _us.analysis_stage_detail = None
+            await db.commit()
+
         # 异步分析（传递临时文件路径和文件名，确保所有参数都正确传递）
         # 注意：不传递db会话，在异步任务中创建新的会话
         logger.info(f"创建异步分析任务: session_id={session_id}, file_path={temp_file_path}, filename={file_filename}")
@@ -1441,13 +1518,14 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 raise FileNotFoundError(f"临时文件不存在: {temp_file_path}")
             
             logger.info(f"[分析-{session_id}] step_async1: 分析任务开始，文件大小: {os.path.getsize(temp_file_path)} 字节")
-            # 直接进入 Gemini 分析阶段（原音频不上传阿里云，仅本地存储）
+            # 进度：保存音频
             _uq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
             _us = _uq.scalar_one_or_none()
             if _us:
-                _us.analysis_stage = "gemini_analysis"
+                _us.analysis_stage = "saving_audio"
+                _us.analysis_stage_detail = None
                 await db.commit()
-            
+
             # 原音频持久化到本地（秒级，供剪切与声纹使用；默认不上传 OSS）
             audio_url, audio_path = await asyncio.to_thread(
                 persist_original_audio, session_id, temp_file_path, file_filename or "audio.m4a", user_id
@@ -1461,7 +1539,14 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 logger.info(f"[分析-{session_id}] Session 已更新原音频: audio_url={bool(audio_url)}, audio_path={bool(audio_path)}")
             
             logger.info(f"[分析-{session_id}] step_async2: 本地存储完成，即将调用 Gemini")
-            
+            # 进度：转写音频
+            _tq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+            _ts = _tq.scalar_one_or_none()
+            if _ts:
+                _ts.analysis_stage = "transcribing"
+                _ts.analysis_stage_detail = None
+                await db.commit()
+
             # 在 executor 中运行 Gemini 分析（避免阻塞事件循环），带 6 分钟超时
             logger.info(f"[分析-{session_id}] step_async3: 即将调用 analyze_audio_from_path（executor）")
             def _run_analysis():
@@ -1494,24 +1579,25 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             duration = int((end_time - datetime.fromisoformat(task_data["start_time"])).total_seconds())
             
             # 更新内存存储（向后兼容）
+            # 注意：status 保持 analyzing，等策略生成完成后再设 archived，确保列表「分析完成」= 全部就绪
             task_data.update({
                 "end_time": end_time.isoformat(),
                 "duration": duration,
-                "status": "archived",
+                "status": "analyzing",
                 "emotion_score": emotion_score,
                 "speaker_count": result.speaker_count,
                 "tags": tags,
                 "updated_at": end_time.isoformat()
             })
             
-            # 更新数据库Session
+            # 更新数据库Session（status 保持 analyzing，策略完成后在 _generate_strategies_core 中设为 archived）
             result_query = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
             db_session = result_query.scalar_one_or_none()
             if db_session:
                 db_session.end_time = end_time
                 db_session.duration = duration
-                db_session.status = "archived"
-                db_session.analysis_stage = None  # 完成时清除
+                db_session.status = "analyzing"  # 延后：策略完成后再设 archived，实现「列表完成=点进即看」
+                db_session.analysis_stage = None  # 即将进入 matching_profiles 阶段
                 db_session.error_message = None  # 成功时清除旧失败原因
                 db_session.emotion_score = emotion_score
                 db_session.speaker_count = result.speaker_count
@@ -1534,11 +1620,12 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
             await db.commit()
             logger.info(f"分析结果已保存到数据库: {session_id}")
             
-            # 更新进度：声纹匹配
+            # 进度：匹配档案
             _vq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
             _vs = _vq.scalar_one_or_none()
             if _vs:
-                _vs.analysis_stage = "voiceprint"
+                _vs.analysis_stage = "matching_profiles"
+                _vs.analysis_stage_detail = None
                 await db.commit()
             
             # 分析后流程：按说话人选代表片段 → 声纹识别 → 写 speaker_mapping
@@ -1809,7 +1896,8 @@ async def get_task_list(
                 if isinstance(vd, list) and len(vd) > 0:
                     first_v = vd[0] if isinstance(vd[0], dict) else getattr(vd[0], "__dict__", {})
                     img_url = first_v.get("image_url") if isinstance(first_v, dict) else getattr(first_v, "image_url", None)
-                    if img_url:
+                    # 仅在 img_url 为真实 OSS 地址时返回封面，避免图片未上传成功时客户端请求 404
+                    if img_url and isinstance(img_url, str) and ("oss" in img_url or "geminipicture" in img_url.lower()):
                         # 统一走代理 API（需 JWT），避免 OSS 私有 URL 直接访问 403
                         cover_map[sid] = f"{api_base}/api/v1/images/{sid}/0"
         
@@ -2076,22 +2164,41 @@ async def get_task_status(
         
         status_value = db_session.status or "unknown"
         analysis_stage = getattr(db_session, "analysis_stage", None) or ""
-        
+        analysis_stage_detail = getattr(db_session, "analysis_stage_detail", None)
+        if analysis_stage_detail is not None and not isinstance(analysis_stage_detail, dict):
+            analysis_stage_detail = None  # JSONB 可能返回 dict，确保可序列化
+
         # 根据阶段估算进度与剩余时间
-        if status_value == "archived":
-            progress_val, eta = 1.0, 0
-        elif status_value == "failed":
+        stage_map = {
+            "upload_done": (0.05, 170),
+            "saving_audio": (0.10, 165),
+            "transcribing": (0.20, 120),
+            "matching_profiles": (0.90, 15),
+            "strategy_scene": (0.92, 60),
+            "strategy_matching": (0.94, 55),
+            "strategy_matched_n": (0.96, 50),
+            "strategy_executing": (0.97, 40),
+            "strategy_images": (0.98, 25),
+            "strategy_done": (1.0, 0),
+            "gemini_analysis": (0.50, 45),  # 兼容旧值
+            "voiceprint": (0.90, 10),  # 兼容旧值
+        }
+        if status_value == "failed":
             progress_val, eta = 0.0, 0
+        elif status_value == "archived" and analysis_stage == "strategy_done":
+            progress_val, eta = 1.0, 0  # 策略就绪，客户端可停止轮询
+        elif status_value == "archived":
+            progress_val, eta = stage_map.get(analysis_stage, (0.95, 30))  # 策略进行中
         else:
-            stage_map = {"gemini_analysis": (0.5, 45), "voiceprint": (0.9, 10)}
-            progress_val, eta = stage_map.get(analysis_stage, (0.3, 60))
-        
+            progress_val, eta = stage_map.get(analysis_stage, (0.30, 60))
+
         payload = {
             "session_id": session_id,
             "status": status_value,
             "progress": progress_val,
             "estimated_time_remaining": eta,
             "analysis_stage": analysis_stage,
+            "analysis_stage_detail": analysis_stage_detail,
             "updated_at": db_session.updated_at.isoformat() if db_session.updated_at else ""
         }
         if status_value == "failed" and getattr(db_session, "error_message", None):
@@ -2161,12 +2268,33 @@ async def generate_strategies_async(session_id: str, user_id: str):
                 logger.error(f"对话转录数据不存在: {session_id}")
                 return
             
+            # 读取用户图片风格偏好（自动生成时使用），无则默认 ghibli
+            from utils.user_preferences import get_user_image_style
+            image_style = get_user_image_style(user_id)
+            logger.info(f"[策略流程] 自动生成 image_style={image_style} (来自用户偏好)")
             # 调用核心策略生成逻辑
-            await _generate_strategies_core(session_id, user_id, transcript, db)
+            await _generate_strategies_core(session_id, user_id, transcript, db, image_style=image_style)
             
         except Exception as e:
             logger.error(f"异步生成策略分析失败: {e}")
             logger.error(traceback.format_exc())
+            # 策略失败时仍设为 archived，让用户可查看对话并手动重试策略
+            try:
+                result = await db.execute(
+                    select(Session).where(
+                        Session.id == uuid.UUID(session_id),
+                        Session.user_id == uuid.UUID(user_id)
+                    )
+                )
+                db_session = result.scalar_one_or_none()
+                if db_session and db_session.status == "analyzing":
+                    db_session.status = "archived"
+                    db_session.analysis_stage = "failed"
+                    db_session.error_message = str(e)[:500]
+                    await db.commit()
+                    logger.info(f"策略失败，已将 {session_id} 设为 archived，用户可查看对话并重试")
+            except Exception as db_err:
+                logger.warning(f"策略失败后更新 status 失败: {db_err}")
 
 
 _SKILL_ID_TO_NAME = {
@@ -2201,7 +2329,13 @@ def _build_legacy_skill_cards(visual_data: list, strategies: list, applied_skill
     }]
 
 
-async def _generate_strategies_core(session_id: str, user_id: str, transcript: list, db: AsyncSession):
+async def _generate_strategies_core(
+    session_id: str,
+    user_id: str,
+    transcript: list,
+    db: AsyncSession,
+    image_style: Optional[str] = None,
+):
     """策略生成核心逻辑（v0.4 技能化架构）"""
     from datetime import datetime
     import asyncio
@@ -2209,7 +2343,14 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
     try:
         logger.info(f"========== 开始生成策略分析（v0.4 技能化架构） ==========")
         logger.info(f"session_id: {session_id}")
-        
+        # 进度：识别场景
+        _sq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _ss = _sq.scalar_one_or_none()
+        if _ss:
+            _ss.analysis_stage = "strategy_scene"
+            _ss.analysis_stage_detail = None
+            await db.commit()
+
         # 2.1 场景识别（Router Agent）
         logger.info("[策略流程] 步骤2.1: 场景识别(Gemini classify_scene)...")
         model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
@@ -2219,7 +2360,14 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         logger.info(f"[策略流程] 步骤2.1: 完成 primary_scene={primary_scene}")
         for scene in scenes:
             logger.info(f"  - {scene.get('category')}: {scene.get('confidence', 0):.2f}")
-        
+        # 进度：匹配技能
+        _mq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _ms = _mq.scalar_one_or_none()
+        if _ms:
+            _ms.analysis_stage = "strategy_matching"
+            _ms.analysis_stage_detail = None
+            await db.commit()
+
         # 2.2 技能匹配（若此处报 PG type 114，可能是 skills 表 meta_data 列为 json）
         logger.info("[策略流程] 步骤2.2: 技能匹配(match_skills/查 skills 表)...")
         matched_skills = await match_skills(scene_result, db, transcript=transcript)
@@ -2242,7 +2390,15 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         
         for skill in matched_skills:
             logger.info(f"  ✅ 技能: {skill['skill_id']} (名称: {skill.get('name', 'N/A')}, priority={skill['priority']}, confidence={skill['confidence']:.2f})")
-        
+        # 进度：匹配了 N 个技能
+        skill_names = [s.get("name") or s.get("skill_id", "") for s in matched_skills]
+        _nq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _ns = _nq.scalar_one_or_none()
+        if _ns:
+            _ns.analysis_stage = "strategy_matched_n"
+            _ns.analysis_stage_detail = {"skills_matched": len(matched_skills), "skill_names": skill_names}
+            await db.commit()
+
         # 2.2b v0.6 记忆检索：为技能注入相关记忆
         memory_context = ""
         try:
@@ -2278,6 +2434,14 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             "memory_context": memory_context or "",
         }
         
+        # 进度：技能加工中
+        _eq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _es = _eq.scalar_one_or_none()
+        if _es:
+            _es.analysis_stage = "strategy_executing"
+            _es.analysis_stage_detail = None
+            await db.commit()
+
         # 2.3 技能执行：transcript + 技能 prompt -> Gemini -> 策略与视觉描述
         logger.info("[策略流程] 步骤2.3: 技能执行(transcript+技能prompt->Gemini)...")
         skill_results = []
@@ -2347,6 +2511,14 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
         
         await db.commit()
         
+        # 进度：生成图片中
+        _iq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _is_obj = _iq.scalar_one_or_none()
+        if _is_obj:
+            _is_obj.analysis_stage = "strategy_images"
+            _is_obj.analysis_stage_detail = None
+            await db.commit()
+
         # 4. 构建 skill_cards（每个技能一张卡片，不再用 compose_results 合并）
         logger.info("[策略流程] 步骤2.3a: 构建 skill_cards...")
         skill_cards = []
@@ -2409,6 +2581,7 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
                             session_id,
                             global_image_index,
                             reference_images=reference_images if reference_images else None,
+                            style_key=image_style,
                         )
                         if image_result:
                             if image_result.startswith('http://') or image_result.startswith('https://'):
@@ -2526,7 +2699,16 @@ async def _generate_strategies_core(session_id: str, user_id: str, transcript: l
             db.add(strategy_analysis)
             await db.commit()
             logger.info(f"[策略流程] 步骤2.4: 已保存到数据库: {session_id}")
-        
+
+        # 进度：策略就绪，此时才将 status 设为 archived，确保列表「分析完成」时用户点进即能看见全部内容
+        _dq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _ds = _dq.scalar_one_or_none()
+        if _ds:
+            _ds.analysis_stage = "strategy_done"
+            _ds.analysis_stage_detail = None
+            _ds.status = "archived"  # 策略完成后再归档，实现「列表完成=点进即看」
+            await db.commit()
+
         # 存储策略结果到内存（向后兼容）
         if session_id not in analysis_storage:
             analysis_storage[session_id] = {}
@@ -2638,6 +2820,7 @@ async def classify_scene_endpoint(
 async def generate_strategies(
     session_id: str,
     force_regenerate: bool = Query(False, description="强制重新生成（用于更新为最新风格如宫崎骏）"),
+    image_style: Optional[str] = Query(None, description="图片风格 key，如 shinkai/pixar/ghibli"),
     user_id: str = Depends(get_current_user_id),
     db: AsyncSession = Depends(get_db)
 ):
@@ -2645,7 +2828,7 @@ async def generate_strategies(
     from datetime import datetime
     
     try:
-        logger.info(f"[策略流程] session_id={session_id} 开始")
+        logger.info(f"[策略流程] session_id={session_id} 开始 image_style={image_style}")
         # 验证任务存在且属于当前用户
         result = await db.execute(
             select(Session).where(
@@ -2761,8 +2944,8 @@ async def generate_strategies(
             raise HTTPException(status_code=400, detail="对话转录数据不存在，请先完成音频分析")
         
         # 步骤2：核心生成（步骤2.1 场景识别 -> 2.2 技能匹配 -> 2.3 transcript+技能 prompt -> Gemini）
-        logger.info(f"[策略流程] 步骤2: 调用 _generate_strategies_core(场景识别->技能匹配->Gemini策略)...")
-        call2_result = await _generate_strategies_core(session_id, user_id, transcript, db)
+        logger.info(f"[策略流程] 步骤2: 调用 _generate_strategies_core(场景识别->技能匹配->Gemini策略) image_style={image_style}")
+        call2_result = await _generate_strategies_core(session_id, user_id, transcript, db, image_style=image_style)
         logger.info(f"[策略流程] 步骤2: _generate_strategies_core 返回成功")
         
         # 步骤3：从数据库读取刚写入的策略以取技能信息（若此处报 PG type 114，说明 strategy_analysis 表列为 json 未改为 jsonb）

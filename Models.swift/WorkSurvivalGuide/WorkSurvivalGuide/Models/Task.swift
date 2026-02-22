@@ -29,6 +29,8 @@ struct TaskItem: Codable, Identifiable {
     let speakerCount: Int?            // 说话人数
     let summary: String?             // 对话总结（可选）
     let coverImageUrl: String?        // 策略分析首图 URL（可选）
+    /// 分析进度文案（仅本地展示，列表 API 不返回；如「上传中」「转写音频…」「匹配了 2 个技能」）
+    let progressDescription: String?
     
     // 自定义 CodingKeys 用于处理 API 返回的字段名
     enum CodingKeys: String, CodingKey {
@@ -43,6 +45,7 @@ struct TaskItem: Codable, Identifiable {
         case speakerCount = "speaker_count"
         case summary
         case coverImageUrl = "cover_image_url"
+        case progressDescription = "progress_description"
     }
     
     // 便利初始化器（用于直接创建 Task，不通过 JSON 解码）
@@ -57,7 +60,8 @@ struct TaskItem: Codable, Identifiable {
         emotionScore: Int? = nil,
         speakerCount: Int? = nil,
         summary: String? = nil,
-        coverImageUrl: String? = nil
+        coverImageUrl: String? = nil,
+        progressDescription: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -70,6 +74,7 @@ struct TaskItem: Codable, Identifiable {
         self.speakerCount = speakerCount
         self.summary = summary
         self.coverImageUrl = coverImageUrl
+        self.progressDescription = progressDescription
     }
     
     // 自定义日期解码器
@@ -98,6 +103,7 @@ struct TaskItem: Codable, Identifiable {
         speakerCount = try? container.decode(Int.self, forKey: .speakerCount)
         summary = try? container.decode(String.self, forKey: .summary)
         coverImageUrl = try? container.decode(String.self, forKey: .coverImageUrl)
+        progressDescription = try? container.decodeIfPresent(String.self, forKey: .progressDescription) ?? nil
     }
     
     // 格式化时长显示
@@ -259,6 +265,7 @@ struct TaskDetailResponse: Codable {
     let dialogues: [DialogueItem]
     let risks: [String]
     let summary: String?  // 新增：对话总结
+    let coverImageUrl: String?  // 封面图 URL，仅当策略首图已上传到 OSS 时非空
     let createdAt: String
     let updatedAt: String
     
@@ -275,6 +282,7 @@ struct TaskDetailResponse: Codable {
         case dialogues
         case risks
         case summary  // 新增
+        case coverImageUrl = "cover_image_url"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
@@ -304,6 +312,7 @@ struct TaskDetailResponse: Codable {
         dialogues = try container.decode([DialogueItem].self, forKey: .dialogues)
         risks = try container.decode([String].self, forKey: .risks)
         summary = try? container.decode(String.self, forKey: .summary)
+        coverImageUrl = try? container.decode(String.self, forKey: .coverImageUrl)
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
     }
@@ -322,6 +331,7 @@ struct TaskDetailResponse: Codable {
         dialogues: [DialogueItem],
         risks: [String],
         summary: String?,
+        coverImageUrl: String? = nil,
         createdAt: String,
         updatedAt: String
     ) {
@@ -337,6 +347,7 @@ struct TaskDetailResponse: Codable {
         self.dialogues = dialogues
         self.risks = risks
         self.summary = summary
+        self.coverImageUrl = coverImageUrl
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -359,6 +370,17 @@ struct DialogueItem: Codable {
     }
 }
 
+/// 分析阶段详情，如 strategy_matched_n 时的 skills_matched、skill_names
+struct AnalysisStageDetail: Codable {
+    let skillsMatched: Int?
+    let skillNames: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case skillsMatched = "skills_matched"
+        case skillNames = "skill_names"
+    }
+}
+
 // 任务状态响应
 struct TaskStatusResponse: Codable {
     let sessionId: String
@@ -368,8 +390,10 @@ struct TaskStatusResponse: Codable {
     let updatedAt: Date
     /// 分析失败时服务端返回的失败原因
     let failureReason: String?
-    /// 分析阶段：oss_upload/gemini_analysis/voiceprint，用于展示更细进度
+    /// 分析阶段
     let analysisStage: String?
+    /// 阶段详情，如 {"skills_matched": 3, "skill_names": ["职场丛林"]}
+    let analysisStageDetail: AnalysisStageDetail?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
@@ -379,6 +403,7 @@ struct TaskStatusResponse: Codable {
         case updatedAt = "updated_at"
         case failureReason = "failure_reason"
         case analysisStage = "analysis_stage"
+        case analysisStageDetail = "analysis_stage_detail"
     }
 
     init(from decoder: Decoder) throws {
@@ -389,6 +414,7 @@ struct TaskStatusResponse: Codable {
         estimatedTimeRemaining = try container.decode(Int.self, forKey: .estimatedTimeRemaining)
         failureReason = try container.decodeIfPresent(String.self, forKey: .failureReason)
         analysisStage = try container.decodeIfPresent(String.self, forKey: .analysisStage)
+        analysisStageDetail = try container.decodeIfPresent(AnalysisStageDetail.self, forKey: .analysisStageDetail)
         let updatedAtString = try container.decode(String.self, forKey: .updatedAt)
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -396,7 +422,7 @@ struct TaskStatusResponse: Codable {
     }
 
     // 便利初始化器
-    init(sessionId: String, status: String, progress: Double, estimatedTimeRemaining: Int, updatedAt: Date, failureReason: String? = nil, analysisStage: String? = nil) {
+    init(sessionId: String, status: String, progress: Double, estimatedTimeRemaining: Int, updatedAt: Date, failureReason: String? = nil, analysisStage: String? = nil, analysisStageDetail: AnalysisStageDetail? = nil) {
         self.sessionId = sessionId
         self.status = status
         self.progress = progress
@@ -404,12 +430,27 @@ struct TaskStatusResponse: Codable {
         self.updatedAt = updatedAt
         self.failureReason = failureReason
         self.analysisStage = analysisStage
+        self.analysisStageDetail = analysisStageDetail
     }
-    
+
     /// 当前阶段的可读描述（用于 UI 展示）
     var stageDisplayText: String? {
         guard let s = analysisStage, !s.isEmpty else { return nil }
         switch s {
+        case "upload_done": return "上传完成"
+        case "saving_audio": return "保存音频…"
+        case "transcribing": return "转写音频…"
+        case "matching_profiles": return "匹配档案…"
+        case "strategy_scene": return "识别场景…"
+        case "strategy_matching": return "匹配技能…"
+        case "strategy_matched_n":
+            if let n = analysisStageDetail?.skillsMatched {
+                return "匹配了 \(n) 个技能"
+            }
+            return "匹配技能完成"
+        case "strategy_executing": return "技能加工中…"
+        case "strategy_images": return "生成图片中…"
+        case "strategy_done": return "策略就绪"
         case "oss_upload": return "正在上传到云端…"
         case "gemini_analysis": return "正在分析对话…"
         case "voiceprint": return "正在匹配说话人…"

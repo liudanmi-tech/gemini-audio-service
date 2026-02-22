@@ -3,12 +3,15 @@
 //  WorkSurvivalGuide
 //
 //  任务卡片组件 - 1:1 图片卡片，策略首图填充，底部半透明蒙层展示标题与时间
+//  1-6 步：图标+状态在卡片中央；7-12 步：summary 由下至上滚动，阶段 badge 在右上角
 //
 
 import SwiftUI
 
 struct TaskCardView: View {
     let task: TaskItem
+    /// 封面图 404 时置为 true，切换为占位内容
+    @State private var coverLoadFailed = false
     
     private var baseURL: String {
         NetworkManager.shared.getBaseURL()
@@ -19,18 +22,39 @@ struct TaskCardView: View {
         return true
     }
     
+    /// 7-12 步：有 summary 且在分析中、无封面图时，显示滚动 summary
+    private var hasScrollingSummary: Bool {
+        task.status == .analyzing
+            && (task.summary != nil && !(task.summary?.isEmpty ?? true))
+            && !hasCoverImage
+    }
+    
+    /// 是否处于策略阶段（7-12 步），用于右上角 badge
+    private var isStrategyPhase: Bool {
+        guard let stage = task.progressDescription else { return false }
+        return stage.contains("识别场景")
+            || stage.contains("匹配技能") || stage.contains("匹配了")
+            || stage.contains("技能加工")
+            || stage.contains("生成图片")
+            || stage.contains("策略就绪")
+    }
+    
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            // 主内容区：图片或占位
-            if hasCoverImage, let url = task.coverImageUrl {
+            // 主内容区：图片 / 滚动 summary / 占位
+            if hasCoverImage, let url = task.coverImageUrl, !coverLoadFailed {
                 ImageLoaderView(
                     imageUrl: accessibleImageURL(url),
                     imageBase64: nil,
                     placeholder: "加载中",
-                    contentMode: .fill
+                    contentMode: .fill,
+                    onLoadFailed: { coverLoadFailed = true }
                 )
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
                 .clipped()
+                .onChange(of: task.id) { _ in coverLoadFailed = false }
+            } else if hasScrollingSummary, let summary = task.summary {
+                scrollingSummaryContent(summary: summary)
             } else {
                 placeholderContent
             }
@@ -38,16 +62,37 @@ struct TaskCardView: View {
             // 底部渐变蒙层
             overlayGradient
             
+            // 7-12 步：右上角阶段 badge，不遮挡 summary
+            if hasScrollingSummary && isStrategyPhase, let stage = task.progressDescription {
+                VStack {
+                    Text(stage)
+                        .font(.system(size: 11, weight: .medium, design: .rounded))
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.4))
+                        .cornerRadius(8)
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                .padding(.top, 8)
+                .padding(.trailing, 8)
+                .allowsHitTesting(false)
+            }
+            
             // 文字总结区域：毛玻璃 + 总结/时间/时长
             VStack {
                 Spacer()
                 VStack(alignment: .leading, spacing: 4) {
                     if task.status == .archived {
-                        Text(task.overlaySummary)
-                            .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            .foregroundColor(.white)
-                            .lineLimit(3)
-                            .multilineTextAlignment(.leading)
+                        ScrollView(.vertical, showsIndicators: false) {
+                            Text(task.summary ?? task.overlaySummary)
+                                .font(.system(size: 10, weight: .regular, design: .rounded))
+                                .foregroundColor(.white.opacity(0.9))
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 80)
                     }
                     HStack {
                         Text(formattedTime)
@@ -71,6 +116,20 @@ struct TaskCardView: View {
         .frame(maxWidth: .infinity)
         .aspectRatio(1, contentMode: .fit)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+    
+    /// 7-12 步：summary 由下至上滚动展示，字体样式参照截图 2
+    @ViewBuilder
+    private func scrollingSummaryContent(summary: String) -> some View {
+        ZStack {
+            placeholderBackground
+            ScrollingSummaryView(text: summary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.top, 44)
+                .padding(.bottom, 8)
+                .clipped()
+        }
     }
     
     private var placeholderContent: some View {
@@ -124,9 +183,9 @@ struct TaskCardView: View {
     private var placeholderText: String {
         switch task.status {
         case .recording:
-            return "录音上传中"
+            return "录音中"
         case .analyzing:
-            return "分析中"
+            return task.progressDescription ?? "分析中"
         case .archived:
             return ""
         case .burned:
@@ -175,7 +234,51 @@ struct TaskCardView: View {
         if url.contains("/api/v1/images/") || url.hasPrefix("http") {
             return url
         }
+        // baseURL 已含 /api/v1，故图片 URL = {base}/images/{id}/0
         let base = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
-        return "\(base)/api/v1/images/\(task.id)/0"
+        return "\(base)/images/\(task.id)/0"
+    }
+}
+
+// MARK: - ScrollingSummaryView
+/// 由下至上循环滚动的对话总结，展示全部内容，直到图片生成后替换
+struct ScrollingSummaryView: View {
+    let text: String
+    @State private var offset: CGFloat = 0
+    @State private var scrollTask: Task<Void, Never>?
+    
+    private let scrollDistance: CGFloat = 1200
+    private let scrollDuration: Double = 56
+    
+    var body: some View {
+        Text(text)
+            .font(.system(size: 18, weight: .regular, design: .rounded))
+            .foregroundColor(.white.opacity(0.85))
+            .lineSpacing(8)
+            .multilineTextAlignment(.leading)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .offset(y: offset)
+            .onAppear {
+                startLoopingScroll()
+            }
+            .onDisappear {
+                scrollTask?.cancel()
+            }
+    }
+    
+    private func startLoopingScroll() {
+        withAnimation(.linear(duration: scrollDuration)) {
+            offset = -scrollDistance
+        }
+        scrollTask = Task {
+            try? await Task.sleep(nanoseconds: UInt64(scrollDuration * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                offset = 0
+                startLoopingScroll()
+            }
+        }
     }
 }

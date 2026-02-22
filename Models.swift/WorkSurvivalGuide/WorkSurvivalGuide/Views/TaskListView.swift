@@ -20,6 +20,8 @@ struct TaskListView: View {
     @ObservedObject private var viewModel = TaskListViewModel.shared
     @ObservedObject private var deviceManager = BluetoothDeviceManager.shared
     @State private var showDeviceSheet = false
+    @State private var showStylePicker = false
+    @AppStorage("image_style") private var selectedImageStyle: String = "ghibli"
     @State private var scrollOffset: CGFloat = 999
     
     /// 是否已上滑（卡片上边缘接触到顶部区域后再切换为毛玻璃）
@@ -127,7 +129,18 @@ struct TaskListView: View {
                 }
                 .buttonStyle(.plain)
                 
-                Button(action: {}) {
+                Menu {
+                    Button {
+                        showStylePicker = true
+                    } label: {
+                        Label("图片风格", systemImage: "photo.artframe")
+                    }
+                    Button {
+                        // 更换皮肤 - 占位，后续扩展
+                    } label: {
+                        Label("更换皮肤", systemImage: "paintbrush")
+                    }
+                } label: {
                     Image(systemName: "ellipsis.circle")
                         .font(.system(size: 24))
                         .foregroundColor(AppColors.headerText)
@@ -178,8 +191,24 @@ struct TaskListView: View {
                 viewModel.deleteTask(taskId: taskId)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TaskProgressUpdated"))) { notification in
+            if let dict = notification.userInfo as? [String: String],
+               let taskId = dict["taskId"],
+               let progress = dict["progressDescription"] {
+                viewModel.updateTaskProgress(taskId: taskId, progressDescription: progress)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TaskSummaryAvailable"))) { notification in
+            if let taskId = notification.userInfo?["taskId"] as? String,
+               let summary = notification.userInfo?["summary"] as? String {
+                viewModel.updateTaskSummary(taskId: taskId, summary: summary)
+            }
+        }
         .sheet(isPresented: $showDeviceSheet) {
             DeviceSelectionSheet()
+        }
+        .sheet(isPresented: $showStylePicker) {
+            ImageStylePickerSheet(selectedStyleId: $selectedImageStyle)
         }
     }
 }
