@@ -4,6 +4,8 @@
 <dict>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>需要访问麦克风以录制会议音频</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>需要保存策略分析图片到相册</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>

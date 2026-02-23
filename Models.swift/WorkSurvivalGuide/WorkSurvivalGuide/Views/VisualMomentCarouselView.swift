@@ -6,6 +6,8 @@ struct VisualMomentCarouselView: View {
     let baseURL: String
     
     @State private var currentIndex: Int = 0
+    @State private var showFullScreen = false
+    @State private var fullScreenInitialIndex: Int = 0
     
     var body: some View {
         if visualMoments.isEmpty {
@@ -24,14 +26,17 @@ struct VisualMomentCarouselView: View {
                 .frame(height: 183.61)
         } else {
             VStack(spacing: 0) {
-                // 图片轮播区域
                 TabView(selection: $currentIndex) {
                     ForEach(Array(visualMoments.enumerated()), id: \.element.id) { index, moment in
                         VisualMomentCardView(
                             moment: moment,
                             baseURL: baseURL,
                             index: index + 1,
-                            total: visualMoments.count
+                            total: visualMoments.count,
+                            onTap: {
+                                fullScreenInitialIndex = index
+                                showFullScreen = true
+                            }
                         )
                         .tag(index)
                     }
@@ -39,23 +44,34 @@ struct VisualMomentCarouselView: View {
                 .tabViewStyle(PageTabViewStyle(indexDisplayMode: .automatic))
                 .frame(height: 183.61)
                 .onAppear {
-                    // 设置页面指示器样式
                     UIPageControl.appearance().currentPageIndicatorTintColor = .systemBlue
                     UIPageControl.appearance().pageIndicatorTintColor = .systemGray
+                }
+            }
+            .fullScreenCover(isPresented: $showFullScreen) {
+                let items = visualMoments.map { (imageUrl: $0.getAccessibleImageURL(baseURL: baseURL), imageBase64: $0.imageBase64) }
+                FullScreenImageViewer(
+                    items: items,
+                    initialIndex: fullScreenInitialIndex,
+                    baseURL: baseURL
+                ) {
+                    showFullScreen = false
                 }
             }
         }
     }
 }
 
-// 单个关键时刻卡片视图
+// 单个关键时刻卡片视图 - 点击全屏，长按保存
 struct VisualMomentCardView: View {
     let moment: VisualData
     let baseURL: String
     let index: Int
     let total: Int
+    var onTap: (() -> Void)?
     
     var body: some View {
+        Button(action: { onTap?() }) {
         ZStack {
             // 背景
             RoundedRectangle(cornerRadius: 8)
@@ -105,5 +121,7 @@ struct VisualMomentCardView: View {
                 }
             }
         }
+        }
+        .buttonStyle(.plain)
     }
 }

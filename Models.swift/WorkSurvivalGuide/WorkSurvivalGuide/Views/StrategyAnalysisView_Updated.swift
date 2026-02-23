@@ -884,6 +884,8 @@ struct SceneRestoreImageCarouselView: View {
     let visualList: [VisualData]
     let baseURL: String
     @State private var currentIndex: Int = 0
+    @State private var showFullScreen = false
+    @State private var fullScreenInitialIndex: Int = 0
     private let imageAspectRatio: CGFloat = 4.0 / 3.0
     
     var body: some View {
@@ -892,9 +894,16 @@ struct SceneRestoreImageCarouselView: View {
             let height = width / imageAspectRatio
             TabView(selection: $currentIndex) {
                 ForEach(Array(visualList.enumerated()), id: \.element.id) { index, visualData in
-                    SceneRestoreImageView(visualData: visualData, baseURL: baseURL)
-                        .frame(width: width, height: height)
-                        .tag(index)
+                    SceneRestoreImageView(
+                        visualData: visualData,
+                        baseURL: baseURL,
+                        onTap: {
+                            fullScreenInitialIndex = index
+                            showFullScreen = true
+                        }
+                    )
+                    .frame(width: width, height: height)
+                    .tag(index)
                 }
             }
             .tabViewStyle(PageTabViewStyle(indexDisplayMode: visualList.count > 1 ? .automatic : .never))
@@ -905,13 +914,24 @@ struct SceneRestoreImageCarouselView: View {
             }
         }
         .aspectRatio(imageAspectRatio, contentMode: .fit)
+        .fullScreenCover(isPresented: $showFullScreen) {
+            let items = visualList.map { (imageUrl: $0.getAccessibleImageURL(baseURL: baseURL), imageBase64: $0.imageBase64) }
+            FullScreenImageViewer(
+                items: items,
+                initialIndex: fullScreenInitialIndex,
+                baseURL: baseURL
+            ) {
+                showFullScreen = false
+            }
+        }
     }
 }
 
-// 场景还原图片视图（根据Figma设计）
+// 场景还原图片视图（根据Figma设计）- 点击全屏，长按保存
 struct SceneRestoreImageView: View {
     let visualData: VisualData
     let baseURL: String
+    var onTap: (() -> Void)?
     
     @ViewBuilder
     private var imageFromBase64Placeholder: some View {
@@ -929,9 +949,10 @@ struct SceneRestoreImageView: View {
     }
     
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            // 图片区域：严格限制在占位区内，填满且不超出
-            Group {
+        Button(action: { onTap?() }) {
+            ZStack(alignment: .bottomLeading) {
+                // 图片区域：严格限制在占位区内，填满且不超出
+                Group {
                 if let imageURL = visualData.getAccessibleImageURL(baseURL: baseURL) {
                     ImageLoaderView(imageUrl: imageURL, imageBase64: visualData.imageBase64, placeholder: "加载中", contentMode: .fill)
                 } else if let b64 = visualData.imageBase64, !b64.isEmpty {
@@ -974,7 +995,9 @@ struct SceneRestoreImageView: View {
             }
             .padding(.leading, 23.99)
             .padding(.bottom, 24) // 底部内边距
+            }
         }
+        .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
         .aspectRatio(4/3, contentMode: .fit) // 与后端生成 4:3 图片一致
         .clipped()
