@@ -317,10 +317,14 @@ struct StrategyAnalysisView_Updated: View {
         }
     }
     
-    // 格式化命中的技能为显示文本（skill_id -> 中文名映射）
     private func formatAppliedSkills(_ skills: [AppliedSkill]) -> String {
         let names: [String: String] = [
             "workplace_jungle": "职场丛林",
+            "workplace_role": "角色方位",
+            "workplace_scenario": "场景情境",
+            "workplace_psychology": "心理风格",
+            "workplace_career": "职业阶段",
+            "workplace_capability": "能力维度",
             "family_relationship": "家庭关系",
             "education_communication": "教育沟通",
             "brainstorm": "头脑风暴",
@@ -347,11 +351,36 @@ struct StrategyAnalysisView_Updated: View {
     }
 }
 
-// 技能卡片视图（顶部 Tab 切换 + 内容区）
+// 技能卡片视图（场景 Tab + 策略图置顶 + 维度手风琴）
 struct SkillCardsTabView: View {
     let cards: [SkillCard]
     let baseURL: String
-    @State private var selectedIndex = 0
+    @State private var selectedScene: String = ""
+    @State private var expandedCardIds: Set<String> = []
+    
+    private var sceneOrder: [String] { ["职场", "家庭", "个人"] }
+    
+    private var scenes: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for s in sceneOrder {
+            if cards.contains(where: { $0.sceneCategory == s }) && !seen.contains(s) {
+                seen.insert(s)
+                result.append(s)
+            }
+        }
+        return result
+    }
+    
+    private var currentSceneCards: [SkillCard] {
+        cards.filter { $0.sceneCategory == selectedScene }
+    }
+    
+    private var currentSceneVisuals: [VisualData] {
+        currentSceneCards
+            .filter { $0.contentType == "strategy" }
+            .flatMap { $0.content?.visual ?? [] }
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -361,59 +390,201 @@ struct SkillCardsTabView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                // 顶部：命中技能 Tab，多则横向滚动
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
-                                SkillTabButton(
-                                    title: card.skillName,
-                                    isSelected: index == selectedIndex
-                                ) {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        selectedIndex = index
-                                    }
-                                    proxy.scrollTo(index, anchor: .center)
-                                }
-                                .id(index)
-                            }
-                        }
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 8)
-                    }
-                    .background(Color.black.opacity(0.08))
+                // 顶部：场景分类 Tab（职场/家庭/个人），始终显示命中的类目
+                if !scenes.isEmpty {
+                    SceneTabBar(scenes: scenes, selectedScene: $selectedScene)
                 }
                 
-                // 下方：当前选中技能的内容
-                StrategySkillCardView(card: cards[selectedIndex], baseURL: baseURL)
-                    .frame(minHeight: 200)
-                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+                // 策略图轮播（合并当前场景所有策略卡的 visual，始终可见）
+                if !currentSceneVisuals.isEmpty {
+                    SceneRestoreImageCarouselView(
+                        visualList: currentSceneVisuals,
+                        baseURL: baseURL
+                    )
+                    .padding(.horizontal, 0.69)
+                }
+                
+                // 维度手风琴面板
+                VStack(spacing: 0) {
+                    ForEach(Array(currentSceneCards.enumerated()), id: \.element.id) { index, card in
+                        SkillAccordionPanel(
+                            card: card,
+                            isExpanded: expandedCardIds.contains(card.id),
+                            baseURL: baseURL
+                        ) {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                if expandedCardIds.contains(card.id) {
+                                    expandedCardIds.remove(card.id)
+                                } else {
+                                    expandedCardIds.insert(card.id)
+                                }
+                            }
+                        }
+                        
+                        if index < currentSceneCards.count - 1 {
+                            Divider()
+                                .background(Color(hex: "#E8DCC6").opacity(0.5))
+                                .padding(.horizontal, 16)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            }
+        }
+        .onAppear {
+            if selectedScene.isEmpty, let first = scenes.first {
+                selectedScene = first
+            }
+            if expandedCardIds.isEmpty, let firstCard = currentSceneCards.first {
+                expandedCardIds = [firstCard.id]
+            }
+        }
+        .onChange(of: selectedScene) { _ in
+            if let firstCard = currentSceneCards.first {
+                expandedCardIds = [firstCard.id]
+            } else {
+                expandedCardIds = []
             }
         }
     }
 }
 
-// 单个技能 Tab 按钮
-private struct SkillTabButton: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
+// 场景分类 Tab 栏
+private struct SceneTabBar: View {
+    let scenes: [String]
+    @Binding var selectedScene: String
+    
+    private func iconFor(_ scene: String) -> String {
+        switch scene {
+        case "职场": return "briefcase.fill"
+        case "家庭": return "house.fill"
+        case "个人": return "person.fill"
+        default: return "circle.fill"
+        }
+    }
     
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 14, weight: isSelected ? .semibold : .regular, design: .rounded))
-                .foregroundColor(isSelected ? .white : AppColors.headerText.opacity(0.8))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(isSelected ? Color(hex: "#5E7C8B") : Color.white.opacity(0.15))
-                .cornerRadius(8)
+        HStack(spacing: 0) {
+            ForEach(scenes, id: \.self) { scene in
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) { selectedScene = scene }
+                }) {
+                    HStack(spacing: 6) {
+                        Image(systemName: iconFor(scene))
+                            .font(.system(size: 12))
+                        Text(scene)
+                            .font(.system(size: 14, weight: selectedScene == scene ? .bold : .medium, design: .rounded))
+                    }
+                    .foregroundColor(selectedScene == scene ? .white : AppColors.headerText.opacity(0.7))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                    .background(selectedScene == scene ? Color(hex: "#5E7C8B") : Color.clear)
+                    .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .buttonStyle(.plain)
+        .padding(4)
+        .background(Color.black.opacity(0.06))
+        .cornerRadius(10)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
     }
 }
 
-// 单张技能卡片（策略型 / 情绪型）- 用于策略分析页，与 SkillsView 的 SkillCardView 区分
+// 手风琴面板（可折叠的单个技能）
+private struct SkillAccordionPanel: View {
+    let card: SkillCard
+    let isExpanded: Bool
+    let baseURL: String
+    let onToggle: () -> Void
+    
+    private var dimensionIcon: String {
+        if let dim = card.dimension, let d = WorkplaceDimension.from(key: dim) {
+            return d.icon
+        }
+        switch card.contentType {
+        case "emotion": return "face.smiling"
+        case "mental_health": return "heart.text.square"
+        default: return "lightbulb.fill"
+        }
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // 面板标题栏（点击展开/折叠）
+            Button(action: onToggle) {
+                HStack(spacing: 10) {
+                    Image(systemName: dimensionIcon)
+                        .font(.system(size: 14))
+                        .foregroundColor(Color(hex: "#5E7C8B"))
+                        .frame(width: 20)
+                    
+                    Text(card.accordionTitle)
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .foregroundColor(AppColors.headerText)
+                    
+                    Spacer()
+                    
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(AppColors.headerText.opacity(0.4))
+                }
+                .padding(.vertical, 12)
+            }
+            .buttonStyle(.plain)
+            
+            // 展开内容
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 0) {
+                    if card.contentType == "emotion", let content = card.content?.emotionContent {
+                        EmotionCardView(content: content)
+                    } else if card.contentType == "mental_health", let content = card.content?.mentalHealthContent {
+                        MentalHealthCardView(content: content)
+                    } else if let strategies = card.content?.strategies, !strategies.isEmpty {
+                        // 策略型卡片只展示策略列表（visual 已在顶部轮播展示）
+                        SkillStrategiesOnlyView(strategies: strategies)
+                    } else {
+                        Text("暂无内容")
+                            .font(.system(size: 14, design: .rounded))
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 8)
+                    }
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+}
+
+// 仅策略列表（不含 visual，用于手风琴面板内部）
+private struct SkillStrategiesOnlyView: View {
+    let strategies: [StrategyItem]
+    @State private var strategyPopupItem: StrategyItem?
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("推荐应对策略")
+                .font(.system(size: 12, weight: .bold, design: .rounded))
+                .foregroundColor(AppColors.headerText.opacity(0.5))
+                .textCase(.uppercase)
+            ForEach(Array(strategies.prefix(4).enumerated()), id: \.element.id) { index, strategy in
+                StrategyButtonView(strategy: strategy, index: index) {
+                    strategyPopupItem = strategy
+                }
+            }
+        }
+        .padding(.bottom, 12)
+        .sheet(item: $strategyPopupItem) { strategy in
+            StrategyPouchSheet(strategy: strategy) {
+                strategyPopupItem = nil
+            }
+        }
+    }
+}
+
+// 单张技能卡片（策略型 / 情绪型）- 用于策略分析页
 struct StrategySkillCardView: View {
     let card: SkillCard
     let baseURL: String

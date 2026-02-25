@@ -48,6 +48,16 @@ async def lifespan(app: FastAPI):
 
         await init_db()
         logger.info("✅ 数据库初始化完成")
+
+        # 初始化技能：扫描 SKILL.md 并注册/更新到数据库
+        try:
+            from skills.registry import initialize_skills
+            from database.connection import AsyncSessionLocal
+            async with AsyncSessionLocal() as skill_db:
+                await initialize_skills(skill_db)
+            logger.info("✅ 技能初始化完成")
+        except Exception as e:
+            logger.warning(f"⚠️ 技能初始化失败（不影响服务）: {e}")
         # 诊断 JWT 配置（不暴露密钥值）
         _secret = os.getenv("JWT_SECRET_KEY", "")
         _jwt_ok = bool(_secret) and _secret != "your-secret-key-here-change-in-production"

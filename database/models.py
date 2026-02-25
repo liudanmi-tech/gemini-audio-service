@@ -2,7 +2,7 @@
 数据库模型定义
 使用SQLAlchemy ORM定义所有表结构
 """
-from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, ARRAY, JSON, Float
+from sqlalchemy import Column, String, Integer, Boolean, DateTime, ForeignKey, Text, ARRAY, JSON, Float, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -166,3 +166,20 @@ class Profile(Base):
     # 关系
     user = relationship("User", backref="profiles")
     audio_session = relationship("Session", foreign_keys=[audio_session_id])
+
+
+class UserSkillPreference(Base):
+    """用户技能偏好表"""
+    __tablename__ = "user_skill_preferences"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    skill_id = Column(String(100), nullable=False)
+    selected = Column(Boolean, default=True)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "skill_id", name="uq_user_skill"),
+    )
+
+    user = relationship("User", backref="skill_preferences")

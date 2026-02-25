@@ -2307,6 +2307,28 @@ _SKILL_ID_TO_NAME = {
 }
 
 
+_CATEGORY_DISPLAY_MAP = {
+    "workplace": "职场",
+    "family": "家庭",
+    "emotion": "个人成长",
+    "personal": "个人成长",
+}
+
+def _extract_matched_scenes(skill_cards: list) -> list:
+    """从 skill_cards 中提取匹配到的顶级场景列表（去重、保持顺序）"""
+    seen = set()
+    scenes = []
+    for card in skill_cards:
+        if not isinstance(card, dict):
+            continue
+        cat = card.get("category", "")
+        display = _CATEGORY_DISPLAY_MAP.get(cat, cat)
+        if display and display not in seen:
+            seen.add(display)
+            scenes.append(display)
+    return scenes
+
+
 def _build_legacy_skill_cards(visual_data: list, strategies: list, applied_skills: list) -> list:
     """从旧格式 visual_data + strategies 构造兼容的 skill_cards 结构"""
     if not visual_data and not strategies:
@@ -2375,15 +2397,17 @@ async def _generate_strategies_core(
         
         if not matched_skills:
             logger.warning("未匹配到任何技能，使用默认技能")
-            # 使用 workplace_jungle 作为默认技能
-            default_skill = await get_skill("workplace_jungle", db)
+            default_skill = await get_skill("workplace_role", db)
             if default_skill:
                 matched_skills = [{
-                    "skill_id": "workplace_jungle",
+                    "skill_id": "workplace_role",
                     "name": default_skill["name"],
                     "category": default_skill["category"],
                     "priority": default_skill["priority"],
-                    "confidence": 0.5
+                    "confidence": 0.5,
+                    "dimension": "role_position",
+                    "matched_sub_skill": "",
+                    "matched_sub_skill_id": "",
                 }]
             else:
                 raise Exception("未匹配到技能且默认技能不存在")
@@ -2451,19 +2475,22 @@ async def _generate_strategies_core(
         for matched_skill in matched_skills:
             skill_id = matched_skill["skill_id"]
             try:
-                # 获取完整技能信息（包含 prompt_template）
                 skill = await get_skill(skill_id, db)
                 if not skill:
                     logger.warning(f"技能不存在: {skill_id}")
                     continue
                 
-                # 添加匹配信息到技能数据
                 skill["priority"] = matched_skill["priority"]
                 skill["confidence"] = matched_skill["confidence"]
                 
-                # 创建执行任务
-                task = execute_skill(skill, transcript, context, model)
-                execution_tasks.append((skill_id, task))
+                # 为每个技能构建独立 context（注入维度和子技能信息）
+                skill_context = dict(context)
+                skill_context["matched_sub_skill"] = matched_skill.get("matched_sub_skill", "")
+                skill_context["matched_sub_skill_id"] = matched_skill.get("matched_sub_skill_id", "")
+                skill_context["dimension"] = matched_skill.get("dimension", "")
+                
+                task = execute_skill(skill, transcript, skill_context, model)
+                execution_tasks.append((skill_id, matched_skill, task))
             except Exception as e:
                 logger.error(f"准备执行技能失败: {skill_id}, 错误: {e}")
                 skill_results.append({
@@ -2477,9 +2504,15 @@ async def _generate_strategies_core(
                 })
         
         # 执行所有任务
-        for skill_id, task in execution_tasks:
+        for skill_id, matched_skill_info, task in execution_tasks:
             try:
                 result = await task
+                # 将路由匹配信息附加到执行结果
+                result["name"] = matched_skill_info.get("name", skill_id)
+                result["dimension"] = matched_skill_info.get("dimension", "")
+                result["matched_sub_skill"] = matched_skill_info.get("matched_sub_skill", "")
+                result["matched_sub_skill_id"] = matched_skill_info.get("matched_sub_skill_id", "")
+                result["category"] = matched_skill_info.get("category", "")
                 skill_results.append(result)
             except Exception as e:
                 logger.error(f"执行技能失败: {skill_id}, 错误: {e}")
@@ -2490,7 +2523,8 @@ async def _generate_strategies_core(
                     "success": False,
                     "error_message": str(e),
                     "priority": 0,
-                    "confidence": 0.5
+                    "confidence": 0.5,
+                    "category": matched_skill_info.get("category", ""),
                 })
         
         # 记录技能执行到数据库
@@ -2532,6 +2566,11 @@ async def _generate_strategies_core(
             skill_name = skill_result.get("name", skill_id)
             if not skill_result.get("success"):
                 continue
+            # 提取维度信息（所有卡片类型共享）
+            card_dimension = skill_result.get("dimension", "")
+            card_sub_skill = skill_result.get("matched_sub_skill", "")
+            card_category = skill_result.get("category", "")
+            
             # 情绪技能
             if skill_result.get("emotion_insight") is not None:
                 emotion_insight = skill_result["emotion_insight"]
@@ -2539,6 +2578,9 @@ async def _generate_strategies_core(
                     "skill_id": skill_id,
                     "skill_name": skill_name,
                     "content_type": "emotion",
+                    "category": card_category or "personal",
+                    "dimension": card_dimension,
+                    "matched_sub_skill": card_sub_skill,
                     "content": {
                         "sigh_count": emotion_insight.get("sigh_count", 0),
                         "haha_count": emotion_insight.get("haha_count", 0),
@@ -2556,6 +2598,9 @@ async def _generate_strategies_core(
                     "skill_id": skill_id,
                     "skill_name": skill_name,
                     "content_type": "mental_health",
+                    "category": card_category or "personal",
+                    "dimension": card_dimension,
+                    "matched_sub_skill": card_sub_skill,
                     "content": {
                         "defense_energy_pct": mh.get("defense_energy_pct", 50),
                         "dominant_defense": mh.get("dominant_defense", ""),
@@ -2571,7 +2616,6 @@ async def _generate_strategies_core(
             # 策略技能
             result = skill_result.get("result")
             if result and hasattr(result, "visual") and hasattr(result, "strategies"):
-                # 为策略技能的 visual 生成图片
                 updated_visual_list = []
                 for v in result.visual:
                     try:
@@ -2603,11 +2647,14 @@ async def _generate_strategies_core(
                     "skill_id": skill_id,
                     "skill_name": skill_name,
                     "content_type": "strategy",
+                    "category": card_category or "workplace",
+                    "dimension": card_dimension,
+                    "matched_sub_skill": card_sub_skill,
                     "content": card_content
                 })
                 all_visuals_for_compat.extend(updated_visual_list)
                 all_strategies_for_compat.extend(result.strategies)
-                logger.info(f"  ✅ 策略卡: {skill_id} visual={len(updated_visual_list)} strategies={len(result.strategies)}")
+                logger.info(f"  ✅ 策略卡: {skill_id} dim={card_dimension}/{card_sub_skill} visual={len(updated_visual_list)} strategies={len(result.strategies)}")
         
         # 兼容：从 skill_cards 反推 call2_result（首张策略卡或合并）
         if all_visuals_for_compat or all_strategies_for_compat:
@@ -2905,6 +2952,8 @@ async def generate_strategies(
             result_dict["applied_skills"] = applied_skills
             result_dict["scene_category"] = scene_category
             result_dict["scene_confidence"] = scene_confidence
+            # 从 skill_cards 提取匹配到的顶级场景列表
+            result_dict["matched_scenes"] = _extract_matched_scenes(result_dict.get("skill_cards", []))
             
             return APIResponse(
                 code=200,
@@ -2977,12 +3026,14 @@ async def generate_strategies(
             result_dict["applied_skills"] = applied_skills
             result_dict["scene_category"] = scene_category
             result_dict["scene_confidence"] = scene_confidence
+            result_dict["matched_scenes"] = _extract_matched_scenes(result_dict.get("skill_cards", []))
         else:
             logger.warning(f"未找到策略分析数据，无法返回技能信息: {session_id}")
             result_dict["applied_skills"] = []
             result_dict["scene_category"] = None
             result_dict["scene_confidence"] = None
             result_dict["skill_cards"] = []
+            result_dict["matched_scenes"] = []
         
         return APIResponse(
             code=200,

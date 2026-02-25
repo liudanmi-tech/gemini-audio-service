@@ -2,93 +2,118 @@
 //  SkillsViewModel.swift
 //  WorkSurvivalGuide
 //
-//  技能列表 ViewModel
-//
 
 import Foundation
 import Combine
 
 class SkillsViewModel: ObservableObject {
     static let shared = SkillsViewModel()
-    
-    @Published var skills: [SkillItem] = []
+
+    @Published var categories: [SkillCategory] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
-    @Published var selectedSkills: Set<String> = [] // 选中的技能ID集合
-    
+    @Published var selectedSkillForDetail: SkillCatalogItem?
+
+    @Published var skills: [SkillItem] = []
+    @Published var selectedSkills: Set<String> = []
+
     private let networkManager = NetworkManager.shared
-    private var hasLoaded = false // 记录是否已经加载过数据
-    private var loadingTask: Task<Void, Never>? // 当前加载任务，用于取消重复请求
-    
-    private init() {
-        // 私有初始化器，确保单例模式
-    }
-    
-    // 加载技能列表
-    func loadSkills(category: String? = nil, forceRefresh: Bool = false) {
-        // 如果已经有数据且不在加载中，且不是强制刷新，则跳过
-        if !forceRefresh && !skills.isEmpty && !isLoading && hasLoaded {
-            print("✅ [SkillsViewModel] 数据已存在，跳过加载")
+    private var hasLoaded = false
+    private var loadingTask: Task<Void, Never>?
+    private var syncTask: Task<Void, Never>?
+
+    private init() {}
+
+    // MARK: - Catalog
+
+    func loadCatalog(forceRefresh: Bool = false) {
+        if !forceRefresh && !categories.isEmpty && !isLoading && hasLoaded {
             return
         }
-        
-        // 如果正在加载中，取消之前的任务
-        if isLoading {
-            print("⚠️ [SkillsViewModel] 正在加载中，跳过重复请求")
-            loadingTask?.cancel()
-        }
-        
+        loadingTask?.cancel()
         isLoading = true
         errorMessage = nil
-        
+
         loadingTask = Task {
             do {
-                let response = try await networkManager.getSkillsList(category: category, enabled: true)
-                
-                // 检查任务是否被取消
-                guard !Task.isCancelled else {
-                    print("⚠️ [SkillsViewModel] 加载任务已取消")
-                    return
-                }
-                
+                let data = try await networkManager.getSkillsCatalog()
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self.skills = response.skills
+                    self.categories = data.categories
+                    self.rebuildSelectedSkills()
                     self.isLoading = false
                     self.hasLoaded = true
-                    print("✅ [SkillsViewModel] 成功加载 \(response.skills.count) 个技能")
+                    self.errorMessage = nil
+                    print("✅ [SkillsVM] 加载成功: \(data.categories.count) 个分类, 共 \(data.categories.reduce(0) { $0 + $1.skills.count }) 个技能")
                 }
             } catch {
-                // 检查任务是否被取消
-                guard !Task.isCancelled else {
-                    print("⚠️ [SkillsViewModel] 加载任务已取消")
-                    return
-                }
-                
+                guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self.errorMessage = error.localizedDescription
+                    self.errorMessage = "\(error.localizedDescription)"
                     self.isLoading = false
-                    print("❌ [SkillsViewModel] 加载技能失败: \(error)")
+                    print("❌ [SkillsVM] 加载失败: \(error)")
                 }
             }
         }
     }
-    
-    // 刷新技能列表（强制刷新）
-    func refreshSkills() {
-        loadSkills(forceRefresh: true)
+
+    func refreshCatalog() {
+        loadCatalog(forceRefresh: true)
     }
-    
-    // 切换技能选中状态
+
+    // MARK: - Selection
+
     func toggleSkill(_ skillId: String) {
-        if selectedSkills.contains(skillId) {
-            selectedSkills.remove(skillId)
-        } else {
-            selectedSkills.insert(skillId)
+        for ci in categories.indices {
+            for si in categories[ci].skills.indices {
+                if categories[ci].skills[si].skillId == skillId {
+                    categories[ci].skills[si].selected.toggle()
+                }
+            }
+        }
+        rebuildSelectedSkills()
+        syncPreferencesToServer()
+    }
+
+    func isSkillSelected(_ skillId: String) -> Bool {
+        selectedSkills.contains(skillId)
+    }
+
+    func showDetail(_ skill: SkillCatalogItem) {
+        selectedSkillForDetail = skill
+    }
+
+    // MARK: - Private
+
+    private func rebuildSelectedSkills() {
+        var set = Set<String>()
+        for cat in categories {
+            for skill in cat.skills where skill.selected {
+                set.insert(skill.skillId)
+            }
+        }
+        selectedSkills = set
+    }
+
+    private func syncPreferencesToServer() {
+        syncTask?.cancel()
+        let selected = Array(selectedSkills)
+        syncTask = Task {
+            do {
+                try await networkManager.updateSkillPreferences(selectedSkills: selected)
+            } catch {
+                print("❌ [SkillsVM] 同步偏好失败: \(error)")
+            }
         }
     }
-    
-    // 检查技能是否被选中
-    func isSkillSelected(_ skillId: String) -> Bool {
-        return selectedSkills.contains(skillId)
+
+    // MARK: - Legacy
+
+    func loadSkills(category: String? = nil, forceRefresh: Bool = false) {
+        loadCatalog(forceRefresh: forceRefresh)
+    }
+
+    func refreshSkills() {
+        refreshCatalog()
     }
 }

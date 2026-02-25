@@ -113,14 +113,48 @@ struct SkillCard: Codable, Identifiable {
     var id: String { skillId }
     let skillId: String
     let skillName: String
-    let contentType: String  // "strategy" | "emotion"
+    let contentType: String  // "strategy" | "emotion" | "mental_health"
+    let category: String?
+    let dimension: String?
+    let matchedSubSkill: String?
     let content: SkillCardContent?
+    
+    init(skillId: String, skillName: String, contentType: String, category: String? = nil, dimension: String? = nil, matchedSubSkill: String? = nil, content: SkillCardContent? = nil) {
+        self.skillId = skillId
+        self.skillName = skillName
+        self.contentType = contentType
+        self.category = category
+        self.dimension = dimension
+        self.matchedSubSkill = matchedSubSkill
+        self.content = content
+    }
     
     enum CodingKeys: String, CodingKey {
         case skillId = "skill_id"
         case skillName = "skill_name"
         case contentType = "content_type"
+        case category
+        case dimension
+        case matchedSubSkill = "matched_sub_skill"
         case content
+    }
+    
+    /// 用于手风琴面板标题：优先显示 matchedSubSkill（与技能库名称一致），其次 skillName
+    var accordionTitle: String {
+        if let sub = matchedSubSkill, !sub.isEmpty {
+            return sub
+        }
+        return skillName
+    }
+    
+    /// 归属的顶级场景（用于 Tab 分组）
+    var sceneCategory: String {
+        switch category ?? "" {
+        case "workplace": return "职场"
+        case "family": return "家庭"
+        case "emotion", "personal": return "个人"
+        default: return "职场"
+        }
     }
 }
 
@@ -197,6 +231,7 @@ struct StrategyAnalysisResponse: Codable {
     let sceneCategory: String?
     let sceneConfidence: Double?
     let skillCards: [SkillCard]?
+    let matchedScenes: [String]?
     
     enum CodingKeys: String, CodingKey {
         case visual
@@ -205,15 +240,17 @@ struct StrategyAnalysisResponse: Codable {
         case sceneCategory = "scene_category"
         case sceneConfidence = "scene_confidence"
         case skillCards = "skill_cards"
+        case matchedScenes = "matched_scenes"
     }
     
-    init(visual: [VisualData], strategies: [StrategyItem], appliedSkills: [AppliedSkill]? = nil, sceneCategory: String? = nil, sceneConfidence: Double? = nil, skillCards: [SkillCard]? = nil) {
+    init(visual: [VisualData], strategies: [StrategyItem], appliedSkills: [AppliedSkill]? = nil, sceneCategory: String? = nil, sceneConfidence: Double? = nil, skillCards: [SkillCard]? = nil, matchedScenes: [String]? = nil) {
         self.visual = visual
         self.strategies = strategies
         self.appliedSkills = appliedSkills
         self.sceneCategory = sceneCategory
         self.sceneConfidence = sceneConfidence
         self.skillCards = skillCards
+        self.matchedScenes = matchedScenes
     }
     
     init(from decoder: Decoder) throws {
@@ -225,6 +262,7 @@ struct StrategyAnalysisResponse: Codable {
         sceneConfidence = (try? container.decode(Double.self, forKey: .sceneConfidence))
             ?? (try? container.decode(Float.self, forKey: .sceneConfidence)).map { Double($0) }
         skillCards = try? container.decode([SkillCard].self, forKey: .skillCards)
+        matchedScenes = try? container.decode([String].self, forKey: .matchedScenes)
     }
 }
 
@@ -330,5 +368,57 @@ extension VisualData {
         // 如果无法转换，返回原始 URL（可能会失败，但至少尝试）
         print("⚠️ [VisualData] 无法识别 URL 格式，返回原始 URL")
         return imageUrl
+    }
+}
+
+// 顶级场景分类
+enum SceneCategory: String, CaseIterable {
+    case workplace = "职场"
+    case family = "家庭"
+    case personal = "个人"
+    
+    var icon: String {
+        switch self {
+        case .workplace: return "briefcase.fill"
+        case .family: return "house.fill"
+        case .personal: return "person.fill"
+        }
+    }
+    
+    static func from(displayName: String) -> SceneCategory? {
+        return allCases.first { $0.rawValue == displayName }
+    }
+}
+
+// 职场维度枚举
+enum WorkplaceDimension: String, CaseIterable {
+    case rolePosition = "role_position"
+    case scenario = "scenario"
+    case psychology = "psychology"
+    case careerStage = "career_stage"
+    case capability = "capability"
+    
+    var displayName: String {
+        switch self {
+        case .rolePosition: return "角色方位"
+        case .scenario: return "场景情境"
+        case .psychology: return "心理风格"
+        case .careerStage: return "职业阶段"
+        case .capability: return "能力维度"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .rolePosition: return "arrow.up.arrow.down"
+        case .scenario: return "theatermasks.fill"
+        case .psychology: return "brain.head.profile"
+        case .careerStage: return "chart.line.uptrend.xyaxis"
+        case .capability: return "star.fill"
+        }
+    }
+    
+    static func from(key: String) -> WorkplaceDimension? {
+        return allCases.first { $0.rawValue == key }
     }
 }

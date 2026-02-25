@@ -1,10 +1,12 @@
 ---
 name: 教育沟通引导
 description: 适用于孩子教育、学习辅导、成长引导等场景的策略分析技能
-category: education
+category: family
 priority: 80
 version: "1.0.0"
 enabled: true
+display_description: "科学引导孩子学习与成长，激发学习动机与自主性"
+cover_color: "#00CEC9"
 keywords:
   - "孩子"
   - "教育"

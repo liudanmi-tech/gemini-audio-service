@@ -1,10 +1,12 @@
 ---
 name: 防抑郁监控
 description: 通过语言模式识别心理防御机制、认知偏见及早期抑郁倾向，输出防御能耗仪表盘、抑郁认知趋势、军师洞察与破局策略
-category: emotion
+category: personal
 priority: 45
 version: "1.0.0"
 enabled: true
+display_description: "通过语言模式早期识别心理健康风险，守护情绪安全"
+cover_color: "#81ECEC"
 keywords:
   - "情绪"
   - "心理"

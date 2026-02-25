@@ -1,10 +1,12 @@
 ---
 name: 情绪识别
 description: 分析对话中用户的情绪表现，统计叹气、哈哈哈次数，判断整体状态（高兴/焦虑/平常心/亢奋/悲伤），统计用户说话字数
-category: emotion
+category: personal
 priority: 50
 version: "1.0.0"
 enabled: true
+display_description: "精准识别对话中的情绪信号，了解自身情绪状态变化"
+cover_color: "#FFEAA7"
 keywords:
   - "情绪"
   - "心情"

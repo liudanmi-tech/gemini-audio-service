@@ -5,6 +5,7 @@
 import time
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, delete
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Tuple, Any
 
@@ -14,6 +15,7 @@ from database.connection import get_db
 from auth.jwt_handler import get_current_user_id
 from skills.registry import list_skills, get_skill, reload_skill, register_skill
 from skills.loader import create_skill_file, update_skill_file
+from database.models import UserSkillPreference
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,24 @@ class SkillUpdate(BaseModel):
     priority: Optional[int] = None
     enabled: Optional[bool] = None
     version: Optional[str] = None
+
+
+class SkillPreferencesUpdate(BaseModel):
+    """更新技能偏好请求"""
+    selected_skills: List[str]
+
+
+_CATALOG_CATEGORY_ORDER = ["workplace", "family", "personal"]
+_CATALOG_CATEGORY_NAMES = {
+    "workplace": "职场",
+    "family": "家庭",
+    "personal": "个人成长",
+}
+_CATALOG_CATEGORY_ICONS = {
+    "workplace": "briefcase.fill",
+    "family": "house.fill",
+    "personal": "person.fill",
+}
 
 
 @router.get("", summary="获取所有可用技能")
@@ -151,6 +171,129 @@ async def get_all_skills(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"获取技能列表失败: {str(e)}"
         )
+
+
+@router.get("/catalog", summary="获取技能目录（分类+子技能展开）")
+async def get_skills_catalog(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    返回按一级分类分组、子技能展开的技能目录，合并用户选中状态。
+    """
+    try:
+        skills = await list_skills(enabled=True, db=db)
+
+        # 查询用户偏好
+        selected_set: set = set()
+        try:
+            result = await db.execute(
+                select(UserSkillPreference.skill_id).where(
+                    UserSkillPreference.user_id == user_id,
+                    UserSkillPreference.selected == True,
+                )
+            )
+            selected_set = {row[0] for row in result.all()}
+        except Exception as e:
+            logger.warning(f"查询用户技能偏好失败: {e}")
+
+        # 按分类收集展开后的子技能条目
+        category_skills: Dict[str, list] = {c: [] for c in _CATALOG_CATEGORY_ORDER}
+
+        for skill in skills:
+            cat = skill["category"]
+            # emotion 旧分类映射到 personal
+            if cat in ("emotion", "personal"):
+                cat = "personal"
+            if cat not in category_skills:
+                continue
+
+            metadata = skill.get("metadata") or {}
+            sub_skills = metadata.get("sub_skills", [])
+
+            if sub_skills:
+                for sub in sub_skills:
+                    sub_id = sub.get("id", "")
+                    category_skills[cat].append({
+                        "skill_id": sub_id,
+                        "parent_skill_id": skill["skill_id"],
+                        "name": sub.get("name", sub_id),
+                        "description": sub.get("description", ""),
+                        "cover_color": sub.get("cover_color"),
+                        "cover_image": None,
+                        "video_url": None,
+                        "selected": sub_id in selected_set,
+                    })
+            else:
+                sid = skill["skill_id"]
+                display_desc = metadata.get("display_description") or skill.get("description", "")
+                cover_color = metadata.get("cover_color")
+                category_skills[cat].append({
+                    "skill_id": sid,
+                    "parent_skill_id": None,
+                    "name": skill["name"],
+                    "description": display_desc,
+                    "cover_color": cover_color,
+                    "cover_image": None,
+                    "video_url": None,
+                    "selected": sid in selected_set,
+                })
+
+        categories = []
+        for cat_id in _CATALOG_CATEGORY_ORDER:
+            items = category_skills.get(cat_id, [])
+            if not items:
+                continue
+            categories.append({
+                "id": cat_id,
+                "name": _CATALOG_CATEGORY_NAMES.get(cat_id, cat_id),
+                "icon": _CATALOG_CATEGORY_ICONS.get(cat_id, "sparkles"),
+                "skills": items,
+            })
+
+        return {"code": 200, "message": "success", "data": {"categories": categories}}
+    except Exception as e:
+        logger.error(f"获取技能目录失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取技能目录失败: {e}")
+
+
+@router.get("/preferences", summary="获取用户技能偏好")
+async def get_skill_preferences(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        result = await db.execute(
+            select(UserSkillPreference.skill_id).where(
+                UserSkillPreference.user_id == user_id,
+                UserSkillPreference.selected == True,
+            )
+        )
+        selected = [row[0] for row in result.all()]
+        return {"code": 200, "message": "success", "data": {"selected_skills": selected}}
+    except Exception as e:
+        logger.error(f"获取技能偏好失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/preferences", summary="更新用户技能偏好")
+async def update_skill_preferences(
+    body: SkillPreferencesUpdate,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        await db.execute(
+            delete(UserSkillPreference).where(UserSkillPreference.user_id == user_id)
+        )
+        for sid in body.selected_skills:
+            db.add(UserSkillPreference(user_id=user_id, skill_id=sid, selected=True))
+        await db.commit()
+        return {"code": 200, "message": "success", "data": {"selected_skills": body.selected_skills}}
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"更新技能偏好失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{skill_id}", summary="获取特定技能详情")

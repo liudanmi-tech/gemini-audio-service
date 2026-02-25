@@ -2,123 +2,170 @@
 //  SkillsView.swift
 //  WorkSurvivalGuide
 //
-//  技能库视图 - 按照Figma设计稿实现
-//
 
 import SwiftUI
 
 struct SkillsView: View {
     @ObservedObject private var viewModel = SkillsViewModel.shared
-    
+
     var body: some View {
         ZStack {
-            // 背景色已由 ContentView 提供，这里不需要重复设置
-            
             VStack(spacing: 0) {
-                // Header区域
                 SkillsHeaderView()
-                
-                // 主内容区域
-                if viewModel.isLoading && viewModel.skills.isEmpty {
+
+                if viewModel.isLoading && viewModel.categories.isEmpty {
                     Spacer()
                     ProgressView("加载中...")
-                        .tint(AppColors.headerText)
+                        .tint(.white)
                     Spacer()
-                } else if viewModel.skills.isEmpty {
+                } else if viewModel.categories.isEmpty {
                     Spacer()
                     VStack(spacing: 16) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 50))
-                            .foregroundColor(AppColors.secondaryText)
+                            .foregroundColor(.white.opacity(0.4))
                         Text("还没有技能")
-                            .font(AppFonts.cardTitle)
-                            .foregroundColor(AppColors.secondaryText)
+                            .font(.system(size: 16, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.4))
+                        if let err = viewModel.errorMessage {
+                            Text(err)
+                                .font(.system(size: 12, design: .rounded))
+                                .foregroundColor(.red.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 32)
+                        }
+                        Button("重新加载") {
+                            viewModel.loadCatalog(forceRefresh: true)
+                        }
+                        .font(.system(size: 14, weight: .medium, design: .rounded))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 8)
+                        .background(Capsule().fill(Color(hex: "#5E7C8B")))
                     }
                     Spacer()
                 } else {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 15.99368667602539) { // 根据Figma: gap 15.99px
-                            // 提示文字
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 28) {
                             Text("已启用智能编排，手动选择将作为偏好参考。")
-                                .font(.system(size: 14, weight: .medium, design: .rounded)) // Nunito 500, 14px
-                                .foregroundColor(AppColors.headerText.opacity(0.7)) // rgba(94, 75, 53, 0.7)
-                                .padding(.horizontal, 19.992115020751953) // 根据Figma: padding horizontal 19.99px
-                                .padding(.top, 0)
-                                .padding(.bottom, 0)
-                            
-                            // 技能列表
-                            ForEach(viewModel.skills) { skill in
-                                SkillCardView(
-                                    skill: skill,
-                                    isSelected: viewModel.isSkillSelected(skill.id),
-                                    onToggle: {
-                                        viewModel.toggleSkill(skill.id)
-                                    }
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.5))
+                                .padding(.horizontal, 20)
+                                .padding(.top, 4)
+
+                            ForEach(viewModel.categories) { category in
+                                CategorySection(
+                                    category: category,
+                                    viewModel: viewModel
                                 )
-                                .padding(.horizontal, 19.992115020751953) // 根据Figma: padding horizontal 19.99px
                             }
                         }
-                        .padding(.top, 0)
-                        .padding(.bottom, 100) // 为底部导航栏留出空间
+                        .padding(.bottom, 120)
                     }
                 }
             }
         }
         .onAppear {
-            // 只在数据为空且不在加载中时才加载
-            if viewModel.skills.isEmpty && !viewModel.isLoading {
-                viewModel.loadSkills()
+            if viewModel.categories.isEmpty && !viewModel.isLoading {
+                viewModel.loadCatalog()
             }
+        }
+        .sheet(item: $viewModel.selectedSkillForDetail) { skill in
+            SkillDetailSheet(
+                skill: skill,
+                isSelected: viewModel.isSkillSelected(skill.skillId),
+                onToggle: { viewModel.toggleSkill(skill.skillId) }
+            )
         }
     }
 }
 
-// Header视图
+// MARK: - Category Section
+
+private struct CategorySection: View {
+    let category: SkillCategory
+    @ObservedObject var viewModel: SkillsViewModel
+
+    private var categoryIcon: String {
+        switch category.id {
+        case "workplace": return "chart.line.uptrend.xyaxis"
+        case "family": return "chart.line.uptrend.xyaxis"
+        case "personal": return "chart.line.uptrend.xyaxis"
+        default: return "chart.line.uptrend.xyaxis"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Category header
+            HStack(spacing: 8) {
+                Image(systemName: categoryIcon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.6))
+                Text(category.name)
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+            }
+            .padding(.horizontal, 20)
+
+            // Horizontal scrolling cards
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(category.skills) { skill in
+                        SkillCatalogCardView(
+                            skill: skill,
+                            isSelected: viewModel.isSkillSelected(skill.skillId),
+                            onToggle: { viewModel.toggleSkill(skill.skillId) },
+                            onTapCover: { viewModel.showDetail(skill) }
+                        )
+                        .frame(width: cardWidth)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+
+    private var cardWidth: CGFloat {
+        (UIScreen.main.bounds.width - 52) / 2
+    }
+}
+
+// MARK: - Header
+
 struct SkillsHeaderView: View {
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
-            // 左侧：标题
             Text("技能库")
-                .font(.system(size: 24, weight: .black, design: .rounded)) // Nunito 900, 24px
-                .foregroundColor(AppColors.headerText) // #5E4B35
-                .tracking(0.6) // letterSpacing 2.5% of 24px = 0.6pt
-            
+                .font(.system(size: 24, weight: .black, design: .rounded))
+                .foregroundColor(.white)
+                .tracking(0.6)
+
             Spacer()
-            
-            // 右侧：自动编排按钮
-            Button(action: {
-                // TODO: 实现自动编排功能
-            }) {
-                HStack(alignment: .center, spacing: 5.99226188659668) { // 根据Figma: gap 5.99px
-                    // 图标
+
+            Button(action: {}) {
+                HStack(spacing: 6) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 14))
                         .foregroundColor(.white)
-                        .frame(width: 14, height: 14)
-                    
-                    // 文字
                     Text("自动编排")
-                        .font(.system(size: 12, weight: .bold, design: .rounded)) // Nunito 700, 12px
-                        .foregroundColor(.white) // #FFFFFF
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
                 }
-                .padding(.leading, 11.995272636413574) // 根据Figma: padding left 11.99px
-                .padding(.trailing, 11.995272636413574) // padding right 11.99px
-                .padding(.vertical, 0)
-                .frame(height: 29.36) // 根据Figma: height 29.36px
+                .padding(.horizontal, 12)
+                .frame(height: 30)
                 .background(
-                    RoundedRectangle(cornerRadius: 23144300) // 根据Figma: borderRadius 23144300px (极大值，实际为胶囊形状)
-                        .fill(Color(hex: "#5E7C8B")) // 根据Figma: #5E7C8B
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 23144300)
-                                .stroke(Color(hex: "#5E7C8B"), lineWidth: 0.69) // strokeWeight 0.69px
-                        )
+                    Capsule()
+                        .fill(Color(hex: "#5E7C8B"))
                 )
-                .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
             }
         }
-        .padding(.horizontal, 23.99053192138672) // 根据Figma: padding horizontal 23.99px
-        .padding(.vertical, 0)
-        .frame(height: 79.98) // 根据Figma: height 79.98px
-        .background(Color.black)
+        .padding(.horizontal, 24)
+        .frame(height: 60)
     }
+}
+
+#Preview {
+    SkillsView()
+        .preferredColorScheme(.dark)
 }

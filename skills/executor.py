@@ -282,6 +282,13 @@ async def execute_skill(
         prompt = prompt_template.replace("{transcript_json}", transcript_json)
         prompt = prompt.replace("{session_id}", context.get("session_id", ""))
         prompt = prompt.replace("{user_id}", context.get("user_id", ""))
+        
+        # v0.8 多维度：注入匹配到的子技能名称（如"向上管理"、"冲突化解"等）
+        matched_sub_skill = context.get("matched_sub_skill", "")
+        if matched_sub_skill:
+            logger.info(f"[维度] 技能 {skill_id} 注入 matched_sub_skill: {matched_sub_skill}")
+        prompt = prompt.replace("{matched_sub_skill}", matched_sub_skill)
+        
         # v0.6 记忆：注入 memory_context，若无则填空（向后兼容）
         memory_context = context.get("memory_context", "")
         has_memory = bool(memory_context and memory_context.strip())
@@ -453,6 +460,7 @@ async def execute_skill(
         # 返回结果
         return {
             "skill_id": skill_id,
+            "name": skill_name,
             "result": Call2Response(
                 visual=visual_list,
                 strategies=strategies_list
@@ -466,6 +474,7 @@ async def execute_skill(
         logger.error(f"技能执行失败: {skill_id}, 错误: {e}")
         return {
             "skill_id": skill_id,
+            "name": skill_name,
             "result": None,
             "execution_time_ms": execution_time_ms,
             "success": False,

@@ -36,12 +36,15 @@ async def register_skill(skill_id: str, db: AsyncSession) -> Dict:
         skill_data = load_skill_from_file(skill_id)
         frontmatter = skill_data["frontmatter"]
         
-        # 构建元数据
         metadata = {
             "keywords": frontmatter.get("keywords", []),
             "scenarios": frontmatter.get("scenarios", []),
             "dependencies": frontmatter.get("dependencies", []),
-            "author": frontmatter.get("author", "")
+            "author": frontmatter.get("author", ""),
+            "dimension": frontmatter.get("dimension", ""),
+            "sub_skills": frontmatter.get("sub_skills", []),
+            "display_description": frontmatter.get("display_description", ""),
+            "cover_color": frontmatter.get("cover_color", ""),
         }
         
         # 检查数据库中是否已存在
@@ -202,7 +205,15 @@ async def list_skills(category: Optional[str] = None, enabled: Optional[bool] = 
                             "category": frontmatter.get("category", "other"),
                             "priority": frontmatter.get("priority", 0),
                             "enabled": frontmatter.get("enabled", True),
-                            "version": frontmatter.get("version", "1.0.0")
+                            "version": frontmatter.get("version", "1.0.0"),
+                            "metadata": {
+                                "dimension": frontmatter.get("dimension", ""),
+                                "sub_skills": frontmatter.get("sub_skills", []),
+                                "keywords": frontmatter.get("keywords", []),
+                                "scenarios": frontmatter.get("scenarios", []),
+                                "display_description": frontmatter.get("display_description", ""),
+                                "cover_color": frontmatter.get("cover_color", ""),
+                            }
                         })
                     except Exception as e:
                         logger.warning(f"加载技能失败: {skill_dir.name}, 错误: {e}")

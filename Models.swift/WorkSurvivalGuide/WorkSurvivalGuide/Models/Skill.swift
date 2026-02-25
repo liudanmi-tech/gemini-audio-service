@@ -156,3 +156,63 @@ struct SkillsAPIResponse: Codable {
     let data: SkillListResponse?
     let timestamp: String?
 }
+
+// MARK: - 技能目录模型（分类+子技能展开）
+
+struct SkillCatalogItem: Codable, Identifiable, Hashable {
+    let skillId: String
+    let parentSkillId: String?
+    let name: String
+    let description: String?
+    let coverColor: String?
+    let coverImage: String?
+    let videoUrl: String?
+    var selected: Bool
+
+    var id: String { skillId }
+
+    func hash(into hasher: inout Hasher) { hasher.combine(skillId) }
+    static func == (lhs: Self, rhs: Self) -> Bool { lhs.skillId == rhs.skillId }
+
+    enum CodingKeys: String, CodingKey {
+        case skillId = "skill_id"
+        case parentSkillId = "parent_skill_id"
+        case name
+        case description
+        case coverColor = "cover_color"
+        case coverImage = "cover_image"
+        case videoUrl = "video_url"
+        case selected
+    }
+}
+
+struct SkillCategory: Codable, Identifiable {
+    let id: String
+    let name: String
+    let icon: String
+    var skills: [SkillCatalogItem]
+}
+
+struct SkillCatalogData: Codable {
+    let categories: [SkillCategory]
+}
+
+struct SkillCatalogResponse: Codable {
+    let code: Int
+    let message: String
+    let data: SkillCatalogData?
+}
+
+struct SkillPreferencesData: Codable {
+    let selectedSkills: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case selectedSkills = "selected_skills"
+    }
+}
+
+struct SkillPreferencesResponse: Codable {
+    let code: Int
+    let message: String
+    let data: SkillPreferencesData?
+}

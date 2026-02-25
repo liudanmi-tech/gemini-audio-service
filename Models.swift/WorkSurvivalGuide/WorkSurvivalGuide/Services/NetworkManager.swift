@@ -807,7 +807,90 @@ class NetworkManager {
         
         return data
     }
-    
+
+    func getSkillsCatalog() async throws -> SkillCatalogData {
+        guard hasValidToken() else {
+            throw NSError(domain: "NetworkError", code: 401,
+                          userInfo: [NSLocalizedDescriptionKey: "请先登录"])
+        }
+
+        let url = "\(baseURLForRead)/skills/catalog"
+        print("🌐 [NetworkManager] GET \(url)")
+
+        let dataTask = AF.request(
+            url,
+            method: .get,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 15 }
+        )
+
+        let dataResponse = await dataTask.serializingData().response
+        let responseData = dataResponse.data ?? Data()
+
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        print("📡 [NetworkManager] catalog 状态码: \(statusCode), 数据大小: \(responseData.count) bytes")
+
+        if statusCode != 200 {
+            let body = String(data: responseData, encoding: .utf8) ?? "(empty)"
+            print("❌ [NetworkManager] catalog 错误响应: \(body)")
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode): \(body.prefix(200))"])
+        }
+
+        if responseData.isEmpty {
+            throw NSError(domain: "NetworkError", code: -1,
+                          userInfo: [NSLocalizedDescriptionKey: "服务端返回空响应"])
+        }
+
+        do {
+            let decoder = JSONDecoder()
+            let response = try decoder.decode(SkillCatalogResponse.self, from: responseData)
+
+            guard response.code == 200, let data = response.data else {
+                throw NSError(domain: "NetworkError", code: response.code,
+                              userInfo: [NSLocalizedDescriptionKey: response.message])
+            }
+
+            print("✅ [NetworkManager] catalog 解码成功, \(data.categories.count) 个分类")
+            return data
+        } catch {
+            let raw = String(data: responseData.prefix(500), encoding: .utf8) ?? "(无法解码)"
+            print("❌ [NetworkManager] catalog JSON 解码失败: \(error)")
+            print("❌ [NetworkManager] 原始响应: \(raw)")
+            throw error
+        }
+    }
+
+    func updateSkillPreferences(selectedSkills: [String]) async throws {
+        guard hasValidToken() else {
+            throw NSError(domain: "NetworkError", code: 401,
+                          userInfo: [NSLocalizedDescriptionKey: "请先登录"])
+        }
+
+        let body: [String: Any] = ["selected_skills": selectedSkills]
+
+        let dataTask = AF.request(
+            "\(baseURLForRead)/skills/preferences",
+            method: .put,
+            parameters: body,
+            encoding: JSONEncoding.default,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 10 }
+        )
+
+        let dataResponse = await dataTask.serializingData().response
+        if let statusCode = dataResponse.response?.statusCode, statusCode != 200 {
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode)"])
+        }
+    }
+
     // MARK: - 档案管理API
     
     // 获取档案列表

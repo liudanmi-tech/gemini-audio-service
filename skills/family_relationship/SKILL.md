@@ -5,6 +5,8 @@ category: family
 priority: 90
 version: "1.0.0"
 enabled: true
+display_description: "改善夫妻、亲子、家庭关系中的情感沟通与理解"
+cover_color: "#E84393"
 keywords:
   - "夫妻"
   - "爱人"

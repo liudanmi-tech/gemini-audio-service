@@ -21,64 +21,92 @@ GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
 
 def classify_scene(transcript: list, model=None) -> Dict:
     """
-    场景分类，调用 Gemini Router Agent
+    场景分类 + 职场维度识别，调用 Gemini Router Agent（单次 LLM 调用）
     
-    Args:
-        transcript: 对话转录列表
-        model: Gemini 模型实例（如果为 None，则使用默认模型）
-        
     Returns:
         dict: {
-            "scenes": [
-                {
-                    "category": "workplace",
-                    "confidence": 0.95,
-                    "reasoning": "对话涉及项目汇报和截止日期讨论"
-                }
-            ],
-            "primary_scene": "workplace"
+            "scenes": [{"category": "workplace", "confidence": 0.95, "reasoning": "..."}],
+            "primary_scene": "workplace",
+            "workplace_dimensions": [
+                {"dimension": "role_position", "sub_skill": "managing_up", "sub_skill_name": "向上管理", "confidence": 0.9, "reasoning": "..."}
+            ]
         }
     """
     if model is None:
         model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
     
-    router_prompt = """你是一个场景分类专家。请分析以下对话转录，识别对话发生的场景类型。
+    router_prompt = """你是一个场景分类专家。请分析以下对话转录，完成两项任务：
+
+## 任务一：顶级场景分类
 
 场景类型包括：
-1. workplace (职场场景): 工作相关、上下级关系、同事协作、项目讨论。若对话人涉及同事、领导、老板、上级、下属、经理、总监、主管等，必须包含 workplace 场景。
-2. family (家庭场景): 夫妻关系、亲子关系、家庭决策。若对话参与者是家人（如爸爸、妈妈、老婆、老公、孩子、儿子、女儿、父亲、母亲等），必须包含 family 场景。
-3. education (教育场景): 孩子教育、学习辅导、成长引导
-4. brainstorm (头脑风暴): 创意讨论、方案设计、问题解决
-5. other (其他场景): 无法明确分类的场景
+1. workplace (职场场景): 工作相关、上下级关系、同事协作、项目讨论、客户沟通。若对话人涉及同事、领导、老板、上级、下属、经理、总监、主管、客户等，必须包含 workplace。
+2. family (家庭场景): 夫妻关系、亲子关系、家庭决策、孩子教育、学习辅导。若对话参与者是家人（爸爸、妈妈、老婆、老公、孩子等），必须包含 family。
+3. other (其他场景): 无法归为职场或家庭的场景。
 
-补充规则：
-- 若对话中提到或涉及同事、领导、老板、上级等职场角色，即使主场景是 other，也应加入 workplace（confidence 建议 0.6 以上）
-- 若对话参与者或称呼为家人（爸爸、妈妈、老婆、老公、孩子等），应加入 family（confidence 建议 0.6 以上）
-- 一个对话可同时命中多个场景（如既有同事讨论又提到家人）
+规则：
+- 一个对话可同时命中多个场景
+- 若对话涉及职场角色，即使主场景是 other，也应加入 workplace（confidence >= 0.6）
+- 若对话涉及家人，应加入 family（confidence >= 0.6）
+
+## 任务二：职场维度识别（仅当 workplace 命中时）
+
+如果对话命中 workplace，请进一步判断命中了以下哪些维度和子技能（可命中多个，选择最相关的 2-4 个）：
+
+### 维度 1: role_position (角色方位)
+- managing_up (向上管理): 与老板/领导/上级的互动，汇报、请示、争取资源
+- managing_down (向下管理): 与下属/团队的互动，指导、委派、考核、反馈
+- peer_collaboration (横向协作): 与同事/平级的互动，跨部门协调、合作
+- external_communication (对外沟通): 与客户/合作方/外部人员的互动
+
+### 维度 2: scenario (场景情境)
+- conflict_resolution (冲突化解): 争吵、不满、矛盾、对峙
+- negotiation (谈判博弈): 薪资谈判、资源争夺、条件交换
+- presentation (汇报展示): 工作汇报、方案展示、述职演讲
+- small_talk (闲聊社交): 职场闲聊、团建、饭局、破冰
+- crisis_management (危机公关): 事故处理、追责、道歉、声誉修复
+
+### 维度 3: psychology (心理风格)
+- defensive (防御型): 用户在保护边界、被动退让、忍耐
+- offensive (进攻型): 用户在主动出击、挑战、施压
+- constructive (建设型): 双方在寻求合作、双赢、解决问题
+- healing (治愈型): 安慰、支持、倾听、共情
+
+### 维度 4: career_stage (职业阶段)
+- rookie (新人小白): 用户表现为新人，在学习、请教、融入
+- core_manager (骨干中层): 用户在执行、协调、管理、带队
+- executive (高管领袖): 用户在做战略决策、全局布局
+
+### 维度 5: capability (能力维度)
+- logical_thinking (逻辑思维): 对话涉及结构化表达、论证、分析
+- eq (情商): 对话涉及情绪管理、察言观色、委婉表达
+- influence (影响力): 对话涉及说服、推动、号召、激励
 
 请返回JSON格式：
 {
   "scenes": [
-    {
-      "category": "workplace",
-      "confidence": 0.95,
-      "reasoning": "对话涉及项目汇报和截止日期讨论"
-    },
-    {
-      "category": "family",
-      "confidence": 0.3,
-      "reasoning": "提到了家庭安排"
-    }
+    {"category": "workplace", "confidence": 0.95, "reasoning": "对话涉及项目汇报"},
+    {"category": "family", "confidence": 0.3, "reasoning": "提到了家庭安排"}
   ],
-  "primary_scene": "workplace"
+  "primary_scene": "workplace",
+  "workplace_dimensions": [
+    {"dimension": "role_position", "sub_skill": "managing_up", "sub_skill_name": "向上管理", "confidence": 0.9, "reasoning": "对话是向领导汇报工作"},
+    {"dimension": "scenario", "sub_skill": "presentation", "sub_skill_name": "汇报展示", "confidence": 0.85, "reasoning": "正在做工作汇报"},
+    {"dimension": "psychology", "sub_skill": "defensive", "sub_skill_name": "防御型", "confidence": 0.7, "reasoning": "用户处于防御姿态"}
+  ]
 }
+
+注意：
+- workplace_dimensions 仅在 workplace 命中时填写，否则为空数组
+- 选择 2-4 个最相关的维度，不要全部选择
+- 每个维度最多选择 1 个子技能
 
 对话转录:
 {transcript_json}"""
     
     try:
         transcript_json = json.dumps(transcript, ensure_ascii=False, indent=2)
-        prompt = router_prompt.format(transcript_json=transcript_json)
+        prompt = router_prompt.replace("{transcript_json}", transcript_json)
         
         logger.info("========== 开始场景识别 ==========")
         logger.debug(f"场景识别 Prompt 长度: {len(prompt)} 字符")
@@ -88,49 +116,78 @@ def classify_scene(transcript: list, model=None) -> Dict:
         logger.info(f"场景识别响应长度: {len(response.text)} 字符")
         logger.debug(f"场景识别响应内容: {response.text[:500]}...")
         
-        # 解析 JSON 响应
         try:
-            # 尝试提取 JSON 部分（可能包含 markdown 代码块）
+            import re
             response_text = response.text.strip()
-            if response_text.startswith("```"):
-                # 提取代码块中的内容
-                import re
-                json_match = re.search(r'```(?:json)?\s*\n(.*?)\n```', response_text, re.DOTALL)
+            logger.info(f"场景识别原始响应(前300字): {response_text[:300]}")
+            
+            # 尝试多种方式提取 JSON
+            parsed = None
+            # 方式1: 直接解析
+            try:
+                parsed = json.loads(response_text)
+            except json.JSONDecodeError:
+                pass
+            
+            # 方式2: 去除 markdown 代码块
+            if parsed is None:
+                json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
                 if json_match:
-                    response_text = json_match.group(1)
+                    try:
+                        parsed = json.loads(json_match.group(1).strip())
+                    except json.JSONDecodeError:
+                        pass
             
-            scene_result = json.loads(response_text)
+            # 方式3: 提取第一个 { ... } 块
+            if parsed is None:
+                brace_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+                if brace_match:
+                    try:
+                        parsed = json.loads(brace_match.group(0))
+                    except json.JSONDecodeError:
+                        pass
             
-            # 验证结果格式
+            if parsed is None:
+                logger.error(f"所有JSON解析方式均失败, 原始响应: {response_text[:500]}")
+                raise ValueError(f"无法解析JSON: {response_text[:100]}")
+            
+            scene_result = parsed
+            
             if "scenes" not in scene_result:
                 raise ValueError("场景识别结果缺少 'scenes' 字段")
             if "primary_scene" not in scene_result:
-                # 如果没有 primary_scene，从 scenes 中选择置信度最高的
                 if scene_result["scenes"]:
                     primary_scene = max(scene_result["scenes"], key=lambda x: x.get("confidence", 0))
                     scene_result["primary_scene"] = primary_scene["category"]
                 else:
                     scene_result["primary_scene"] = "other"
             
+            if "workplace_dimensions" not in scene_result:
+                scene_result["workplace_dimensions"] = []
+            
             logger.info(f"场景识别成功: primary_scene={scene_result['primary_scene']}")
             for scene in scene_result["scenes"]:
                 logger.info(f"  - {scene['category']}: {scene.get('confidence', 0):.2f} ({scene.get('reasoning', '')})")
+            for dim in scene_result.get("workplace_dimensions", []):
+                logger.info(f"  - 职场维度: {dim.get('dimension','?')}/{dim.get('sub_skill','?')} ({dim.get('sub_skill_name', '?')}) confidence={dim.get('confidence', 0):.2f}")
             
             return scene_result
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, ValueError) as e:
             logger.error(f"解析场景识别结果失败: {e}")
-            logger.error(f"响应内容: {response.text}")
-            # 返回默认结果
+            logger.error(f"响应内容: {response.text[:500]}")
             return {
                 "scenes": [{"category": "other", "confidence": 0.5, "reasoning": "解析失败"}],
-                "primary_scene": "other"
+                "primary_scene": "other",
+                "workplace_dimensions": []
             }
     except Exception as e:
         logger.error(f"场景识别失败: {e}")
-        # 返回默认结果
+        import traceback
+        logger.error(f"异常详情: {traceback.format_exc()}")
         return {
             "scenes": [{"category": "other", "confidence": 0.5, "reasoning": f"识别失败: {str(e)}"}],
-            "primary_scene": "other"
+            "primary_scene": "other",
+            "workplace_dimensions": []
         }
 
 
@@ -198,31 +255,40 @@ def _should_trigger_depression_prevention(transcript: list) -> bool:
     return False
 
 
+# 维度 skill_id 与 dimension 字段的映射
+_DIMENSION_TO_SKILL = {
+    "role_position": "workplace_role",
+    "scenario": "workplace_scenario",
+    "psychology": "workplace_psychology",
+    "career_stage": "workplace_career",
+    "capability": "workplace_capability",
+}
+
+
 async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = None) -> List[Dict]:
     """
-    根据场景分类结果匹配技能
+    根据场景分类结果匹配技能（支持职场多维度匹配）
     
-    Args:
-        scene_result: 场景分类结果（来自 classify_scene）
-        db: 数据库会话
-        transcript: 对话转录（可选，用于参与者关键词补充匹配）
-        
+    职场场景使用维度级匹配：根据 workplace_dimensions 匹配对应的维度技能，
+    并将 matched_sub_skill 信息传入技能上下文。
+    其他场景（family 等）保持按 category 匹配。
+    情绪技能（emotion）始终追加。
+    
     Returns:
-        List[dict]: 匹配的技能列表，按优先级和置信度排序
+        List[dict]: 匹配的技能列表，每项包含 skill_id, name, category, priority,
+                    confidence, scene_reasoning, 以及可选的 dimension, matched_sub_skill,
+                    matched_sub_skill_id 字段
     """
     matched_skills = []
     
-    # 获取所有启用的技能
     all_skills = await list_skills(enabled=True, db=db)
     
-    # 根据场景匹配技能（支持多技能：取置信度最高的最多 3 个场景 + 情绪技能）
     scenes = scene_result.get("scenes", [])
     primary_scene = scene_result.get("primary_scene", "other")
+    workplace_dimensions = scene_result.get("workplace_dimensions", [])
     
-    # 参与者关键词补充：若对话涉及同事/领导则补充 workplace，涉及家人则补充 family
     scenes = _supplement_scenes_by_participants(transcript or [], scenes)
     
-    # 取置信度 > 0.3 的场景，按置信度降序，最多 3 个（支持一个 session 命中多个技能）
     valid_scenes = sorted(
         [s for s in scenes if s.get("confidence", 0) > 0.3],
         key=lambda x: x.get("confidence", 0),
@@ -230,34 +296,78 @@ async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = 
     )[:3]
     
     if not valid_scenes:
-        # 如果没有符合条件的场景，使用 primary_scene
         valid_scenes = [{"category": primary_scene, "confidence": 0.5}]
     
-    # 匹配技能
+    workplace_matched = any(s.get("category") == "workplace" for s in valid_scenes)
+    
     for scene in valid_scenes:
         category = scene.get("category", "other")
         confidence = scene.get("confidence", 0.5)
         
         logger.debug(f"匹配场景类别: {category}, 置信度: {confidence:.2f}")
         
-        # 查找匹配分类的技能
-        for skill in all_skills:
-            if skill["category"] == category:
-                matched_skills.append({
-                    "skill_id": skill["skill_id"],
-                    "name": skill["name"],
-                    "category": skill["category"],
-                    "priority": skill["priority"],
-                    "confidence": confidence,
-                    "scene_reasoning": scene.get("reasoning", "")
-                })
-                logger.debug(f"  ✅ 匹配到技能: {skill['skill_id']} ({skill.get('name', 'N/A')})")
+        if category == "workplace":
+            # 职场场景：按维度匹配
+            if workplace_dimensions:
+                for dim in workplace_dimensions:
+                    dim_name = dim.get("dimension", "")
+                    target_skill_id = _DIMENSION_TO_SKILL.get(dim_name)
+                    if not target_skill_id:
+                        logger.warning(f"未知维度: {dim_name}")
+                        continue
+                    
+                    skill_info = next((s for s in all_skills if s["skill_id"] == target_skill_id), None)
+                    if not skill_info:
+                        logger.warning(f"维度技能未注册: {target_skill_id}")
+                        continue
+                    
+                    matched_skills.append({
+                        "skill_id": skill_info["skill_id"],
+                        "name": skill_info["name"],
+                        "category": "workplace",
+                        "priority": skill_info["priority"],
+                        "confidence": dim.get("confidence", confidence),
+                        "scene_reasoning": dim.get("reasoning", ""),
+                        "dimension": dim_name,
+                        "matched_sub_skill": dim.get("sub_skill_name", ""),
+                        "matched_sub_skill_id": dim.get("sub_skill", ""),
+                    })
+                    logger.debug(f"  ✅ 维度匹配: {target_skill_id} ({dim.get('sub_skill_name', '')})")
+            else:
+                # workplace_dimensions 为空时的兜底：匹配所有 workplace 维度技能
+                for skill in all_skills:
+                    if skill["category"] == "workplace":
+                        matched_skills.append({
+                            "skill_id": skill["skill_id"],
+                            "name": skill["name"],
+                            "category": "workplace",
+                            "priority": skill["priority"],
+                            "confidence": confidence,
+                            "scene_reasoning": scene.get("reasoning", ""),
+                            "dimension": skill.get("metadata", {}).get("dimension", ""),
+                            "matched_sub_skill": "",
+                            "matched_sub_skill_id": "",
+                        })
+        else:
+            # 非职场场景（family 等）：按 category 匹配
+            for skill in all_skills:
+                if skill["category"] == category:
+                    matched_skills.append({
+                        "skill_id": skill["skill_id"],
+                        "name": skill["name"],
+                        "category": skill["category"],
+                        "priority": skill["priority"],
+                        "confidence": confidence,
+                        "scene_reasoning": scene.get("reasoning", ""),
+                    })
+                    logger.debug(f"  ✅ 匹配到技能: {skill['skill_id']} ({skill.get('name', 'N/A')})")
     
-    # 情绪识别技能：所有对话都运行，单独追加（category=emotion 不参与场景匹配）
+    # 情绪识别技能：所有对话都运行（personal 类中 emotion_recognition / depression_prevention 不参与场景匹配）
+    _EMOTION_SKILL_IDS = {"emotion_recognition", "depression_prevention"}
+    matched_ids = {s["skill_id"] for s in matched_skills}
     for skill in all_skills:
-        if skill["category"] != "emotion" or skill["skill_id"] in [s["skill_id"] for s in matched_skills]:
+        if skill["skill_id"] not in _EMOTION_SKILL_IDS or skill["skill_id"] in matched_ids:
             continue
-        # 防抑郁监控：仅当 transcript 满足触发条件时追加
         if skill["skill_id"] == "depression_prevention":
             if not _should_trigger_depression_prevention(transcript or []):
                 logger.debug(f"  ⏭️ 跳过 depression_prevention: 未命中触发关键词")
@@ -267,12 +377,12 @@ async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = 
             "name": skill["name"],
             "category": skill["category"],
             "priority": skill["priority"],
-            "confidence": 0.9,  # 情绪技能始终高置信
-            "scene_reasoning": "情绪识别适用于所有对话"
+            "confidence": 0.9,
+            "scene_reasoning": "情绪识别适用于所有对话",
         })
         logger.debug(f"  ✅ 追加情绪技能: {skill['skill_id']}")
     
-    # 去重（同一个技能可能匹配多个场景）
+    # 去重
     seen = set()
     unique_skills = []
     for skill in matched_skills:
@@ -280,11 +390,11 @@ async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = 
             seen.add(skill["skill_id"])
             unique_skills.append(skill)
     
-    # 按优先级和置信度排序
     unique_skills.sort(key=lambda x: (x["priority"], x["confidence"]), reverse=True)
     
     logger.info(f"技能匹配完成: 匹配到 {len(unique_skills)} 个技能")
     for skill in unique_skills:
-        logger.info(f"  ✅ 匹配到技能: {skill['skill_id']} (名称: {skill.get('name', 'N/A')}, priority={skill['priority']}, confidence={skill['confidence']:.2f})")
+        dim_info = f", dimension={skill.get('dimension', '')}/{skill.get('matched_sub_skill', '')}" if skill.get("dimension") else ""
+        logger.info(f"  ✅ {skill['skill_id']} (名称: {skill.get('name', 'N/A')}, priority={skill['priority']}, confidence={skill['confidence']:.2f}{dim_info})")
     
     return unique_skills

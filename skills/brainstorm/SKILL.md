@@ -1,10 +1,12 @@
 ---
 name: 头脑风暴协作
 description: 适用于创意讨论、方案设计、问题解决等场景的策略分析技能
-category: brainstorm
+category: workplace
 priority: 70
 version: "1.0.0"
 enabled: true
+display_description: "激发团队创意碰撞，高效协作讨论，产出突破性方案"
+cover_color: "#FD79A8"
 keywords:
   - "创意"
   - "方案"
