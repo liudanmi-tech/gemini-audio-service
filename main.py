@@ -741,10 +741,25 @@ def generate_image_from_prompt(
         full_prompt = style_prefix + prompt_body
     
     contents_list = []
+
+    # ── 风格参考图（按 style_key 自动加载） ────────────────────────────────────
+    _style_ref_dir = Path(__file__).parent / "style_references"
+    _style_ref_path = _style_ref_dir / f"{key}_ref.jpg"
+    if _style_ref_path.exists():
+        try:
+            _style_ref_bytes = _style_ref_path.read_bytes()
+            contents_list.append(genai_types.Part.from_bytes(data=_style_ref_bytes, mime_type="image/jpeg"))
+            # 在 prompt 开头插入风格说明
+            full_prompt = "请严格参考第一张图片所呈现的视觉风格（色调、光影、质感、构图）进行图片创作。\n\n" + full_prompt
+            logger.info(f"[图片生成] 已加载风格参考图: {_style_ref_path.name} ({len(_style_ref_bytes)} bytes)")
+        except Exception as _e:
+            logger.warning(f"[图片生成] 风格参考图加载失败 {_style_ref_path}: {_e}")
+
+    # ── 人物档案参考图（最多2张，置于风格参考图之后） ─────────────────────────
     if reference_images:
         for img_bytes, mime_type in reference_images[:2]:  # 最多2张
             contents_list.append(genai_types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
-        logger.info(f"[图片生成] 使用 {len(contents_list)} 张档案照片作为参考图")
+        logger.info(f"[图片生成] 使用 {len(reference_images)} 张档案照片作为人物参考图")
     contents_list.append(full_prompt)
     
     for attempt in range(max_retries):
