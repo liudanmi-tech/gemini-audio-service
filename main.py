@@ -1572,19 +1572,25 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 _ts.analysis_stage_detail = None
                 await db.commit()
 
-            # 在 executor 中运行 Gemini 分析（避免阻塞事件循环），带 6 分钟超时
-            logger.info(f"[分析-{session_id}] step_async3: 即将调用 analyze_audio_from_path（executor）")
+            # 在 executor 中运行 Gemini 分析（避免阻塞事件循环）
+            # 超时时间按文件大小动态计算：基础 8 分钟 + 每 10 MB 额外 1 分钟，上限 30 分钟
+            _file_size_mb = os.path.getsize(temp_file_path) / (1024 * 1024)
+            _analysis_timeout = min(1800.0, 480.0 + max(0, _file_size_mb - 10) / 10 * 60)
+            logger.info(f"[分析-{session_id}] step_async3: 即将调用 analyze_audio_from_path（executor）"
+                        f"，文件 {_file_size_mb:.1f} MB，超时 {_analysis_timeout/60:.1f} 分钟")
             def _run_analysis():
                 return asyncio.run(analyze_audio_from_path(temp_file_path, file_filename or "audio.m4a", session_id=session_id))
             try:
                 result, call1_result = await asyncio.wait_for(
                     asyncio.get_event_loop().run_in_executor(None, _run_analysis),
-                    timeout=360.0  # 6 分钟超时，防止 Gemini 上传卡住导致永久 analyzing
+                    timeout=_analysis_timeout
                 )
                 logger.info(f"[分析-{session_id}] step_async4: analyze_audio_from_path 返回成功")
             except asyncio.TimeoutError:
-                logger.error(f"[分析-{session_id}] step_async4: 6 分钟超时！Gemini 分析未在限时内完成")
-                raise Exception("分析超时（6 分钟），可能因 Gemini 文件上传失败或代理不可达，请检查网络/代理配置")
+                logger.error(f"[分析-{session_id}] step_async4: {_analysis_timeout/60:.0f} 分钟超时！"
+                             f"文件 {_file_size_mb:.1f} MB，Gemini 分析未在限时内完成")
+                raise Exception(f"分析超时（{_analysis_timeout/60:.0f} 分钟），文件 {_file_size_mb:.1f} MB，"
+                                "可能因 Gemini 文件上传失败或代理不可达，请检查网络/代理配置")
             
             # 使用Call1结果或旧结果
             if call1_result:
