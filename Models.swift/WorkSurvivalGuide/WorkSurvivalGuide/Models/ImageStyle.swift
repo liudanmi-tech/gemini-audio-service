@@ -2,7 +2,7 @@
 //  ImageStyle.swift
 //  WorkSurvivalGuide
 //
-//  图片风格模型与 14 种风格数据，用于策略图片生成
+//  图片风格模型与 23 种风格数据，用于策略图片生成
 //
 
 import SwiftUI
@@ -16,7 +16,7 @@ struct ImageStyle: Identifiable {
     let accentColor: Color
 }
 
-/// 14 种图片风格 + 默认宫崎骏
+/// 23 种图片风格（原 15 种 + 新增 8 种，位于第 7-14 位）
 enum ImageStylePresets {
     static let ghibli = ImageStyle(
         id: "ghibli",
@@ -25,8 +25,9 @@ enum ImageStylePresets {
         promptKeywords: "宫崎骏吉卜力动画风格：温暖自然色调、柔和手绘笔触、细腻光影、治愈系氛围。类似《龙猫》《千与千寻》的质感与色彩。",
         accentColor: Color(hex: "#7CBC6C")
     )
-    
+
     static let all: [ImageStyle] = [
+        // ── 1-6：原有主流风格 ────────────────────────────────────────────────────
         ghibli,
         ImageStyle(id: "shinkai", name: "新海诚风格", nameEn: "Makoto Shinkai",
                    promptKeywords: "新海诚动画风格：高饱和蓝天、体积云与光线穿透、水面与玻璃反光、铁路与城镇。《你的名字》《天气之子》式的浪漫唯美画面。",
@@ -43,6 +44,34 @@ enum ImageStylePresets {
         ImageStyle(id: "ukiyoe", name: "浮世绘风格", nameEn: "Ukiyo-e",
                    promptKeywords: "日式浮世绘风格：平面构图、黑色勾线描边、传统配色（靛蓝、朱红、浅绿）。葛饰北斋或歌川广重的经典浮世绘美感。",
                    accentColor: Color(hex: "#2E5090")),
+
+        // ── 7-14：新增 8 种风格 ──────────────────────────────────────────────────
+        ImageStyle(id: "clay", name: "粘土定格风", nameEn: "Clay stop-motion",
+                   promptKeywords: "粘土定格动画风格：圆润立体的粘土质感、手工捏制纹理、柔和工作室灯光。类似Aardman《超级无敌掌门狗》的温暖幽默感，人物圆润可爱，背景精细手工感。角色表情生动，每个细节都有手工温度。",
+                   accentColor: Color(hex: "#E8A878")),
+        ImageStyle(id: "felt", name: "毛毡手工风", nameEn: "Felt craft",
+                   promptKeywords: "毛毡布艺风格：布料纤维质感、手工缝制细节、温暖饱和色彩。类似北欧手工艺品的温馨触感，边缘有轻微毛绒感，像一幅手工缝制的艺术品。色彩饱满柔和，充满手作温度。",
+                   accentColor: Color(hex: "#D4785A")),
+        ImageStyle(id: "noir_manga", name: "黑色漫画风", nameEn: "Noir manga",
+                   promptKeywords: "浦泽直树写实漫画风格：极度写实的人物面孔、细腻心理刻画、繁复城市背景、精细交叉排线光影。类似《怪物》《20世纪少年》的沉重叙事质感，黑白强对比，人物眼神深邃复杂。",
+                   accentColor: Color(hex: "#2C2C3E")),
+        ImageStyle(id: "rembrandt", name: "伦勃朗人像", nameEn: "Rembrandt portrait",
+                   promptKeywords: "伦勃朗古典人像风格：单侧强光打脸、深邃眼神、暗部丰富细节、画布油彩质感。权威与智慧并存的戏剧性光影，类似17世纪荷兰黄金时代肖像画，背景深暗，人物面部发光。",
+                   accentColor: Color(hex: "#8B6914")),
+        ImageStyle(id: "constructivism", name: "构成主义风", nameEn: "Constructivism",
+                   promptKeywords: "苏联先锋派构成主义海报风格：强烈对角线构图、红黑撞色、几何图形与人物剪影。类似Rodchenko的革命张力，充满力量感与对抗性，粗体字与图形完美融合。",
+                   accentColor: Color(hex: "#CC2222")),
+        ImageStyle(id: "jojo", name: "JoJo荒木风", nameEn: "JoJo Araki style",
+                   promptKeywords: "荒木飞吕彦JoJo漫画风格：夸张戏剧性pose、时尚杂志感构图、装饰性花纹背景、类文艺复兴雕塑质感。强烈的个人能力觉醒宣言感，色彩大胆，线条张力十足。",
+                   accentColor: Color(hex: "#9B4DBF")),
+        ImageStyle(id: "toriyama", name: "鸟山明热血", nameEn: "Toriyama battle style",
+                   promptKeywords: "鸟山明龙珠热血漫画风格：圆润干净的线条、活泼动感的动作、夸张的表情与特效、明快色彩。类似《龙珠》《Dr.SLUMP》的少年热血感，角色充满活力，战斗特效震撼。",
+                   accentColor: Color(hex: "#FF8C00")),
+        ImageStyle(id: "clamp", name: "CLAMP唯美风", nameEn: "CLAMP aesthetic",
+                   promptKeywords: "CLAMP四人组漫画风格：极细长的人体比例、华丽繁复的服装细节、唯美命运感构图、精致的眼睛与发丝。类似《X战记》《圣传》的史诗唯美感，线条优雅，背景装饰性强。",
+                   accentColor: Color(hex: "#BF7FBF")),
+
+        // ── 15-23：原有风格后移 ───────────────────────────────────────────────────
         ImageStyle(id: "line_art", name: "黑白线稿风", nameEn: "Minimalist line art",
                    promptKeywords: "极简黑白线稿风格：纯黑白、细线条勾勒、大量留白、极少阴影。类似漫画分镜或手绘草图。",
                    accentColor: Color(hex: "#333333")),
@@ -69,9 +98,9 @@ enum ImageStylePresets {
                    accentColor: Color(hex: "#4A4A4A")),
         ImageStyle(id: "storybook", name: "童话绘本风", nameEn: "Storybook illustration",
                    promptKeywords: "欧洲童话绘本风格：柔和水彩、复古装帧感、梦幻氛围。类似《小王子》插图的温馨与幻想。",
-                   accentColor: Color(hex: "#DDA0DD"))
+                   accentColor: Color(hex: "#DDA0DD")),
     ]
-    
+
     static func byId(_ id: String) -> ImageStyle? {
         all.first { $0.id == id }
     }

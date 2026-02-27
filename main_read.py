@@ -696,6 +696,32 @@ async def get_emotion_trend(
         raise HTTPException(status_code=500, detail=f"获取心情趋势失败: {str(e)}")
 
 
+@app.get("/api/v1/image-styles")
+async def get_image_styles(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user_id),
+):
+    """返回所有图片风格列表，按 sort_order 排序，数据来自 prompt_templates 表。"""
+    try:
+        result = await db.execute(
+            text("SELECT style_key, name, sort_order FROM prompt_templates ORDER BY sort_order")
+        )
+        rows = result.fetchall()
+        styles = [
+            {"style_key": r.style_key, "name": r.name, "sort_order": r.sort_order}
+            for r in rows
+        ]
+        return APIResponse(
+            code=200,
+            message="success",
+            data={"styles": styles, "total": len(styles)},
+            timestamp=datetime.now().isoformat(),
+        )
+    except Exception as e:
+        logger.error(f"获取图片风格列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取图片风格列表失败: {str(e)}")
+
+
 @app.get("/api/v1/sessions/major-events")
 async def get_major_events(
     category: Optional[str] = Query(None, description="workplace|family|personal"),

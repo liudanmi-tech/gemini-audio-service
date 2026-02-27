@@ -653,6 +653,16 @@ IMAGE_STYLE_MAP = {
     "cyberpunk": "《赛博朋克2077》夜之城风格：主色调霓虹黄与青蓝，高对比暗部与霓虹高光。雨夜街道、霓虹招牌、义体与全息投影。脏乱与光鲜并存，电影级光影。",
     "watercolor": "水彩插画风格：晕染边缘、透明叠色、留白与纸纹、清新自然。类似儿童绘本或插画集的水彩质感。",
     "ukiyoe": "日式浮世绘风格：平面构图、黑色勾线描边、传统配色（靛蓝、朱红、浅绿）。葛饰北斋或歌川广重的经典浮世绘美感。",
+    # ── 新增 8 种风格 ──────────────────────────────────────────────────────────
+    "clay": "粘土定格动画风格：圆润立体的粘土质感、手工捏制纹理、柔和工作室灯光。类似Aardman《超级无敌掌门狗》的温暖幽默感，人物圆润可爱，背景精细手工感。角色表情生动，每个细节都有手工温度。",
+    "felt": "毛毡布艺风格：布料纤维质感、手工缝制细节、温暖饱和色彩。类似北欧手工艺品的温馨触感，边缘有轻微毛绒感，像一幅手工缝制的艺术品。色彩饱满柔和，充满手作温度。",
+    "noir_manga": "浦泽直树写实漫画风格：极度写实的人物面孔、细腻心理刻画、繁复城市背景、精细交叉排线光影。类似《怪物》《20世纪少年》的沉重叙事质感，黑白强对比，人物眼神深邃复杂。",
+    "rembrandt": "伦勃朗古典人像风格：单侧强光打脸、深邃眼神、暗部丰富细节、画布油彩质感。权威与智慧并存的戏剧性光影，类似17世纪荷兰黄金时代肖像画，背景深暗，人物面部发光。",
+    "constructivism": "苏联先锋派构成主义海报风格：强烈对角线构图、红黑撞色、几何图形与人物剪影。类似Rodchenko的革命张力，充满力量感与对抗性，粗体字与图形完美融合。",
+    "jojo": "荒木飞吕彦JoJo漫画风格：夸张戏剧性pose、时尚杂志感构图、装饰性花纹背景、类文艺复兴雕塑质感。强烈的个人能力觉醒宣言感，色彩大胆，线条张力十足。",
+    "toriyama": "鸟山明龙珠热血漫画风格：圆润干净的线条、活泼动感的动作、夸张的表情与特效、明快色彩。类似《龙珠》《Dr.SLUMP》的少年热血感，角色充满活力，战斗特效震撼。",
+    "clamp": "CLAMP四人组漫画风格：极细长的人体比例、华丽繁复的服装细节、唯美命运感构图、精致的眼睛与发丝。类似《X战记》《圣传》的史诗唯美感，线条优雅，背景装饰性强。",
+    # ─────────────────────────────────────────────────────────────────────────
     "line_art": "极简黑白线稿风格：纯黑白、细线条勾勒、大量留白、极少阴影。类似漫画分镜或手绘草图。",
     "steampunk": "蒸汽朋克风格：铜黄机械、齿轮管道、维多利亚时代服饰、复古工业美学。蒸汽机、飞艇与齿轮的复古科幻感。",
     "pop_art": "波普艺术风格：粗黑轮廓线、高饱和纯色块、网点纹理、强对比。类似安迪·沃霍尔或 Roy Lichtenstein 的波普美感。",
@@ -3096,6 +3106,32 @@ async def get_emotion_trend(
         logger.error(f"获取心情趋势失败: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取心情趋势失败: {str(e)}")
+
+
+@app.get("/api/v1/image-styles")
+async def get_image_styles(
+    db: AsyncSession = Depends(get_db),
+    _: str = Depends(get_current_user_id),
+):
+    """返回所有图片风格列表，按 sort_order 排序，数据来自 prompt_templates 表。"""
+    try:
+        result = await db.execute(
+            text("SELECT style_key, name, sort_order FROM prompt_templates ORDER BY sort_order")
+        )
+        rows = result.fetchall()
+        styles = [
+            {"style_key": r.style_key, "name": r.name, "sort_order": r.sort_order}
+            for r in rows
+        ]
+        return APIResponse(
+            code=200,
+            message="success",
+            data={"styles": styles, "total": len(styles)},
+            timestamp=datetime.now().isoformat(),
+        )
+    except Exception as e:
+        logger.error(f"获取图片风格列表失败: {e}")
+        raise HTTPException(status_code=500, detail=f"获取图片风格列表失败: {str(e)}")
 
 
 @app.get("/api/v1/sessions/major-events")

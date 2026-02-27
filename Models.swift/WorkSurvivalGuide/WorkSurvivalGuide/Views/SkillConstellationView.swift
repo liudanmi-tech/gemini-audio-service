@@ -23,6 +23,15 @@ struct SkillConstellationView: View {
     @ObservedObject private var tasksVM  = TaskListViewModel.shared
     @State private var currentPage = 0
 
+    // ── Unlock effect ─────────────────────────────────────────────────────────
+    @State private var showUnlockEffect   = false
+    @State private var unlockingSkillName = ""
+    /// Skill IDs for which we've already played the unlock celebration.
+    /// Persisted so the effect is shown exactly once per skill across launches.
+    @State private var celebratedSkillIds: Set<String> = {
+        Set(UserDefaults.standard.stringArray(forKey: "wsg_celebrated_skill_ids") ?? [])
+    }()
+
     private var pages: [StarPage] {
         let defs: [(String, String, Color)] = [
             ("workplace", "职场星图", Color(hex: "#45B7D1")),
@@ -69,6 +78,39 @@ struct SkillConstellationView: View {
         }
         .onAppear {
             tasksVM.loadTasks()
+            checkForNewlyUnlocked()
+        }
+        // Server may push updated skill states at any time; re-check on each change
+        .onChange(of: skillsVM.selectedSkills) { _ in
+            checkForNewlyUnlocked()
+        }
+        .overlay {
+            if showUnlockEffect {
+                SkillUnlockEffect(
+                    isShowing: $showUnlockEffect,
+                    skillName: unlockingSkillName
+                )
+            }
+        }
+    }
+
+    // ── Unlock detection ──────────────────────────────────────────────────────
+
+    /// Scans all categories for skills that are now selected but haven't been
+    /// celebrated yet. When the server sets selected=true (confidence_score > 0.75),
+    /// this fires the unlock effect exactly once per skill.
+    private func checkForNewlyUnlocked() {
+        for category in skillsVM.categories {
+            for skill in category.skills where skill.selected {
+                guard !celebratedSkillIds.contains(skill.skillId) else { continue }
+                // Record as celebrated before triggering (prevents double-fire)
+                celebratedSkillIds.insert(skill.skillId)
+                UserDefaults.standard.set(Array(celebratedSkillIds),
+                                          forKey: "wsg_celebrated_skill_ids")
+                unlockingSkillName = skill.name
+                showUnlockEffect   = true
+                return  // one celebration at a time; next check will catch others
+            }
         }
     }
 
