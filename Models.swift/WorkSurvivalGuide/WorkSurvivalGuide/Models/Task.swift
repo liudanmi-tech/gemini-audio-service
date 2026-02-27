@@ -190,6 +190,75 @@ struct APIResponse<T: Codable>: Codable {
     let timestamp: String?
 }
 
+// MARK: - 重大事件模型
+
+struct MajorEvent: Codable, Identifiable {
+    var id: String { sessionId }
+    let sessionId: String
+    let title: String
+    let summary: String
+    let createdAt: Date?
+    let skillName: String?
+    let confidenceScore: Double?
+    let emotionScore: Int?
+    let category: String?
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId       = "session_id"
+        case title
+        case summary
+        case createdAt       = "created_at"
+        case skillName       = "skill_name"
+        case confidenceScore = "confidence_score"
+        case emotionScore    = "emotion_score"
+        case category
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId       = try c.decode(String.self, forKey: .sessionId)
+        title           = (try? c.decode(String.self, forKey: .title)) ?? "对话记录"
+        summary         = (try? c.decode(String.self, forKey: .summary)) ?? ""
+        skillName       = try? c.decode(String.self, forKey: .skillName)
+        confidenceScore = try? c.decode(Double.self, forKey: .confidenceScore)
+        emotionScore    = try? c.decode(Int.self,    forKey: .emotionScore)
+        category        = try? c.decode(String.self, forKey: .category)
+
+        // Parse ISO8601 date string with and without fractional seconds
+        if let dateStr = try? c.decode(String.self, forKey: .createdAt) {
+            let fmt = ISO8601DateFormatter()
+            fmt.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let d = fmt.date(from: dateStr) {
+                createdAt = d
+            } else {
+                fmt.formatOptions = [.withInternetDateTime]
+                createdAt = fmt.date(from: dateStr)
+            }
+        } else {
+            createdAt = nil
+        }
+    }
+
+    /// Create a minimal TaskItem for navigation to TaskDetailView
+    func toTaskItem() -> TaskItem {
+        TaskItem(
+            id: sessionId,
+            title: title,
+            startTime: createdAt ?? Date(),
+            endTime: nil,
+            duration: 0,
+            tags: [],
+            status: .archived,
+            emotionScore: emotionScore
+        )
+    }
+}
+
+struct MajorEventsResponse: Codable {
+    let events: [MajorEvent]
+    let total: Int
+}
+
 // 任务列表响应
 struct TaskListResponse: Codable {
     let sessions: [TaskItem]

@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Query, Depends, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 from dotenv import load_dotenv
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 配置日志
@@ -694,6 +694,138 @@ async def get_emotion_trend(
     except Exception as e:
         logger.error(f"获取心情趋势失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取心情趋势失败: {str(e)}")
+
+
+@app.get("/api/v1/sessions/major-events")
+async def get_major_events(
+    category: Optional[str] = Query(None, description="workplace|family|personal"),
+    limit: int = Query(10, ge=1, le=50),
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取重大事件列表：查询高置信度技能匹配、高情绪分数或含关键词的会话。
+    纯数据库查询，不调用任何 AI API。
+    """
+    ALLOWED = {"workplace", "family", "personal"}
+    if category and category not in ALLOWED:
+        raise HTTPException(status_code=400, detail="category 必须为 workplace/family/personal")
+
+    kw_list = ['晋升','表扬','认可','突破','疗愈','开心','温馨','感动',
+               '成长','冲突解决','项目完成','谈判','促进','收获','里程碑']
+    keyword_array = "ARRAY[" + ",".join(f"'%{kw}%'" for kw in kw_list) + "]"
+
+    # When category is given: INNER JOIN LATERAL filters skill_executions to that category only.
+    # This guarantees the displayed skill badge belongs to the requested category AND excludes
+    # sessions that have no skill from that category (even if emotion score is high).
+    # When no category: LEFT JOIN LATERAL keeps all sessions regardless of skill presence.
+    if category:
+        lateral_join = """JOIN LATERAL (
+            SELECT se2.skill_id, se2.confidence_score
+            FROM   skill_executions se2
+            JOIN   skills sk2 ON se2.skill_id = sk2.skill_id
+            WHERE  se2.session_id = s.id
+            AND    sk2.category = :category
+            ORDER  BY se2.confidence_score DESC NULLS LAST
+            LIMIT  1
+        ) se ON TRUE
+        JOIN skills sk ON se.skill_id = sk.skill_id"""
+    else:
+        lateral_join = """LEFT JOIN LATERAL (
+            SELECT se2.skill_id, se2.confidence_score
+            FROM   skill_executions se2
+            WHERE  se2.session_id = s.id
+            ORDER  BY se2.confidence_score DESC NULLS LAST
+            LIMIT  1
+        ) se ON TRUE
+        LEFT JOIN skills sk ON se.skill_id = sk.skill_id"""
+
+    sql = text(f"""
+        SELECT
+            s.id::text          AS session_id,
+            s.title,
+            s.created_at,
+            s.emotion_score,
+            sa.scene_category   AS category,
+            sa.strategies,
+            ar.summary          AS ar_summary,
+            se.skill_id,
+            sk.name             AS skill_name,
+            se.confidence_score
+        FROM sessions s
+        LEFT JOIN strategy_analysis sa ON s.id = sa.session_id
+        LEFT JOIN analysis_results  ar ON s.id = ar.session_id
+        {lateral_join}
+        WHERE  s.user_id = :user_id
+        AND    s.status NOT IN ('failed', 'recording', 'analyzing')
+        AND (
+               se.confidence_score > 0.75
+            OR s.emotion_score > 70
+            OR sa.strategies::text ILIKE ANY({keyword_array})
+        )
+        ORDER BY s.created_at DESC
+        LIMIT :limit
+    """)
+
+    params: dict = {"user_id": uuid.UUID(user_id), "limit": limit}
+    if category:
+        params["category"] = category
+
+    try:
+        result = await db.execute(sql, params)
+        rows = result.fetchall()
+
+        events = []
+        for row in rows:
+            title_text = row.title or ""
+            summary_text = ""
+
+            strategies = row.strategies
+            if isinstance(strategies, list) and strategies:
+                first_strat = strategies[0]
+                if isinstance(first_strat, dict):
+                    content = (first_strat.get("content") or "").strip()
+                    lines = [ln for ln in content.split("\n")
+                             if ln.strip() and not ln.lstrip().startswith("#")]
+                    clean = " ".join(lines).strip()
+                    if clean:
+                        candidate = clean
+                        for sep in ["。", "！", "？", ".", "!", "?"]:
+                            idx = clean.find(sep)
+                            if 0 < idx < 60:
+                                candidate = clean[: idx + 1]
+                                break
+                        title_text = candidate[:40]
+                        summary_text = clean[:80] + ("…" if len(clean) > 80 else "")
+
+            if not summary_text and row.ar_summary:
+                ar = row.ar_summary.strip()
+                summary_text = ar[:80] + ("…" if len(ar) > 80 else "")
+
+            if not title_text:
+                title_text = row.title or "对话记录"
+
+            events.append({
+                "session_id":       row.session_id,
+                "title":            title_text,
+                "summary":          summary_text,
+                "created_at":       row.created_at.isoformat() if row.created_at else None,
+                "skill_name":       row.skill_name,
+                "confidence_score": row.confidence_score,
+                "emotion_score":    row.emotion_score,
+                "category":         row.category or category,
+            })
+
+        return APIResponse(
+            code=200,
+            message="success",
+            data={"events": events, "total": len(events)},
+            timestamp=datetime.now().isoformat(),
+        )
+    except Exception as e:
+        logger.error(f"获取重大事件失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取重大事件失败: {str(e)}")
 
 
 @app.get("/api/v1/images/{session_id}/{image_index}")

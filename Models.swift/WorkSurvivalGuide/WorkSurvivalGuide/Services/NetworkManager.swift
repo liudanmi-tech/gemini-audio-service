@@ -715,6 +715,40 @@ class NetworkManager {
         return data
     }
     
+    // 获取重大事件列表（无 AI 调用，纯 DB 查询）
+    func getMajorEvents(category: String, limit: Int = 10) async throws -> [MajorEvent] {
+        if config.useMockData {
+            return []
+        }
+        let decoder = JSONDecoder()
+        let dataResponse = await AF.request(
+            "\(baseURLForRead)/sessions/major-events",
+            parameters: ["category": category, "limit": limit],
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 20 }
+        )
+        .serializingData()
+        .response
+
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        if statusCode != 200 {
+            let message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
+                ?? "请求失败 (HTTP \(statusCode))"
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        let decoded = try decoder.decode(APIResponse<MajorEventsResponse>.self, from: responseData)
+        guard decoded.code == 200, let data = decoded.data else {
+            throw NSError(domain: "NetworkError", code: decoded.code,
+                          userInfo: [NSLocalizedDescriptionKey: decoded.message])
+        }
+        return data.events
+    }
+
     // 获取技能列表
     func getSkillsList(
         category: String? = nil,

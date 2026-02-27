@@ -45,6 +45,11 @@ struct SkillsView: View {
                     }
                     Spacer()
                 } else {
+                    // Constellation banner — fixed above the scrollable list
+                    SkillConstellationView()
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
+
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 28) {
                             Text("已启用智能编排，手动选择将作为偏好参考。")
