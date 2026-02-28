@@ -701,12 +701,12 @@ def generate_image_from_prompt(
     """
     from google.genai.errors import ClientError
 
-    # ── 图片生成模型：Imagen 4 Fast（文本转图，不支持参考图输入）─────────────
-    IMAGE_GEN_MODEL = "imagen-4.0-fast-generate-001"
+    # ── 图片生成模型：gemini-3.1-flash-image-preview（支持多模态参考图）────────
+    IMAGE_GEN_MODEL = "gemini-3.1-flash-image-preview"
 
     client = genai_new.Client(api_key=GEMINI_API_KEY)
 
-    # 构建文本 prompt：风格前缀 + 主体描述
+    # 构建 prompt：风格前缀 + 主体描述
     key = (style_key or "ghibli").strip().lower()
     style_prefix = IMAGE_STYLE_MAP.get(key, IMAGE_STYLE_MAP["ghibli"])
     logger.info(f"[图片生成] style_key={style_key} -> key={key} model={IMAGE_GEN_MODEL}")
@@ -728,7 +728,43 @@ def generate_image_from_prompt(
                 break
         prompt_body = re.sub(r"^宫崎骏[^。]*。?", "", prompt_body).strip()
 
-    full_prompt = style_prefix + prompt_body
+    if reference_images and len(reference_images) >= 1:
+        ref_desc = "第一张图为左侧人物（用户）的参考照片"
+        if len(reference_images) >= 2:
+            ref_desc += "，第二张图为右侧人物（对方）的参考照片"
+        ref_desc += "。请保持人物面部与气质与参考图一致。\n\n"
+        full_prompt = style_prefix + ref_desc + prompt_body
+    else:
+        full_prompt = style_prefix + prompt_body
+
+    contents_list = []
+
+    # ── 风格参考图（按 style_key 自动加载） ────────────────────────────────────
+    _style_ref_dir = Path(__file__).parent / "style_references"
+    _style_ref_path = _style_ref_dir / f"{key}_ref.jpg"
+    if _style_ref_path.exists():
+        try:
+            _style_ref_bytes = _style_ref_path.read_bytes()
+            contents_list.append(genai_types.Part.from_bytes(data=_style_ref_bytes, mime_type="image/jpeg"))
+            full_prompt = "请严格参考第一张图片所呈现的视觉风格（色调、光影、质感、构图）进行图片创作。\n\n" + full_prompt
+            logger.info(f"[图片生成] 已加载风格参考图: {_style_ref_path.name} ({len(_style_ref_bytes)} bytes)")
+        except Exception as _e:
+            logger.warning(f"[图片生成] 风格参考图加载失败 {_style_ref_path}: {_e}")
+
+    # ── 人物档案参考图（最多2张） ────────────────────────────────────────────────
+    if reference_images:
+        for img_bytes, mime_type in reference_images[:2]:
+            contents_list.append(genai_types.Part.from_bytes(data=img_bytes, mime_type=mime_type))
+        logger.info(f"[图片生成] 使用 {len(reference_images)} 张档案照片作为人物参考图")
+    contents_list.append(full_prompt)
+
+    config = genai_types.GenerateContentConfig(
+        response_modalities=["TEXT", "IMAGE"],
+        image_config=genai_types.ImageConfig(
+            aspect_ratio="16:9",
+            image_size="1K",
+        )
+    )
 
     for attempt in range(max_retries):
         try:
@@ -737,32 +773,31 @@ def generate_image_from_prompt(
             else:
                 logger.info(f"========== 开始生成图片 ==========")
 
-            logger.info(f"提示词长度: {len(full_prompt)} 字符")
+            logger.info(f"提示词长度: {len(full_prompt)} 字符 参考图数={len(contents_list)-1}")
             logger.debug(f"提示词内容: {full_prompt[:200]}...")
-            logger.info(f"调用模型: {IMAGE_GEN_MODEL}")
+            logger.info(f"调用模型: {IMAGE_GEN_MODEL} (16:9, 1K)")
 
             start_time = time.time()
-            response = client.models.generate_images(
+            response = client.models.generate_content(
                 model=IMAGE_GEN_MODEL,
-                prompt=full_prompt,
-                config=genai_types.GenerateImagesConfig(
-                    number_of_images=1,
-                    aspect_ratio="4:3",
-                )
+                contents=contents_list,
+                config=config,
             )
             generate_time = time.time() - start_time
 
             logger.info(f"✅ 图片生成成功，耗时: {generate_time:.2f} 秒")
 
             # 提取图片数据
-            if not response.generated_images:
+            image_bytes = None
+            for part in response.parts:
+                if part.inline_data is not None:
+                    image_bytes = part.inline_data.data
+                    logger.info(f"✅ 图片数据提取成功，大小: {len(image_bytes)} 字节")
+                    break
+
+            if image_bytes is None:
                 logger.warning("⚠️ 响应中没有找到图片数据")
                 return None
-            image_bytes = response.generated_images[0].image.image_bytes
-            if not image_bytes:
-                logger.warning("⚠️ 响应图片字节为空")
-                return None
-            logger.info(f"✅ 图片数据提取成功，大小: {len(image_bytes)} 字节")
             
             # 尝试上传到 OSS
             if USE_OSS and oss_bucket is not None:
