@@ -2273,6 +2273,19 @@ async def generate_strategies_async(session_id: str, user_id: str):
             from utils.user_preferences import get_user_image_style
             image_style = get_user_image_style(user_id)
             logger.info(f"[策略流程] 自动生成 image_style={image_style} (来自用户偏好)")
+
+            # 并行启动场景生图（不等待，与技能分析同时进行）
+            from scene_image_generator import generate_scene_images as _gen_scene_images
+            asyncio.create_task(_gen_scene_images(
+                transcript=transcript,
+                style_key=image_style,
+                session_id=session_id,
+                user_id=user_id,
+                gemini_flash_model=GEMINI_FLASH_MODEL,
+                generate_image_fn=generate_image_from_prompt,
+            ))
+            logger.info(f"[策略流程] 场景生图任务已并行启动 session_id={session_id}")
+
             # 调用核心策略生成逻辑
             await _generate_strategies_core(session_id, user_id, transcript, db, image_style=image_style)
             
@@ -2296,6 +2309,36 @@ async def generate_strategies_async(session_id: str, user_id: str):
                     logger.info(f"策略失败，已将 {session_id} 设为 archived，用户可查看对话并重试")
             except Exception as db_err:
                 logger.warning(f"策略失败后更新 status 失败: {db_err}")
+
+
+@app.get("/api/v1/sessions/{session_id}/image-status")
+async def get_image_status(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """查询场景图片生成状态"""
+    from datetime import datetime
+    sess = await db.get(Session, uuid.UUID(session_id))
+    if not sess or str(sess.user_id) != str(user_id):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    sa_q = await db.execute(
+        select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
+    )
+    sa = sa_q.scalar_one_or_none()
+    scene_images = (sa.scene_images or []) if sa else []
+
+    return APIResponse(
+        code=200,
+        message="success",
+        data={
+            "status": sess.image_status or "pending",
+            "total_scenes": len(scene_images),
+            "images": scene_images,
+        },
+        timestamp=datetime.now().isoformat(),
+    )
 
 
 _SKILL_ID_TO_NAME = {
@@ -2546,21 +2589,11 @@ async def _generate_strategies_core(
         
         await db.commit()
         
-        # 进度：生成图片中
-        _iq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
-        _is_obj = _iq.scalar_one_or_none()
-        if _is_obj:
-            _is_obj.analysis_stage = "strategy_images"
-            _is_obj.analysis_stage_detail = None
-            await db.commit()
-
         # 4. 构建 skill_cards（每个技能一张卡片，不再用 compose_results 合并）
         logger.info("[策略流程] 步骤2.3a: 构建 skill_cards...")
         skill_cards = []
         all_visuals_for_compat = []  # 用于兼容 visual_data
         all_strategies_for_compat = []  # 用于兼容 strategies
-        global_image_index = 0
-        reference_images = await _get_profile_reference_images(session_id, user_id, db)
         
         for skill_result in skill_results:
             skill_id = skill_result.get("skill_id", "unknown")
@@ -2614,32 +2647,10 @@ async def _generate_strategies_core(
                 })
                 logger.info(f"  ✅ 防抑郁卡: {skill_id} crisis_alert={mh.get('crisis_alert')} energy={mh.get('defense_energy_pct')}%")
                 continue
-            # 策略技能
+            # 策略技能（图片生成已移至并行的 scene_image_generator，此处直接使用 visual）
             result = skill_result.get("result")
             if result and hasattr(result, "visual") and hasattr(result, "strategies"):
-                updated_visual_list = []
-                for v in result.visual:
-                    try:
-                        image_result = generate_image_from_prompt(
-                            v.image_prompt,
-                            user_id,
-                            session_id,
-                            global_image_index,
-                            reference_images=reference_images if reference_images else None,
-                            style_key=image_style,
-                        )
-                        if image_result:
-                            if image_result.startswith('http://') or image_result.startswith('https://'):
-                                updated_visual = v.model_copy(update={"image_url": image_result})
-                            else:
-                                updated_visual = v.model_copy(update={"image_base64": image_result})
-                            updated_visual_list.append(updated_visual)
-                        else:
-                            updated_visual_list.append(v)
-                    except Exception as e:
-                        logger.error(f"生成图片失败 {skill_id} idx={global_image_index}: {e}")
-                        updated_visual_list.append(v)
-                    global_image_index += 1
+                updated_visual_list = list(result.visual)
                 card_content = {
                     "visual": [v.dict() for v in updated_visual_list],
                     "strategies": [s.dict() for s in result.strategies]
@@ -2698,7 +2709,21 @@ async def _generate_strategies_core(
         
         # 6. 保存策略分析到数据库（若此处或 commit 后报 PG type 114，说明 strategy_analysis 表列为 json 未改为 jsonb）
         logger.info("[策略流程] 步骤2.4: 写入策略分析到数据库(StrategyAnalysis)...")
-        
+
+        # 读取场景生图暂存（若生图先于技能完成）
+        # 使用 populate_existing=True 强制绕过 SQLAlchemy identity map 缓存，确保读到最新 DB 数据
+        _sc_q = await db.execute(
+            select(Session).where(Session.id == uuid.UUID(session_id)).execution_options(populate_existing=True)
+        )
+        _sc_sess = _sc_q.scalar_one_or_none()
+        _scene_imgs = []
+        if _sc_sess and _sc_sess.analysis_stage_detail:
+            _detail = dict(_sc_sess.analysis_stage_detail)
+            _scene_imgs = _detail.pop("scene_images_pending", []) or []
+            _sc_sess.analysis_stage_detail = _detail or None
+            await db.commit()
+            logger.info(f"[策略流程] 步骤2.4: 从 analysis_stage_detail 合并 scene_images {len(_scene_imgs)} 张")
+
         # 构建 applied_skills 列表
         applied_skills = [
             {
@@ -2726,9 +2751,10 @@ async def _generate_strategies_core(
             applied_skills=applied_skills,
             scene_category=primary_scene,
             scene_confidence=primary_scene_confidence,
-            skill_cards=skill_cards
+            skill_cards=skill_cards,
+            scene_images=_scene_imgs,
         )
-        
+
         # 如果已存在则更新，否则创建
         existing_query = await db.execute(
             select(StrategyAnalysis).where(StrategyAnalysis.session_id == uuid.UUID(session_id))
@@ -2741,6 +2767,8 @@ async def _generate_strategies_core(
             existing.scene_category = primary_scene
             existing.scene_confidence = primary_scene_confidence
             existing.skill_cards = skill_cards
+            if _scene_imgs:
+                existing.scene_images = _scene_imgs
             await db.commit()
             logger.info(f"[策略流程] 步骤2.4: 已更新到数据库: {session_id}")
         else:
@@ -2749,7 +2777,9 @@ async def _generate_strategies_core(
             logger.info(f"[策略流程] 步骤2.4: 已保存到数据库: {session_id}")
 
         # 进度：策略就绪，此时才将 status 设为 archived，确保列表「分析完成」时用户点进即能看见全部内容
-        _dq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+        _dq = await db.execute(
+            select(Session).where(Session.id == uuid.UUID(session_id)).execution_options(populate_existing=True)
+        )
         _ds = _dq.scalar_one_or_none()
         if _ds:
             _ds.analysis_stage = "strategy_done"
@@ -2955,14 +2985,15 @@ async def generate_strategies(
             result_dict["scene_confidence"] = scene_confidence
             # 从 skill_cards 提取匹配到的顶级场景列表
             result_dict["matched_scenes"] = _extract_matched_scenes(result_dict.get("skill_cards", []))
-            
+            result_dict["scene_images"] = existing_strategy.scene_images or []
+
             return APIResponse(
                 code=200,
                 message="success",
                 data=result_dict,
                 timestamp=datetime.now().isoformat()
             )
-        
+
         # 如果数据库中没有，则生成新的策略分析
         logger.info(f"[策略流程] 数据库中没有策略分析，开始生成: {session_id}")
         
@@ -3028,6 +3059,7 @@ async def generate_strategies(
             result_dict["scene_category"] = scene_category
             result_dict["scene_confidence"] = scene_confidence
             result_dict["matched_scenes"] = _extract_matched_scenes(result_dict.get("skill_cards", []))
+            result_dict["scene_images"] = getattr(strategy_after, "scene_images", None) or []
         else:
             logger.warning(f"未找到策略分析数据，无法返回技能信息: {session_id}")
             result_dict["applied_skills"] = []
@@ -3035,7 +3067,8 @@ async def generate_strategies(
             result_dict["scene_confidence"] = None
             result_dict["skill_cards"] = []
             result_dict["matched_scenes"] = []
-        
+            result_dict["scene_images"] = []
+
         return APIResponse(
             code=200,
             message="success",

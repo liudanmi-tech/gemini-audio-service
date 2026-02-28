@@ -223,6 +223,43 @@ struct SkillCardContent: Codable {
     }
 }
 
+// 场景图片模型（对应后端 scene_images，由 scene_image_generator 并行生成）
+struct SceneImage: Codable, Identifiable {
+    let index: Int
+    let sceneDescription: String
+    let imageUrl: String?
+    let imageBase64: String?
+
+    var id: String { "\(index)" }
+
+    enum CodingKeys: String, CodingKey {
+        case index
+        case sceneDescription = "scene_description"
+        case imageUrl = "image_url"
+        case imageBase64 = "image_base64"
+    }
+
+    /// 获取可访问的图片 URL（将私有 OSS URL 转换为后端 API 代理 URL）
+    /// baseURL 示例: "http://47.79.254.213/api/v1"
+    func getAccessibleImageURL(baseURL: String) -> String? {
+        guard let urlString = imageUrl, !urlString.isEmpty else { return nil }
+        // 如果已经是后端 API URL，直接返回
+        if urlString.contains("/api/v1/images/") { return urlString }
+        // OSS URL 格式: images/{user_id}/{session_id}/{image_index}.png
+        if urlString.contains("/images/"), let pathRange = urlString.range(of: "/images/") {
+            let path = String(urlString[pathRange.upperBound...])
+            let parts = path.components(separatedBy: "/")
+            if parts.count >= 3 {
+                let sessionId = parts[1]
+                let indexPart = parts[2].replacingOccurrences(of: ".png", with: "")
+                let base = baseURL.hasSuffix("/") ? String(baseURL.dropLast()) : baseURL
+                return "\(base)/images/\(sessionId)/\(indexPart)"
+            }
+        }
+        return urlString
+    }
+}
+
 // 策略分析响应模型
 struct StrategyAnalysisResponse: Codable {
     let visual: [VisualData]
@@ -232,7 +269,8 @@ struct StrategyAnalysisResponse: Codable {
     let sceneConfidence: Double?
     let skillCards: [SkillCard]?
     let matchedScenes: [String]?
-    
+    let sceneImages: [SceneImage]?
+
     enum CodingKeys: String, CodingKey {
         case visual
         case strategies
@@ -241,9 +279,10 @@ struct StrategyAnalysisResponse: Codable {
         case sceneConfidence = "scene_confidence"
         case skillCards = "skill_cards"
         case matchedScenes = "matched_scenes"
+        case sceneImages = "scene_images"
     }
-    
-    init(visual: [VisualData], strategies: [StrategyItem], appliedSkills: [AppliedSkill]? = nil, sceneCategory: String? = nil, sceneConfidence: Double? = nil, skillCards: [SkillCard]? = nil, matchedScenes: [String]? = nil) {
+
+    init(visual: [VisualData], strategies: [StrategyItem], appliedSkills: [AppliedSkill]? = nil, sceneCategory: String? = nil, sceneConfidence: Double? = nil, skillCards: [SkillCard]? = nil, matchedScenes: [String]? = nil, sceneImages: [SceneImage]? = nil) {
         self.visual = visual
         self.strategies = strategies
         self.appliedSkills = appliedSkills
@@ -251,8 +290,9 @@ struct StrategyAnalysisResponse: Codable {
         self.sceneConfidence = sceneConfidence
         self.skillCards = skillCards
         self.matchedScenes = matchedScenes
+        self.sceneImages = sceneImages
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         visual = try container.decode([VisualData].self, forKey: .visual)
@@ -263,6 +303,7 @@ struct StrategyAnalysisResponse: Codable {
             ?? (try? container.decode(Float.self, forKey: .sceneConfidence)).map { Double($0) }
         skillCards = try? container.decode([SkillCard].self, forKey: .skillCards)
         matchedScenes = try? container.decode([String].self, forKey: .matchedScenes)
+        sceneImages = try? container.decode([SceneImage].self, forKey: .sceneImages)
     }
 }
 

@@ -44,9 +44,9 @@ class AppConfig {
             return v
         }
         #if DEBUG
-        return true   // 开发默认开启北京读
+        return true
         #else
-        return true   // 生产默认开启
+        return true
         #endif
     }
     

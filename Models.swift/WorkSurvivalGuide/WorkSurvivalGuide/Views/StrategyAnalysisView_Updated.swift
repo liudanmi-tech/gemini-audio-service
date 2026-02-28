@@ -138,6 +138,13 @@ struct StrategyAnalysisView_Updated: View {
                         return []
                     }()
                     if !cardsToShow.isEmpty {
+                        // 场景图片轮播（置于技能卡片之上）
+                        let sceneImgs = analysis.sceneImages ?? []
+                        if !sceneImgs.isEmpty {
+                            SceneRestoreImageCarouselView(sceneImages: sceneImgs, baseURL: baseURL)
+                                .padding(.horizontal, 0.69)
+                                .padding(.top, 0)
+                        }
                         SkillCardsTabView(cards: cardsToShow, baseURL: baseURL)
                             .padding(.horizontal, 0.69)
                             .padding(.top, 0)
@@ -157,11 +164,9 @@ struct StrategyAnalysisView_Updated: View {
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
                             }
-                            if !analysis.visual.isEmpty {
-                                SceneRestoreImageCarouselView(
-                                    visualList: analysis.visual,
-                                    baseURL: baseURL
-                                )
+                            let legacySceneImgs = analysis.sceneImages ?? []
+                            if !legacySceneImgs.isEmpty {
+                                SceneRestoreImageCarouselView(sceneImages: legacySceneImgs, baseURL: baseURL)
                                 .padding(.horizontal, 0.69)
                                 .padding(.top, 0)
                             }
@@ -180,14 +185,10 @@ struct StrategyAnalysisView_Updated: View {
         .frame(maxWidth: .infinity, alignment: .leading) // 确保填充宽度但不超出父容器
         .background(
             Group {
-                if let analysis = strategyAnalysis {
-                    let firstVisual: VisualData? = analysis.visual.first
-                        ?? analysis.skillCards?.compactMap { $0.content?.strategyContent?.visual?.first }.first
-                    if let v = firstVisual {
-                        FrostedGlassDiffractionBackground(visualData: v, baseURL: baseURL)
-                    } else {
-                        AppColors.cardBackground
-                    }
+                if let analysis = strategyAnalysis,
+                   let firstScene = analysis.sceneImages?.first,
+                   let imageUrl = firstScene.getAccessibleImageURL(baseURL: baseURL) {
+                    FrostedGlassDiffractionBackground(imageUrl: imageUrl)
                 } else {
                     AppColors.cardBackground
                 }
@@ -270,6 +271,7 @@ struct StrategyAnalysisView_Updated: View {
                     print("✅ [StrategyAnalysisView] 策略分析加载成功")
                     print("  关键时刻数量: \(response.visual.count)")
                     print("  策略数量: \(response.strategies.count)")
+                    print("  场景图片数量: \(response.sceneImages?.count ?? -1) (nil=\(response.sceneImages == nil))")
                     
                     cacheManager.cacheStrategy(response, for: sessionId)
                     
@@ -376,12 +378,6 @@ struct SkillCardsTabView: View {
         cards.filter { $0.sceneCategory == selectedScene }
     }
     
-    private var currentSceneVisuals: [VisualData] {
-        currentSceneCards
-            .filter { $0.contentType == "strategy" }
-            .flatMap { $0.content?.visual ?? [] }
-    }
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if cards.isEmpty {
@@ -393,15 +389,6 @@ struct SkillCardsTabView: View {
                 // 顶部：场景分类 Tab（职场/家庭/个人），始终显示命中的类目
                 if !scenes.isEmpty {
                     SceneTabBar(scenes: scenes, selectedScene: $selectedScene)
-                }
-                
-                // 策略图轮播（合并当前场景所有策略卡的 visual，始终可见）
-                if !currentSceneVisuals.isEmpty {
-                    SceneRestoreImageCarouselView(
-                        visualList: currentSceneVisuals,
-                        baseURL: baseURL
-                    )
-                    .padding(.horizontal, 0.69)
                 }
                 
                 // 维度手风琴面板
@@ -776,8 +763,11 @@ struct StrategyCardContent: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let visual = content.visual, !visual.isEmpty {
-                SceneRestoreImageCarouselView(visualList: visual, baseURL: baseURL)
+            // 仅当 visual 中有实际图片时显示（skill_cards 新架构下 visual 不含图片）
+            let visualWithImages = content.visual?.filter { $0.imageUrl != nil || $0.imageBase64 != nil } ?? []
+            if !visualWithImages.isEmpty {
+                // 旧架构兼容：若 visual 含图片则仍可展示（当前新架构下此分支不会触发）
+                let _ = visualWithImages  // suppress unused warning
             }
             if let strategies = content.strategies, !strategies.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1018,24 +1008,17 @@ struct StrategyPouchSheet: View {
 
 // 毛玻璃衍射底纹（场景图强模糊，用作情商亮点区域背景）
 struct FrostedGlassDiffractionBackground: View {
-    let visualData: VisualData
-    let baseURL: String
-    
+    let imageUrl: String?
+
     var body: some View {
         Group {
-            if let imageURL = visualData.getAccessibleImageURL(baseURL: baseURL) {
+            if let imageUrl = imageUrl {
                 ImageLoaderView(
-                    imageUrl: imageURL,
-                    imageBase64: visualData.imageBase64,
+                    imageUrl: imageUrl,
+                    imageBase64: nil,
                     placeholder: "",
                     contentMode: .fill
                 )
-            } else if let b64 = visualData.imageBase64, !b64.isEmpty,
-                      let data = Data(base64Encoded: b64),
-                      let uiImage = UIImage(data: data) {
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
             } else {
                 Color.clear
             }
@@ -1052,21 +1035,21 @@ struct FrostedGlassDiffractionBackground: View {
 // 场景还原图片轮播（支持左右滑动查看多张）
 // 图片生成使用 4:3 比例，此处与后端一致避免拉伸/裁剪
 struct SceneRestoreImageCarouselView: View {
-    let visualList: [VisualData]
-    let baseURL: String
+    let sceneImages: [SceneImage]
+    var baseURL: String = ""
     @State private var currentIndex: Int = 0
     @State private var showFullScreen = false
     @State private var fullScreenInitialIndex: Int = 0
     private let imageAspectRatio: CGFloat = 4.0 / 3.0
-    
+
     var body: some View {
         GeometryReader { geo in
             let width = geo.size.width
             let height = width / imageAspectRatio
             TabView(selection: $currentIndex) {
-                ForEach(Array(visualList.enumerated()), id: \.element.id) { index, visualData in
+                ForEach(Array(sceneImages.enumerated()), id: \.element.id) { index, sceneImage in
                     SceneRestoreImageView(
-                        visualData: visualData,
+                        sceneImage: sceneImage,
                         baseURL: baseURL,
                         onTap: {
                             fullScreenInitialIndex = index
@@ -1077,7 +1060,7 @@ struct SceneRestoreImageCarouselView: View {
                     .tag(index)
                 }
             }
-            .tabViewStyle(PageTabViewStyle(indexDisplayMode: visualList.count > 1 ? .automatic : .never))
+            .tabViewStyle(PageTabViewStyle(indexDisplayMode: sceneImages.count > 1 ? .automatic : .never))
             .frame(width: width, height: height)
             .onAppear {
                 UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(red: 94/255, green: 124/255, blue: 139/255, alpha: 1)
@@ -1086,7 +1069,7 @@ struct SceneRestoreImageCarouselView: View {
         }
         .aspectRatio(imageAspectRatio, contentMode: .fit)
         .fullScreenCover(isPresented: $showFullScreen) {
-            let items = visualList.map { (imageUrl: $0.getAccessibleImageURL(baseURL: baseURL), imageBase64: $0.imageBase64) }
+            let items = sceneImages.map { (imageUrl: $0.getAccessibleImageURL(baseURL: baseURL), imageBase64: $0.imageBase64) }
             FullScreenImageViewer(
                 items: items,
                 initialIndex: fullScreenInitialIndex,
@@ -1100,13 +1083,13 @@ struct SceneRestoreImageCarouselView: View {
 
 // 场景还原图片视图（根据Figma设计）- 点击全屏，长按保存
 struct SceneRestoreImageView: View {
-    let visualData: VisualData
-    let baseURL: String
+    let sceneImage: SceneImage
+    var baseURL: String = ""
     var onTap: (() -> Void)?
-    
+
     @ViewBuilder
     private var imageFromBase64Placeholder: some View {
-        if let b64 = visualData.imageBase64, !b64.isEmpty,
+        if let b64 = sceneImage.imageBase64, !b64.isEmpty,
            let data = Data(base64Encoded: b64),
            let uiImage = UIImage(data: data) {
             Image(uiImage: uiImage)
@@ -1118,15 +1101,15 @@ struct SceneRestoreImageView: View {
             Color(hex: "#F9FAFB")
         }
     }
-    
+
     var body: some View {
         Button(action: { onTap?() }) {
             ZStack(alignment: .bottomLeading) {
                 // 图片区域：严格限制在占位区内，填满且不超出
                 Group {
-                if let imageURL = visualData.getAccessibleImageURL(baseURL: baseURL) {
-                    ImageLoaderView(imageUrl: imageURL, imageBase64: visualData.imageBase64, placeholder: "加载中", contentMode: .fill)
-                } else if let b64 = visualData.imageBase64, !b64.isEmpty {
+                if let imageUrl = sceneImage.getAccessibleImageURL(baseURL: baseURL) {
+                    ImageLoaderView(imageUrl: imageUrl, imageBase64: sceneImage.imageBase64, placeholder: "加载中", contentMode: .fill)
+                } else if let b64 = sceneImage.imageBase64, !b64.isEmpty {
                     imageFromBase64Placeholder
                 } else {
                     Color(hex: "#F9FAFB")
@@ -1135,7 +1118,7 @@ struct SceneRestoreImageView: View {
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
             .aspectRatio(4/3, contentMode: .fill)
             .clipped()
-            
+
             // 底部渐变遮罩
             LinearGradient(
                 gradient: Gradient(colors: [
@@ -1159,7 +1142,7 @@ struct SceneRestoreImageView: View {
                     .background(Color.black.opacity(0.5)) // 根据Figma: rgba(0, 0, 0, 0.5)
                     .cornerRadius(4) // 根据Figma: borderRadius 4px
                 
-                Text("\"\(visualData.context)\"")
+                Text("\"\(sceneImage.sceneDescription)\"")
                     .font(.system(size: 18, weight: .bold, design: .rounded)) // Nunito 700, 18px
                     .foregroundColor(.white)
                     .shadow(color: Color.black.opacity(0.12), radius: 3, x: 0, y: 0) // 根据Figma: boxShadow

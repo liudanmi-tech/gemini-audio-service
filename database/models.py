@@ -44,6 +44,7 @@ class Session(Base):
     tags = Column(ARRAY(String))
     audio_url = Column(String(500), nullable=True)   # 原音频 OSS URL，供剪切与声纹使用
     audio_path = Column(String(500), nullable=True)  # 原音频本地路径（无 OSS 时使用）
+    image_status = Column(String(20), default="pending")  # pending|generating|completed|failed
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -87,6 +88,7 @@ class StrategyAnalysis(Base):
     scene_category = Column(String(50))  # 识别的场景类别
     scene_confidence = Column(Float)  # 场景识别置信度（与文档/迁移一致）
     skill_cards = Column(JSONB, default=[])  # 每技能一张卡片 [{skill_id, skill_name, content_type, content}, ...]
+    scene_images = Column(JSONB, default=[])  # 场景图片列表 [{scene_description, image_url, index}, ...]
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

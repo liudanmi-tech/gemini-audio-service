@@ -479,7 +479,7 @@ class RecordingViewModel: ObservableObject {
             }
             
             var pollCount = 0
-            let maxPolls = 140  // 最多轮询 140 次（含策略阶段，约 7 分钟）
+            let maxPolls = 300  // 最多轮询 300 次（含策略阶段，约 15 分钟；大文件分析可达 13 分钟）
             var archivedPollCount = 0  // 达到 archived 后的轮询次数，用于兼容旧服务端
             let maxArchivedPolls = 25  // archived 后最多再轮询 25 次（约 75 秒）等待策略
             var summaryFetched = false  // 避免重复拉取 summary（matching_profiles 或 strategy_* 时拉一次）
