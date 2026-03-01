@@ -28,6 +28,7 @@ struct TaskItem: Codable, Identifiable {
     let emotionScore: Int?            // 情绪分数 (0-100)
     let speakerCount: Int?            // 说话人数
     let summary: String?             // 对话总结（可选）
+    let cardTitle: String?           // 对话核心主题短标题（≤30字，可选）
     let coverImageUrl: String?        // 策略分析首图 URL（可选）
     /// 分析进度文案（仅本地展示，列表 API 不返回；如「上传中」「转写音频…」「匹配了 2 个技能」）
     let progressDescription: String?
@@ -44,6 +45,7 @@ struct TaskItem: Codable, Identifiable {
         case emotionScore = "emotion_score"
         case speakerCount = "speaker_count"
         case summary
+        case cardTitle = "card_title"
         case coverImageUrl = "cover_image_url"
         case progressDescription = "progress_description"
     }
@@ -60,6 +62,7 @@ struct TaskItem: Codable, Identifiable {
         emotionScore: Int? = nil,
         speakerCount: Int? = nil,
         summary: String? = nil,
+        cardTitle: String? = nil,
         coverImageUrl: String? = nil,
         progressDescription: String? = nil
     ) {
@@ -73,6 +76,7 @@ struct TaskItem: Codable, Identifiable {
         self.emotionScore = emotionScore
         self.speakerCount = speakerCount
         self.summary = summary
+        self.cardTitle = cardTitle
         self.coverImageUrl = coverImageUrl
         self.progressDescription = progressDescription
     }
@@ -102,6 +106,7 @@ struct TaskItem: Codable, Identifiable {
         emotionScore = try? container.decode(Int.self, forKey: .emotionScore)
         speakerCount = try? container.decode(Int.self, forKey: .speakerCount)
         summary = try? container.decode(String.self, forKey: .summary)
+        cardTitle = try? container.decode(String.self, forKey: .cardTitle)
         coverImageUrl = try? container.decode(String.self, forKey: .coverImageUrl)
         progressDescription = try? container.decodeIfPresent(String.self, forKey: .progressDescription) ?? nil
     }

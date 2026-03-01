@@ -68,6 +68,7 @@ class AnalysisResult(Base):
     transcript = Column(Text)
     call1_result = Column(JSONB)  # Call #1 分析结果
     speaker_mapping = Column(JSONB, nullable=True)  # Speaker_0/Speaker_1 -> profile_id 映射
+    card_title = Column(String(100), nullable=True)  # 对话核心主题短标题（≤30字）
     conversation_summary = Column(Text, nullable=True)  # 「谁和谁对话」总结（第二次 Gemini）
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

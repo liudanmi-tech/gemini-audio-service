@@ -85,14 +85,13 @@ struct TaskCardView: View {
                 Spacer()
                 VStack(alignment: .leading, spacing: 4) {
                     if task.status == .archived {
-                        ScrollView(.vertical, showsIndicators: false) {
-                            Text(task.summary ?? task.overlaySummary)
-                                .font(.system(size: 10, weight: .regular, design: .rounded))
-                                .foregroundColor(.white.opacity(0.9))
-                                .multilineTextAlignment(.leading)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxHeight: 80)
+                        Text(task.cardTitle ?? task.refinedTitle)
+                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .foregroundColor(.white.opacity(0.95))
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     HStack {
                         Text(formattedTime)

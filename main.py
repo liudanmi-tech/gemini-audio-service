@@ -358,6 +358,7 @@ class Call1Response(BaseModel):
     mood_score: int  # 情绪分数 (0-100)
     stats: dict  # 统计信息，包含 sigh 和 laugh
     summary: str  # 对话总结
+    card_title: Optional[str] = None  # 对话核心主题短标题（≤30字）
     transcript: List[TranscriptItem]  # 转录列表
 
 # Call #2 数据模型（策略分析）- 从 schemas 导入，避免与 skills 循环依赖
@@ -1026,13 +1027,15 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str, sessi
 
 4. **summary**: (String) 对对话内容、核心矛盾及情绪转折点进行精炼总结（100-200字）。
 
-5. **transcript**: (Array) 按时间顺序包含所有对话，每个对话包含：
+5. **card_title**: (String) 对话核心主题的简短标题，不超过15个汉字（30字以内），直接点明本次对话的关键议题或核心矛盾，适合在卡片上单独展示。
+
+6. **transcript**: (Array) 按时间顺序包含所有对话，每个对话包含：
    - speaker: 说话人标识（如：Speaker_0, Speaker_1，其中Speaker_1为用户）
    - text: 对话内容（完整原话）
    - timestamp: 时间戳（格式："MM:SS"，如"00:01"）
    - is_me: (Boolean) 是否为用户说的（Speaker_1为true，其他为false）
 
-6. **risks**: (Array) 关键风险点列表
+7. **risks**: (Array) 关键风险点列表
 
 请务必以纯 JSON 格式返回，不要包含 Markdown 标记。
 
@@ -1042,6 +1045,7 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str, sessi
   "sigh_count": 2,
   "laugh_count": 5,
   "summary": "对话气氛整体缓和，但在周末加班的截止日期问题上存在明显的隐形拉锯，用户试图防御个人时间。",
+  "card_title": "加班边界的隐形拉锯",
   "transcript": [
     {
       "speaker": "Speaker_0",
@@ -1312,6 +1316,7 @@ class TaskItem(BaseModel):
     emotion_score: Optional[int] = None
     speaker_count: Optional[int] = None
     summary: Optional[str] = None  # 对话总结，来自 AnalysisResult
+    card_title: Optional[str] = None  # 对话核心主题短标题（≤30字），来自 AnalysisResult
     cover_image_url: Optional[str] = None  # 策略分析首图 URL，来自 StrategyAnalysis.visual_data[0]
 
 
@@ -1610,11 +1615,13 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 emotion_score = call1_result.mood_score
                 stats = call1_result.stats
                 summary = call1_result.summary
+                card_title = call1_result.card_title or ""
                 transcript = [t.dict() for t in call1_result.transcript]
             else:
                 emotion_score = calculate_emotion_score(result)
                 stats = {"sigh": 0, "laugh": 0}
                 summary = ""
+                card_title = ""
                 transcript = []
             
             tags = generate_tags(result)
@@ -1655,6 +1662,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                 dialogues=[d.dict() for d in result.dialogues],
                 risks=result.risks,
                 summary=summary,
+                card_title=card_title or None,
                 mood_score=emotion_score,
                 stats=stats,
                 transcript=json.dumps(transcript, ensure_ascii=False) if transcript else None,
@@ -1925,12 +1933,15 @@ async def get_task_list(
         
         session_ids = [str(s.id) for s in sessions]
         summary_map = {}
+        card_title_map = {}
         cover_map = {}
-        
+
         if session_ids:
             ar_result = await db.execute(select(AnalysisResult).where(AnalysisResult.session_id.in_([uuid.UUID(sid) for sid in session_ids])))
             for ar in ar_result.scalars().all():
                 summary_map[str(ar.session_id)] = ar.summary
+                if ar.card_title:
+                    card_title_map[str(ar.session_id)] = ar.card_title
             sa_result = await db.execute(select(StrategyAnalysis).where(StrategyAnalysis.session_id.in_([uuid.UUID(sid) for sid in session_ids])))
             api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213")
             api_base = api_base.rstrip("/")
@@ -1969,6 +1980,7 @@ async def get_task_list(
                 emotion_score=s.emotion_score,
                 speaker_count=s.speaker_count,
                 summary=summary_map.get(str(s.id)),
+                card_title=card_title_map.get(str(s.id)),
                 cover_image_url=cover_map.get(str(s.id))
             )
             for s in sessions
