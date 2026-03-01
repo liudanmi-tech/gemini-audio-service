@@ -54,62 +54,16 @@ private struct StyleCard: View {
     let isSelected: Bool
     let onSelect: () -> Void
 
-    @State private var imageLoadFailed = false
-
-    private var thumbnailURL: String {
-        let base = NetworkManager.shared.getBaseURL()
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        // getBaseURL() 返回 ".../api/v1"，去掉末尾的 /api/v1 再拼
-        let apiBase = base.hasSuffix("/api/v1") ? String(base.dropLast(7)) : base
-        return "\(apiBase)/api/v1/style-thumbnails/\(style.id)"
-    }
-
     var body: some View {
         Button(action: onSelect) {
             VStack(alignment: .leading, spacing: 8) {
-                // 风格示例图：有缩略图时展示真实图片，失败降级到渐变色
-                ZStack {
-                    // 渐变色底（始终渲染作为背景/fallback）
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: [style.accentColor, style.accentColor.opacity(0.6)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-
-                    if !imageLoadFailed {
-                        AsyncImage(url: URL(string: thumbnailURL)) { phase in
-                            switch phase {
-                            case .success(let image):
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                                    .clipped()
-                            case .failure:
-                                Color.clear.onAppear { imageLoadFailed = true }
-                            default:
-                                Color.clear
-                            }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
-                    }
-
-                    // 风格名称叠加（仅在无缩略图时或加载中显示）
-                    if imageLoadFailed {
-                        Text(style.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
-                    }
-                }
-                .aspectRatio(4/3, contentMode: .fit)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 3)
-                )
+                StyleThumbnailView(styleId: style.id, accentColor: style.accentColor)
+                    .aspectRatio(4/3, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 3)
+                    )
 
                 Text(style.name)
                     .font(.system(size: 14, weight: .medium))
@@ -125,5 +79,56 @@ private struct StyleCard: View {
             )
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// 风格缩略图：渐变色为底，图片加载成功后覆盖；使用 ImageCacheManager 缓存，反复打开不闪烁
+private struct StyleThumbnailView: View {
+    let styleId: String
+    let accentColor: Color
+
+    @State private var loadedImage: UIImage?
+
+    private var thumbnailURL: String {
+        let base = NetworkManager.shared.getBaseURL()
+        let apiBase = base.hasSuffix("/api/v1") ? String(base.dropLast(7)) : base
+        return "\(apiBase)/api/v1/style-thumbnails/\(styleId)"
+    }
+
+    var body: some View {
+        ZStack {
+            // 渐变色底：始终存在，加载中和无缩略图时作为最终展示
+            LinearGradient(
+                colors: [accentColor, accentColor.opacity(0.6)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            // 图片层：加载成功后无动画覆盖渐变
+            if let img = loadedImage {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .clipped()
+            }
+        }
+        .onAppear(perform: loadThumbnail)
+    }
+
+    private func loadThumbnail() {
+        guard loadedImage == nil else { return }
+        let url = thumbnailURL
+        // 命中内存缓存直接显示，无网络请求
+        if let cached = ImageCacheManager.shared.image(for: url) {
+            loadedImage = cached
+            return
+        }
+        // 缓存未命中：后台下载后写缓存
+        guard let requestURL = URL(string: url) else { return }
+        URLSession.shared.dataTask(with: requestURL) { data, _, _ in
+            guard let data = data, let img = UIImage(data: data) else { return }
+            ImageCacheManager.shared.cache(img, for: url)
+            DispatchQueue.main.async { loadedImage = img }
+        }.resume()
     }
 }
