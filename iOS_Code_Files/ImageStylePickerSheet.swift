@@ -123,7 +123,7 @@ private struct StyleThumbnailView: View {
             loadedImage = cached
             return
         }
-        // 缓存未命中：后台下载后写缓存
+        // 缓存未命中：后台下载，降采样后写缓存（节省内存）
         guard let requestURL = URL(string: url) else { return }
         URLSession.shared.dataTask(with: requestURL) { data, _, _ in
             guard let data = data, let img = UIImage(data: data) else { return }
