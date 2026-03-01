@@ -48,7 +48,8 @@ class AbilityRadarViewModel: ObservableObject {
 struct AbilityRadarView: View {
     @ObservedObject private var vm = AbilityRadarViewModel.shared
     @State private var selectedAbility: AbilityScore? = nil
-    @State private var showBadgeAlert = false
+    @State private var badgeQueue: [AbilityBadge] = []
+    @State private var currentBadge: AbilityBadge? = nil
 
     var body: some View {
         ZStack {
@@ -99,7 +100,6 @@ struct AbilityRadarView: View {
                 .padding(.bottom, 6)
 
                 if vm.abilities.isEmpty && !vm.isLoading {
-                    // 空状态
                     VStack(spacing: 8) {
                         Text("暂无能力数据")
                             .font(.system(size: 13, design: .rounded))
@@ -111,7 +111,6 @@ struct AbilityRadarView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 30)
                 } else {
-                    // 雷达图
                     GeometryReader { geo in
                         RadarChartCanvas(
                             abilities: vm.abilities,
@@ -125,14 +124,12 @@ struct AbilityRadarView: View {
                     .padding(.horizontal, 8)
                 }
 
-                // 分隔线
                 Rectangle()
                     .fill(Color.white.opacity(0.07))
                     .frame(height: 0.5)
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
 
-                // 底部快览（最高分能力）
                 if let top = vm.abilities.max(by: { $0.score < $1.score }) {
                     HStack(spacing: 6) {
                         Text(top.icon)
@@ -156,16 +153,23 @@ struct AbilityRadarView: View {
         .padding(.horizontal, 16)
         .onAppear { vm.load() }
         .onChange(of: vm.newBadges.count) { _ in
-            if !vm.newBadges.isEmpty { showBadgeAlert = true }
+            guard !vm.newBadges.isEmpty else { return }
+            badgeQueue = vm.newBadges
+            if currentBadge == nil {
+                currentBadge = badgeQueue.removeFirst()
+            }
         }
         .sheet(item: $selectedAbility) { ability in
             AbilityDetailSheet(ability: ability)
         }
-        .alert("解锁新成就！", isPresented: $showBadgeAlert) {
-            Button("查看", role: .none) {}
-        } message: {
-            if let badge = vm.newBadges.first {
-                Text("\(badge.icon) \(badge.name)\n\(badge.desc)")
+        .fullScreenCover(item: $currentBadge) { badge in
+            BadgeUnlockView(badge: badge) {
+                currentBadge = nil
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    if !badgeQueue.isEmpty {
+                        currentBadge = badgeQueue.removeFirst()
+                    }
+                }
             }
         }
     }
@@ -295,5 +299,131 @@ private struct RadarChartCanvas: View {
         case "execution": return Color(hex: "#FB923C")
         default:          return Color(hex: "#00D4FF")
         }
+    }
+}
+
+// MARK: - 勋章解锁全屏动画
+
+struct BadgeUnlockView: View {
+    let badge: AbilityBadge
+    let onDismiss: () -> Void
+
+    @State private var rippleScale: CGFloat = 0.01
+    @State private var rippleOpacity: Double = 0.9
+    @State private var badgeScale: CGFloat = 0.1
+    @State private var badgeRotation: Double = -180.0
+    @State private var badgeBlur: Double = 20.0
+    @State private var contentOpacity: Double = 0
+
+    private let cyan = Color(hex: "#00D4FF")
+
+    var body: some View {
+        ZStack {
+            // 深空背景
+            Color(hex: "#050B1A")
+                .ignoresSafeArea()
+
+            // AirDrop 涟漪（3圈）
+            ForEach(0..<3, id: \.self) { i in
+                Circle()
+                    .stroke(
+                        cyan.opacity(rippleOpacity / Double(i + 1)),
+                        lineWidth: 1.5 - CGFloat(i) * 0.3
+                    )
+                    .frame(width: 180 + CGFloat(i * 70),
+                           height: 180 + CGFloat(i * 70))
+                    .scaleEffect(rippleScale)
+            }
+
+            VStack(spacing: 24) {
+                Spacer()
+
+                // 勋章图标
+                ZStack {
+                    Circle()
+                        .fill(cyan.opacity(0.1))
+                        .frame(width: 140, height: 140)
+                        .blur(radius: 20)
+                    Circle()
+                        .stroke(cyan.opacity(0.25), lineWidth: 1)
+                        .frame(width: 120, height: 120)
+                    Text(badge.icon)
+                        .font(.system(size: 64))
+                        .blur(radius: badgeBlur)
+                        .rotationEffect(.degrees(badgeRotation))
+                        .scaleEffect(badgeScale)
+                }
+
+                // 文字
+                VStack(spacing: 10) {
+                    Text("🎖️ 解锁成就")
+                        .font(.system(size: 13, weight: .medium, design: .rounded))
+                        .foregroundColor(cyan.opacity(0.7))
+
+                    Text(badge.name)
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+
+                    Text(badge.desc)
+                        .font(.system(size: 14, design: .rounded))
+                        .foregroundColor(.white.opacity(0.55))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 40)
+                }
+                .opacity(contentOpacity)
+
+                Spacer()
+
+                // 按钮
+                Button {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        badgeScale = 0.8
+                        contentOpacity = 0
+                    }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { onDismiss() }
+                } label: {
+                    Text("精彩！")
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundColor(.white)
+                        .frame(width: 160, height: 48)
+                        .background(
+                            Capsule()
+                                .fill(LinearGradient(
+                                    colors: [cyan.opacity(0.35), cyan.opacity(0.15)],
+                                    startPoint: .leading, endPoint: .trailing
+                                ))
+                                .overlay(Capsule().stroke(cyan.opacity(0.4), lineWidth: 1))
+                        )
+                }
+                .opacity(contentOpacity)
+                .padding(.bottom, 60)
+            }
+        }
+        .onAppear {
+            // Haptic 三连
+            [0.05, 0.25, 0.45].forEach { delay in
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    UIImpactFeedbackGenerator(style: .heavy).impactOccurred()
+                }
+            }
+            // 涟漪扩散
+            withAnimation(.easeOut(duration: 0.9)) {
+                rippleScale = 1.3
+                rippleOpacity = 0
+            }
+            // 勋章入场：模糊→清晰 + 旋转
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.62).delay(0.15)) {
+                badgeScale = 1.0
+                badgeRotation = 0
+            }
+            withAnimation(.easeOut(duration: 0.4).delay(0.2)) {
+                badgeBlur = 0
+            }
+            // 文字淡入
+            withAnimation(.easeIn(duration: 0.35).delay(0.5)) {
+                contentOpacity = 1
+            }
+        }
+        .preferredColorScheme(.dark)
     }
 }

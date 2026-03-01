@@ -2,7 +2,9 @@
 //  SkillConstellationView.swift
 //  WorkSurvivalGuide
 //
-//  可滑动星图卡片：Tab0=全局六维雷达，Tab1-3=域专属雷达（职场/家庭/个人）
+//  可滑动星图卡片：3个域专属雷达（职场/家庭/个人）
+//  点击节点 → 全屏星域详情（预选对应能力）
+//  点击非节点区域 → 全屏星域详情（默认第一个节点）
 //
 
 import SwiftUI
@@ -10,10 +12,11 @@ import SwiftUI
 // MARK: - 雷达维度数据结构
 
 private struct RadarDimension {
-    let name: String        // 维度名称（中文）
-    let icon: String        // emoji
-    let score: Double       // 0-100，来自 AbilityScore 或派生
-    let color: Color        // 节点颜色
+    let name: String
+    let icon: String
+    let score: Double
+    let color: Color
+    let abilityType: String   // 对应 AbilityScore.type，用于跳转详情时预选
 }
 
 // MARK: - 页面数据模型
@@ -53,37 +56,29 @@ struct SkillConstellationView: View {
         }
     }
 
-    private var totalPages: Int { 1 + pages.count }
-
     var body: some View {
         VStack(spacing: 8) {
             TabView(selection: $currentPage) {
-                // ── Tab 0: 全局六维雷达 ──────────────────────────────────
-                AbilityRadarView()
-                    .tag(0)
-
-                // ── Tab 1-3: 域专属雷达卡片 ──────────────────────────────
                 ForEach(Array(pages.enumerated()), id: \.offset) { idx, page in
                     StarCardView(
                         page: page,
                         tasks: tasksVM.tasks,
                         abilities: abilityVM.abilities
                     )
-                    .tag(idx + 1)
+                    .tag(idx)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .frame(height: 262)
             .onAppear { abilityVM.load() }
 
-            // 页面指示点
+            // 页面指示点（3个）
             HStack(spacing: 5) {
-                ForEach(0..<totalPages, id: \.self) { i in
+                ForEach(0..<pages.count, id: \.self) { i in
                     let isActive = i == currentPage
                     Capsule()
                         .fill(isActive
-                              ? (i == 0 ? Color(hex: "#00D4FF")
-                                 : (i - 1 < pages.count ? pages[i - 1].accent : Color.cyan))
+                              ? (i < pages.count ? pages[i].accent : Color.cyan)
                               : Color.white.opacity(0.22))
                         .frame(width: isActive ? 14 : 5, height: 4)
                         .animation(.spring(response: 0.3, dampingFraction: 0.7),
@@ -130,65 +125,75 @@ struct SkillConstellationView: View {
 private struct StarCardView: View {
     let page: StarPage
     let tasks: [TaskItem]
-    let abilities: [AbilityScore]   // 来自 AbilityRadarViewModel
+    let abilities: [AbilityScore]
 
-    @State private var showDetail = false
+    @State private var showDetail          = false
+    @State private var selectedAbilityNav: String? = nil   // 跳转时传给详情的预选能力
 
-    // ── 根据域生成维度列表 ─────────────────────────────────────────────────
+    // ── 根据域生成维度（含 abilityType 供跳转使用）────────────────────────
     private var dimensions: [RadarDimension] {
         let ab = abilityMap
         switch page.id {
         case "workplace":
-            // 职场：6维，直接用 API 六个维度，按六边形顺序排列
             return [
                 RadarDimension(name: "影响力", icon: "⚡",
-                               score: ab["influence"] ?? 0, color: Color(hex: "#FFD700")),
+                               score: ab["influence"] ?? 0, color: Color(hex: "#FFD700"),
+                               abilityType: "influence"),
                 RadarDimension(name: "控制力", icon: "🎯",
-                               score: ab["control"]   ?? 0, color: Color(hex: "#45B7D1")),
+                               score: ab["control"]   ?? 0, color: Color(hex: "#45B7D1"),
+                               abilityType: "control"),
                 RadarDimension(name: "执行力", icon: "🚀",
-                               score: ab["execution"] ?? 0, color: Color(hex: "#FB923C")),
+                               score: ab["execution"] ?? 0, color: Color(hex: "#FB923C"),
+                               abilityType: "execution"),
                 RadarDimension(name: "防御力", icon: "🛡",
-                               score: ab["defense"]   ?? 0, color: Color(hex: "#34D399")),
+                               score: ab["defense"]   ?? 0, color: Color(hex: "#34D399"),
+                               abilityType: "defense"),
                 RadarDimension(name: "洞察力", icon: "🔭",
-                               score: ab["insight"]   ?? 0, color: Color(hex: "#A78BFA")),
+                               score: ab["insight"]   ?? 0, color: Color(hex: "#A78BFA"),
+                               abilityType: "insight"),
                 RadarDimension(name: "共情力", icon: "💞",
-                               score: ab["empathy"]   ?? 0, color: Color(hex: "#F472B6")),
+                               score: ab["empathy"]   ?? 0, color: Color(hex: "#F472B6"),
+                               abilityType: "empathy"),
             ]
         case "family":
-            // 家庭：4维，从共情/洞察派生
             let emp = ab["empathy"]  ?? 0
             let ins = ab["insight"]  ?? 0
             return [
                 RadarDimension(name: "亲密度", icon: "💖",
-                               score: emp,                   color: Color(hex: "#F472B6")),
+                               score: emp,             color: Color(hex: "#F472B6"),
+                               abilityType: "empathy"),
                 RadarDimension(name: "沟通力", icon: "💬",
-                               score: (emp + ins) / 2,       color: Color(hex: "#E84393")),
+                               score: (emp + ins) / 2, color: Color(hex: "#E84393"),
+                               abilityType: "empathy"),
                 RadarDimension(name: "陪伴力", icon: "🌸",
-                               score: emp * 0.85,            color: Color(hex: "#FB7185")),
+                               score: emp * 0.85,      color: Color(hex: "#FB7185"),
+                               abilityType: "empathy"),
                 RadarDimension(name: "理解力", icon: "🫂",
-                               score: ins,                   color: Color(hex: "#C084FC")),
+                               score: ins,             color: Color(hex: "#C084FC"),
+                               abilityType: "insight"),
             ]
         default: // "personal"
-            // 个人：4维，从多维度派生
             return [
                 RadarDimension(name: "情绪力", icon: "🌊",
-                               score: ab["empathy"]   ?? 0, color: Color(hex: "#FBBF24")),
+                               score: ab["empathy"]   ?? 0, color: Color(hex: "#FBBF24"),
+                               abilityType: "empathy"),
                 RadarDimension(name: "自省力", icon: "🔍",
-                               score: ab["insight"]   ?? 0, color: Color(hex: "#A78BFA")),
+                               score: ab["insight"]   ?? 0, color: Color(hex: "#A78BFA"),
+                               abilityType: "insight"),
                 RadarDimension(name: "复原力", icon: "🌱",
-                               score: ab["defense"]   ?? 0, color: Color(hex: "#34D399")),
+                               score: ab["defense"]   ?? 0, color: Color(hex: "#34D399"),
+                               abilityType: "defense"),
                 RadarDimension(name: "成长力", icon: "✨",
-                               score: ab["execution"] ?? 0, color: Color(hex: "#FFEAA7")),
+                               score: ab["execution"] ?? 0, color: Color(hex: "#FFEAA7"),
+                               abilityType: "execution"),
             ]
         }
     }
 
-    // 能力 type → score 快速查找表
     private var abilityMap: [String: Double] {
         Dictionary(abilities.map { ($0.type, $0.score) }, uniquingKeysWith: { a, _ in a })
     }
 
-    // 本月成长最快的维度（从 API abilities 中筛选）
     private var topGrowthAbility: AbilityScore? {
         let relevant: [String]
         switch page.id {
@@ -201,7 +206,6 @@ private struct StarCardView: View {
             .max(by: { $0.monthlyGrowth < $1.monthlyGrowth })
     }
 
-    // 最近一条大事件（取相关维度里最新的）
     private var latestEvent: AbilityEvent? {
         let relevant: [String]
         switch page.id {
@@ -213,6 +217,11 @@ private struct StarCardView: View {
             .filter { relevant.contains($0.type) }
             .flatMap { $0.recentEvents }
             .first
+    }
+
+    // 非节点点击时使用第一个维度的 abilityType
+    private var firstAbilityType: String {
+        dimensions.first?.abilityType ?? "influence"
     }
 
     var body: some View {
@@ -258,12 +267,17 @@ private struct StarCardView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 4)
 
-                // ── 域专属雷达图 ──────────────────────────────────────────
+                // ── 域专属雷达图（节点可点击）────────────────────────────
                 GeometryReader { geo in
                     DomainRadarCanvas(
                         dimensions: dimensions,
                         size: min(geo.size.width * 0.95, geo.size.height * 1.8),
-                        accent: page.accent
+                        accent: page.accent,
+                        onNodeTap: { abilityType in
+                            // 节点点击：预选该能力，优先级高于卡片整体点击
+                            selectedAbilityNav = abilityType
+                            showDetail = true
+                        }
                     )
                     .frame(width: geo.size.width, height: geo.size.height)
                 }
@@ -286,14 +300,21 @@ private struct StarCardView: View {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(page.accent.opacity(0.20), lineWidth: 0.8)
         )
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture {
+            // 整张卡片点击（非节点区域）：默认选第一个节点
+            selectedAbilityNav = firstAbilityType
+            showDetail = true
+        }
         .padding(.horizontal, 16)
-        .sheet(isPresented: $showDetail) {
+        .fullScreenCover(isPresented: $showDetail) {
             StarMapDetailView(
                 categoryId: page.id,
                 label: page.label,
                 accent: page.accent,
                 skills: page.skills,
-                tasks: tasks
+                tasks: tasks,
+                initialAbilityType: selectedAbilityNav
             )
         }
     }
@@ -302,7 +323,6 @@ private struct StarCardView: View {
     @ViewBuilder
     private var bottomStats: some View {
         HStack(spacing: 0) {
-            // 1. 已激活数量
             let active = page.skills.filter(\.selected).count
             VStack(alignment: .leading, spacing: 2) {
                 Text("已激活")
@@ -314,7 +334,6 @@ private struct StarCardView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            // 2. 本月成长最快
             if let top = topGrowthAbility, top.monthlyGrowth > 0 {
                 VStack(alignment: .center, spacing: 2) {
                     Text("成长最快")
@@ -331,7 +350,6 @@ private struct StarCardView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
 
-            // 3. 最近大事件
             if let event = latestEvent {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(event.date)
@@ -343,29 +361,28 @@ private struct StarCardView: View {
                         .lineLimit(1)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .onTapGesture { showDetail = true }
             }
         }
     }
 }
 
-// MARK: - 域专属雷达 Canvas（支持4节点和6节点）
+// MARK: - 域专属雷达 Canvas（支持4/6节点，节点可点击）
 
 private struct DomainRadarCanvas: View {
     let dimensions: [RadarDimension]
     let size: CGFloat
     let accent: Color
+    var onNodeTap: ((String) -> Void)? = nil   // 节点点击回调，传 abilityType
 
     private var nodeCount: Int { dimensions.count }
 
     var body: some View {
         ZStack {
-            // 多边形网格
+            // ── 多边形网格 + 填充（Canvas） ───────────────────────────────
             Canvas { ctx, sz in
                 let center = CGPoint(x: sz.width/2, y: sz.height/2)
                 let maxR   = sz.width * 0.38
 
-                // 4层网格线
                 for layer in 1...4 {
                     let r = maxR * CGFloat(layer) / 4
                     var path = Path()
@@ -378,7 +395,6 @@ private struct DomainRadarCanvas: View {
                     ctx.stroke(path, with: .color(Color.white.opacity(op)), lineWidth: 0.5)
                 }
 
-                // 轴线
                 for i in 0..<nodeCount {
                     var p = Path()
                     p.move(to: center)
@@ -386,7 +402,6 @@ private struct DomainRadarCanvas: View {
                     ctx.stroke(p, with: .color(accent.opacity(0.12)), lineWidth: 0.5)
                 }
 
-                // 数值填充区域
                 var fillPath = Path()
                 for (i, dim) in dimensions.enumerated() {
                     let r  = maxR * CGFloat(max(dim.score, 5) / 100)
@@ -398,9 +413,10 @@ private struct DomainRadarCanvas: View {
                 ctx.stroke(fillPath, with: .color(accent.opacity(0.5)), lineWidth: 1.2)
             }
 
-            // 节点（可见 SwiftUI 视图，带光晕）
+            // ── 节点 + 标签（SwiftUI 层） ──────────────────────────────────
             let center = CGPoint(x: size/2, y: size/2)
             let maxR   = size * 0.38
+
             ForEach(Array(dimensions.enumerated()), id: \.offset) { i, dim in
                 let hasData = dim.score > 0
                 let r   = maxR * CGFloat(max(dim.score, 4) / 100)
@@ -408,19 +424,15 @@ private struct DomainRadarCanvas: View {
                 let lpt = nodePoint(center: center, radius: maxR + 16, index: i, count: nodeCount)
                 let ns  = hasData ? CGFloat(dim.score / 100) * 10 + 5 : 4
 
+                // 节点视觉（不参与点击）
                 ZStack {
-                    // 节点光晕
                     Circle()
                         .fill(hasData ? dim.color.opacity(0.35) : Color.white.opacity(0.04))
                         .frame(width: ns + 8, height: ns + 8)
                         .blur(radius: hasData ? 4 : 1)
-
-                    // 节点核心
                     Circle()
                         .fill(hasData ? dim.color : Color.white.opacity(0.15))
                         .frame(width: ns, height: ns)
-
-                    // 4芒星（只在有数据时显示）
                     if hasData {
                         Canvas { ctx, sz in
                             let cx = sz.width/2, cy = sz.height/2
@@ -440,12 +452,23 @@ private struct DomainRadarCanvas: View {
                 .position(pt)
                 .allowsHitTesting(false)
 
-                // 维度标签（图标 + 名称）
+                // 透明点击区（比视觉节点更大，确保易点击）
+                Circle()
+                    .fill(Color.clear)
+                    .frame(width: max(ns + 20, 36), height: max(ns + 20, 36))
+                    .contentShape(Circle())
+                    .position(pt)
+                    .onTapGesture {
+                        onNodeTap?(dim.abilityType)
+                    }
+
+                // 维度标签（不参与点击）
                 VStack(spacing: 0) {
                     Text(dim.icon)
                         .font(.system(size: 10))
                     Text(dim.name)
-                        .font(.system(size: 7.5, weight: hasData ? .semibold : .regular,
+                        .font(.system(size: 7.5,
+                                      weight: hasData ? .semibold : .regular,
                                       design: .rounded))
                         .foregroundColor(hasData ? .white.opacity(0.8) : .white.opacity(0.2))
                         .lineLimit(1)
@@ -458,7 +481,6 @@ private struct DomainRadarCanvas: View {
         .frame(width: size, height: size)
     }
 
-    // 计算第 i 个节点的坐标（支持任意 n 边形）
     private func nodePoint(center: CGPoint, radius: CGFloat,
                            index: Int, count: Int) -> CGPoint {
         let angle = (CGFloat(index) * (360.0 / CGFloat(count)) - 90) * .pi / 180
