@@ -749,6 +749,38 @@ class NetworkManager {
         return data.events
     }
 
+    // 获取六维能力评分
+    func getAbilityScores() async throws -> AbilityScoresData {
+        if config.useMockData {
+            return AbilityScoresData(abilities: [], newBadges: [])
+        }
+        let dataResponse = await AF.request(
+            "\(baseURLForRead)/ability-scores",
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 20 }
+        )
+        .serializingData()
+        .response
+
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+        if statusCode != 200 {
+            let message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
+                ?? "请求失败 (HTTP \(statusCode))"
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: message])
+        }
+        let decoded = try JSONDecoder().decode(AbilityScoresResponse.self, from: responseData)
+        guard decoded.code == 200, let data = decoded.data else {
+            throw NSError(domain: "NetworkError", code: decoded.code,
+                          userInfo: [NSLocalizedDescriptionKey: decoded.message])
+        }
+        return data
+    }
+
     // 获取技能列表
     func getSkillsList(
         category: String? = nil,
