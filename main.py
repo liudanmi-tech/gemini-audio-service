@@ -3470,6 +3470,31 @@ async def get_image(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+@app.get("/api/v1/style-thumbnails/{style_key}")
+async def get_style_thumbnail(style_key: str):
+    """返回风格缩略图（无需 JWT），从 OSS style_thumbnails/{style_key}.png 读取"""
+    # 仅允许合法的 style_key 字符，防止路径遍历
+    import re as _re
+    if not _re.match(r'^[a-z0-9_]+$', style_key):
+        raise HTTPException(status_code=400, detail="Invalid style_key")
+    if not USE_OSS or oss_bucket is None:
+        raise HTTPException(status_code=503, detail="Image service unavailable")
+    try:
+        oss_key = f"style_thumbnails/{style_key}.png"
+        image_object = oss_bucket.get_object(oss_key)
+        image_data = image_object.read()
+        return Response(
+            content=image_data,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},  # 缓存1天
+        )
+    except Exception as e:
+        if "NoSuchKey" in str(e) or "404" in str(e):
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+        logger.error(f"[风格缩略图] 获取失败 {style_key}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch thumbnail")
+
+
 def cleanup_old_images(days: int = 7):
     """
     清理过期的图片文件
