@@ -164,7 +164,7 @@ app.include_router(audio_segments_router)
 from database.connection import get_db, init_db, close_db
 from database.models import User, Session, AnalysisResult, StrategyAnalysis, Skill, SkillExecution, Profile
 from auth.jwt_handler import get_current_user_id, get_current_user
-from sqlalchemy import select, func
+from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 导入技能模块
