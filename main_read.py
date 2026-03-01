@@ -4,6 +4,7 @@
 用于中国用户提速：录音列表、详情、技能、档案、图片等读接口从北京 RDS/OSS 拉取。
 """
 import os
+import re
 import json
 import time
 import traceback
