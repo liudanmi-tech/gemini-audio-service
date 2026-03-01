@@ -699,12 +699,12 @@ def generate_image_from_prompt(
     Returns:
         图片 URL 或 Base64，失败返回 None
     """
-    from google.genai.errors import ClientError
+    from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-    # ── 图片生成模型：Imagen 4 Fast（~4s/张，文本转图）──────────────────────────
-    IMAGE_GEN_MODEL = "imagen-4.0-fast-generate-001"
+    # ── 图片生成模型：gemini-2.5-flash-image（支持多模态：风格参考图 + 档案参考图）──
+    IMAGE_GEN_MODEL = "gemini-3.1-flash-image-preview"  # Nano Banana 2
 
-    client = genai_new.Client(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel(IMAGE_GEN_MODEL)
 
     # 构建 prompt：风格前缀 + 主体描述
     key = (style_key or "ghibli").strip().lower()
@@ -728,12 +728,36 @@ def generate_image_from_prompt(
                 break
         prompt_body = re.sub(r"^宫崎骏[^。]*。?", "", prompt_body).strip()
 
-    full_prompt = style_prefix + prompt_body
+    # 构建人物参考图说明
+    if reference_images and len(reference_images) >= 1:
+        ref_desc = "第一张图为左侧人物（用户）的参考照片"
+        if len(reference_images) >= 2:
+            ref_desc += "，第二张图为右侧人物（对方）的参考照片"
+        ref_desc += "。请保持人物面部与气质与参考图一致。\n\n"
+        full_prompt = style_prefix + ref_desc + prompt_body
+    else:
+        full_prompt = style_prefix + prompt_body
 
-    config = genai_types.GenerateImagesConfig(
-        number_of_images=1,
-        aspect_ratio="4:3",
-    )
+    # 构建 contents_list：风格参考图 + 档案参考图 + 文本 prompt
+    contents_list = []
+
+    # ── 风格参考图（按 style_key 自动加载 style_references/{key}_ref.jpg）──────
+    _style_ref_path = Path(__file__).parent / "style_references" / f"{key}_ref.jpg"
+    if _style_ref_path.exists():
+        try:
+            _style_ref_bytes = _style_ref_path.read_bytes()
+            contents_list.append({"mime_type": "image/jpeg", "data": _style_ref_bytes})
+            full_prompt = "请严格参考第一张图片所呈现的视觉风格（色调、光影、质感、构图）进行图片创作。\n\n" + full_prompt
+            logger.info(f"[图片生成] 已加载风格参考图: {_style_ref_path.name} ({len(_style_ref_bytes)} bytes)")
+        except Exception as _e:
+            logger.warning(f"[图片生成] 风格参考图加载失败 {_style_ref_path}: {_e}")
+
+    # ── 人物档案参考图（最多2张，置于风格参考图之后）──────────────────────────
+    if reference_images:
+        for img_bytes, mime_type in reference_images[:2]:
+            contents_list.append({"mime_type": mime_type, "data": img_bytes})
+        logger.info(f"[图片生成] 使用 {len(reference_images)} 张档案照片作为人物参考图")
+    contents_list.append(full_prompt)
 
     for attempt in range(max_retries):
         try:
@@ -742,29 +766,26 @@ def generate_image_from_prompt(
             else:
                 logger.info(f"========== 开始生成图片 ==========")
 
-            logger.info(f"提示词长度: {len(full_prompt)} 字符")
+            logger.info(f"提示词长度: {len(full_prompt)} 字符 参考图数={len(contents_list)-1}")
             logger.debug(f"提示词内容: {full_prompt[:200]}...")
-            logger.info(f"调用模型: {IMAGE_GEN_MODEL} (4:3)")
+            logger.info(f"调用模型: {IMAGE_GEN_MODEL} (4:3) 风格={key}")
 
             start_time = time.time()
-            response = client.models.generate_images(
-                model=IMAGE_GEN_MODEL,
-                prompt=full_prompt,
-                config=config,
-            )
+            response = model.generate_content(contents_list)
             generate_time = time.time() - start_time
 
             logger.info(f"✅ 图片生成成功，耗时: {generate_time:.2f} 秒")
 
-            # 提取图片数据
-            if not response.generated_images:
+            # 提取图片数据（从 response.parts 中找 inline_data）
+            image_bytes = None
+            for part in response.parts:
+                if part.inline_data is not None:
+                    image_bytes = part.inline_data.data
+                    logger.info(f"✅ 图片数据提取成功，大小: {len(image_bytes)} 字节")
+                    break
+            if not image_bytes:
                 logger.warning("⚠️ 响应中没有找到图片数据")
                 return None
-            image_bytes = response.generated_images[0].image.image_bytes
-            if not image_bytes:
-                logger.warning("⚠️ 响应图片字节为空")
-                return None
-            logger.info(f"✅ 图片数据提取成功，大小: {len(image_bytes)} 字节")
             
             # 尝试上传到 OSS
             if USE_OSS and oss_bucket is not None:
@@ -940,13 +961,33 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str, sessi
                     base_name=f"gemini_{_sid[:8]}",
                 )
                 chunk_paths_to_clean = [c[2] for c in chunks]
-                for i, (start_sec, end_sec, chunk_path) in enumerate(chunks):
-                    chunk_name = f"{file_filename}_片段{i+1}"
-                    uf = _upload_single_file_to_gemini(
-                        chunk_path, chunk_name, _sid, no_proxy, use_resumable, upload_timeout
+
+                # ── 并行上传所有分片（asyncio.gather + asyncio.to_thread）──────
+                logger.info(f"[分析-{_sid}] 并行上传 {len(chunks)} 个分片（串行改并行）...")
+
+                async def _upload_one_chunk(idx, chunk_path):
+                    cname = f"{file_filename}_片段{idx + 1}"
+                    uf = await asyncio.to_thread(
+                        _upload_single_file_to_gemini,
+                        chunk_path, cname, _sid, no_proxy, use_resumable, upload_timeout,
                     )
-                    uf = wait_for_file_active(uf, max_wait_time=600)
+                    uf = await asyncio.to_thread(wait_for_file_active, uf, 600)
+                    logger.info(f"[分析-{_sid}] 分片{idx + 1} 已就绪: {uf.name}")
+                    return (idx, uf)
+
+                _upload_results = await asyncio.gather(
+                    *[_upload_one_chunk(i, cp) for i, (_, _, cp) in enumerate(chunks)],
+                    return_exceptions=True,
+                )
+                # 检查是否有上传失败
+                for _r in _upload_results:
+                    if isinstance(_r, Exception):
+                        raise _r
+                # 按原始顺序排列
+                for _, uf in sorted(_upload_results, key=lambda x: x[0]):
                     uploaded_files_list.append(uf)
+                # ────────────────────────────────────────────────────────────
+
                 # 多文件时用统一变量，后续 generate_content 用 contents
                 uploaded_file = uploaded_files_list[0] if uploaded_files_list else None
             else:
@@ -1415,24 +1456,26 @@ async def upload_audio_api(
         tasks_storage[session_id] = task_data
         logger.info(f"任务数据已存储: {session_id}")
         
-        # 读取文件内容并保存到临时文件（必须在异步任务之前读取，因为 UploadFile 只能读取一次）
-        # 注意：不限制文件大小，Gemini 支持大文件；Nginx 需配置 client_max_body_size 100M 以上
-        t_before_read = time.time()
-        logger.info("[upload] 开始读取文件内容（await file.read，大文件时此步骤较慢）...")
-        file_content = await file.read()
-        file_size = len(file_content)
-        t_read_elapsed = time.time() - t_before_read
-        logger.info(f"[upload] 文件读取完成 size={file_size} bytes ({file_size / 1024 / 1024:.2f} MB) 耗时={t_read_elapsed:.2f}s")
-        
+        # 流式写入临时文件（分块读取，避免大文件一次性加载进内存导致 OOM）
         file_filename = file.filename or "audio.m4a"
         file_ext = Path(file_filename).suffix.lower() if file_filename else '.m4a'
-        
-        # 创建临时文件保存文件内容
+
         import tempfile
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
-        temp_file.write(file_content)
-        temp_file.close()
-        temp_file_path = temp_file.name
+        t_before_read = time.time()
+        logger.info("[upload] 开始流式写入临时文件（分块 1MB，避免 OOM）...")
+        tmp_fd = tempfile.NamedTemporaryFile(delete=False, suffix=file_ext)
+        temp_file_path = tmp_fd.name
+        file_size = 0
+        CHUNK = 1024 * 1024  # 1 MB per chunk
+        while True:
+            chunk = await file.read(CHUNK)
+            if not chunk:
+                break
+            tmp_fd.write(chunk)
+            file_size += len(chunk)
+        tmp_fd.close()
+        t_read_elapsed = time.time() - t_before_read
+        logger.info(f"[upload] 文件写入完成 size={file_size} bytes ({file_size / 1024 / 1024:.2f} MB) 耗时={t_read_elapsed:.2f}s")
         logger.info(f"[upload] 临时文件已创建: {temp_file_path}")
         
         # 进度：上传完成
@@ -1893,14 +1936,26 @@ async def get_task_list(
             api_base = api_base.rstrip("/")
             for sa in sa_result.scalars().all():
                 sid = str(sa.session_id)
+                # 优先：从 visual_data[0] 取封面（旧版图片生成流程）
                 vd = sa.visual_data
                 if isinstance(vd, list) and len(vd) > 0:
                     first_v = vd[0] if isinstance(vd[0], dict) else getattr(vd[0], "__dict__", {})
                     img_url = first_v.get("image_url") if isinstance(first_v, dict) else getattr(first_v, "image_url", None)
-                    # 仅在 img_url 为真实 OSS 地址时返回封面，避免图片未上传成功时客户端请求 404
                     if img_url and isinstance(img_url, str) and ("oss" in img_url or "geminipicture" in img_url.lower()):
-                        # 统一走代理 API（需 JWT），避免 OSS 私有 URL 直接访问 403
                         cover_map[sid] = f"{api_base}/api/v1/images/{sid}/0"
+                # 兜底：从 scene_images[0] 取封面（新版并行生图流程）
+                if sid not in cover_map:
+                    scene_imgs = sa.scene_images
+                    if isinstance(scene_imgs, list) and len(scene_imgs) > 0:
+                        for si in scene_imgs:
+                            si_dict = si if isinstance(si, dict) else {}
+                            si_url = si_dict.get("image_url")
+                            if si_url and isinstance(si_url, str) and ("oss" in si_url or "geminipicture" in si_url.lower()):
+                                # 从 OSS URL 解析真实 image_index：images/{uid}/{sid}/{idx}.png
+                                _m = re.search(r'/([0-9]+)\.png', si_url)
+                                if _m:
+                                    cover_map[sid] = f"{api_base}/api/v1/images/{sid}/{_m.group(1)}"
+                                    break
         
         task_items = [
             TaskItem(
@@ -2274,7 +2329,7 @@ async def generate_strategies_async(session_id: str, user_id: str):
             image_style = get_user_image_style(user_id)
             logger.info(f"[策略流程] 自动生成 image_style={image_style} (来自用户偏好)")
 
-            # 并行启动场景生图（不等待，与技能分析同时进行）
+            # 场景生图：AFC disabled，与技能分析并行
             from scene_image_generator import generate_scene_images as _gen_scene_images
             asyncio.create_task(_gen_scene_images(
                 transcript=transcript,
@@ -2283,6 +2338,7 @@ async def generate_strategies_async(session_id: str, user_id: str):
                 user_id=user_id,
                 gemini_flash_model=GEMINI_FLASH_MODEL,
                 generate_image_fn=generate_image_from_prompt,
+                get_profile_refs_fn=_get_profile_reference_images,
             ))
             logger.info(f"[策略流程] 场景生图任务已并行启动 session_id={session_id}")
 
@@ -2547,20 +2603,21 @@ async def _generate_strategies_core(
                     "confidence": matched_skill.get("confidence", 0.5)
                 })
         
-        # 执行所有任务
-        for skill_id, matched_skill_info, task in execution_tasks:
+        # ── 并行执行所有技能（asyncio.gather）──────────────────────────────
+        logger.info(f"[策略流程] 并行执行 {len(execution_tasks)} 个技能（串行改并行）...")
+
+        async def _run_one_skill(skill_id, matched_skill_info, coro):
             try:
-                result = await task
-                # 将路由匹配信息附加到执行结果
+                result = await coro
                 result["name"] = matched_skill_info.get("name", skill_id)
                 result["dimension"] = matched_skill_info.get("dimension", "")
                 result["matched_sub_skill"] = matched_skill_info.get("matched_sub_skill", "")
                 result["matched_sub_skill_id"] = matched_skill_info.get("matched_sub_skill_id", "")
                 result["category"] = matched_skill_info.get("category", "")
-                skill_results.append(result)
+                return result
             except Exception as e:
                 logger.error(f"执行技能失败: {skill_id}, 错误: {e}")
-                skill_results.append({
+                return {
                     "skill_id": skill_id,
                     "result": None,
                     "execution_time_ms": 0,
@@ -2569,7 +2626,18 @@ async def _generate_strategies_core(
                     "priority": 0,
                     "confidence": 0.5,
                     "category": matched_skill_info.get("category", ""),
-                })
+                }
+
+        _gathered = await asyncio.gather(
+            *[_run_one_skill(sid, mi, task) for sid, mi, task in execution_tasks],
+            return_exceptions=True,
+        )
+        for _r in _gathered:
+            if isinstance(_r, Exception):
+                logger.error(f"[策略流程] 技能 gather 顶层异常: {_r}")
+            elif _r is not None:
+                skill_results.append(_r)
+        # ────────────────────────────────────────────────────────────────────
         
         # 记录技能执行到数据库
         for skill_result in skill_results:
@@ -3470,6 +3538,284 @@ async def test_gemini():
             "error": error_msg
         }
 
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 六维能力评分系统
+# ══════════════════════════════════════════════════════════════════════════════
+
+# 能力维度 → 技能ID 映射（基于现有 skills 表中的实际 skill_id）
+# ── 六维能力评分系统 ─────────────────────────────────────────────────────────
+
+ABILITY_SKILL_MAP = {
+    "empathy":   ["family_relationship", "emotion_recognition", "education_communication"],
+    "control":   ["workplace_jungle", "workplace_psychology", "workplace_career"],
+    "insight":   ["workplace_scenario", "workplace_capability", "workplace_psychology"],
+    "influence": ["workplace_role", "brainstorm", "workplace_jungle"],
+    "defense":   ["depression_prevention", "emotion_recognition", "workplace_jungle"],
+    "execution": ["brainstorm", "workplace_career", "workplace_capability"],
+}
+
+ABILITY_META = {
+    "empathy":   {"name": "共情力", "icon": "💞", "related_labels": ["治愈共情", "情绪识别", "沟通引导"]},
+    "control":   {"name": "控制力", "icon": "🎯", "related_labels": ["职场博弈", "心理洞察", "向上管理"]},
+    "insight":   {"name": "洞察力", "icon": "🔭", "related_labels": ["场景分析", "能力评估", "心理分析"]},
+    "influence": {"name": "影响力", "icon": "⚡", "related_labels": ["影响力提升", "头脑风暴", "职场博弈"]},
+    "defense":   {"name": "防御力", "icon": "🛡️", "related_labels": ["情绪防护", "冲突化解", "职场防御"]},
+    "execution": {"name": "执行力", "icon": "🚀", "related_labels": ["任务推进", "职业规划", "头脑风暴"]},
+}
+
+def _ability_level(score: float):
+    if score > 80:
+        return "大师期", "💎"
+    elif score > 60:
+        return "精通期", "🔥"
+    elif score > 40:
+        return "稳定期", "⭐"
+    elif score > 20:
+        return "成长期", "🌿"
+    else:
+        return "萌芽期", "🌱"
+
+
+@app.get("/api/v1/ability-scores")
+async def get_ability_scores(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取用户六维能力评分。
+    零 AI 调用，复用 skill_executions 数据。
+    能力值 = 置信度均值×60% + 大事件数量×20%(上限20) + 近30天活跃度×20%
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now       = datetime.now(timezone.utc)
+    month_ago = now - timedelta(days=30)
+    week_ago  = now - timedelta(days=7)
+
+    user_uuid = uuid.UUID(user_id)
+    abilities = []
+
+    for ability_type, skill_ids in ABILITY_SKILL_MAP.items():
+        ids_literal = ",".join(f"'{s}'" for s in skill_ids)
+        meta = ABILITY_META[ability_type]
+
+        # ── 1. 基础统计 ──────────────────────────────────────────────────
+        stats_sql = text(f"""
+            SELECT
+                COALESCE(AVG(se.confidence_score), 0)   AS avg_conf,
+                COUNT(DISTINCT s.id)                     AS session_count,
+                MAX(se.created_at)                       AS last_active,
+                COUNT(DISTINCT CASE
+                    WHEN se.created_at >= :month_ago THEN s.id
+                END)                                     AS monthly_sessions,
+                COUNT(DISTINCT CASE
+                    WHEN se.confidence_score > 0.65 THEN s.id
+                END)                                     AS event_count
+            FROM skill_executions se
+            JOIN sessions s ON se.session_id = s.id
+            WHERE s.user_id   = :user_id
+              AND se.skill_id IN ({ids_literal})
+        """)
+        row = (await db.execute(stats_sql, {"user_id": user_uuid, "month_ago": month_ago})).fetchone()
+
+        avg_conf         = float(row.avg_conf or 0)
+        session_count    = int(row.session_count or 0)
+        monthly_sessions = int(row.monthly_sessions or 0)
+        event_count      = int(row.event_count or 0)
+        last_active      = row.last_active
+
+        # 活跃度分：近7天 20分，近30天 10分
+        if last_active:
+            la = last_active.replace(tzinfo=timezone.utc) if last_active.tzinfo is None else last_active
+            activity = 20 if la >= week_ago else (10 if la >= month_ago else 0)
+        else:
+            activity = 0
+
+        # 能力值 = 置信度60 + 事件数20 + 活跃度20
+        score = min(100.0, round(
+            avg_conf * 100 * 0.6 +
+            min(event_count * 4, 20) +
+            activity,
+            1
+        ))
+
+        # 月增长（本月会话*1.5，上限20）
+        monthly_growth = min(int(monthly_sessions * 1.5), 20)
+
+        # ── 2. 四周成长趋势 ────────────────────────────────────────────
+        trend_sql = text(f"""
+            SELECT
+                FLOOR(EXTRACT(EPOCH FROM (NOW() - se.created_at)) / 604800) AS week_bucket,
+                AVG(se.confidence_score)  AS avg_c,
+                COUNT(DISTINCT s.id)      AS wk_cnt
+            FROM skill_executions se
+            JOIN sessions s ON se.session_id = s.id
+            WHERE s.user_id   = :user_id
+              AND se.skill_id IN ({ids_literal})
+              AND se.created_at >= NOW() - INTERVAL '28 days'
+            GROUP BY week_bucket
+        """)
+        trend_rows = (await db.execute(trend_sql, {"user_id": user_uuid})).fetchall()
+        trend_map: dict = {}
+        for r in trend_rows:
+            if r.week_bucket is not None:
+                w = min(int(r.week_bucket), 3)
+                trend_map[w] = round(float(r.avg_c) * 100 * 0.6 + min(int(r.wk_cnt) * 4, 20), 1)
+        growth_trend = [trend_map.get(w, 0.0) for w in [3, 2, 1, 0]]
+        if growth_trend[-1] == 0 and score > 0:
+            growth_trend[-1] = score
+
+        # ── 3. 近期大事件（高置信度会话，最多3条）─────────────────────
+        events_sql = text(f"""
+            SELECT DISTINCT ON (s.id)
+                s.id::text                AS session_id,
+                s.created_at,
+                ar.summary                AS ar_summary,
+                se.confidence_score,
+                sk.name                   AS skill_name
+            FROM skill_executions se
+            JOIN sessions s  ON se.session_id = s.id
+            JOIN skills sk   ON sk.skill_id = se.skill_id
+            LEFT JOIN analysis_results ar ON ar.session_id = s.id
+            WHERE s.user_id   = :user_id
+              AND se.skill_id IN ({ids_literal})
+              AND s.status NOT IN ('failed', 'recording', 'analyzing')
+            ORDER BY s.id, se.confidence_score DESC
+        """)
+        raw = (await db.execute(events_sql, {"user_id": user_uuid})).fetchall()
+        raw_sorted = sorted(raw, key=lambda r: r.created_at or now, reverse=True)[:3]
+
+        recent_events = []
+        for er in raw_sorted:
+            conf   = float(er.confidence_score or 0)
+            contrib = 5 if conf >= 0.85 else (3 if conf >= 0.75 else (2 if conf >= 0.60 else 1))
+            summary = (er.ar_summary or "").strip()
+            title   = f"{er.skill_name}突破" if conf >= 0.75 else f"{er.skill_name}实践"
+            date_str = er.created_at.strftime("%m.%d") if er.created_at else ""
+            recent_events.append({
+                "session_id":         er.session_id,
+                "date":               date_str,
+                "title":              title,
+                "summary":            summary[:60] + ("…" if len(summary) > 60 else ""),
+                "score_contribution": contrib,
+            })
+
+        level_name, level_emoji = _ability_level(score)
+        abilities.append({
+            "type":           ability_type,
+            "name":           meta["name"],
+            "icon":           meta["icon"],
+            "score":          score,
+            "level":          level_name,
+            "level_emoji":    level_emoji,
+            "monthly_growth": monthly_growth,
+            "related_skills": meta["related_labels"],
+            "recent_events":  recent_events,
+            "growth_trend":   growth_trend,
+        })
+
+    # ── 勋章检查 ──────────────────────────────────────────────────────────────
+    new_badges = await _check_badges(user_uuid, abilities, db)
+
+    return APIResponse(
+        code=200,
+        message="success",
+        data={"abilities": abilities, "new_badges": new_badges},
+        timestamp=datetime.now().isoformat(),
+    )
+
+
+async def _check_badges(user_uuid, abilities: list, db: AsyncSession) -> list:
+    """检查是否触发新勋章，纯 DB 统计，不调用 AI。"""
+    from datetime import datetime, timedelta, timezone
+    now      = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+
+    ability_map = {a["type"]: a["score"] for a in abilities}
+    new_badges: list = []
+
+    # 1. 职场老炮：6维均 > 40
+    if all(v >= 40 for v in ability_map.values()):
+        new_badges.append({"id": "veteran", "name": "职场老炮", "icon": "🔥",
+                            "desc": "六维能力均衡发展，综合实力出众"})
+
+    # 2. 治愈系存在：emotion_recognition ≥3次且均值>0.80
+    heal_sql = text("""
+        SELECT COUNT(DISTINCT s.id) AS cnt, AVG(se.confidence_score) AS avg_c
+        FROM skill_executions se
+        JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'emotion_recognition'
+    """)
+    heal_row = (await db.execute(heal_sql, {"uid": user_uuid})).fetchone()
+    if heal_row and int(heal_row.cnt or 0) >= 3 and float(heal_row.avg_c or 0) > 0.80:
+        new_badges.append({"id": "healer", "name": "治愈系存在", "icon": "💫",
+                            "desc": "情感共情能力出众，是他人的心灵港湾"})
+
+    # 3. 冲突平息者：emotion_recognition ≥3次且均值>0.70
+    if heal_row and int(heal_row.cnt or 0) >= 3 and float(heal_row.avg_c or 0) > 0.70:
+        new_badges.append({"id": "peacemaker", "name": "冲突平息者", "icon": "🕊️",
+                            "desc": "情绪疏导与冲突化解能力突出"})
+
+    # 4. 向上高手：workplace_career avg > 0.85
+    upward_sql = text("""
+        SELECT AVG(se.confidence_score) AS avg_c
+        FROM skill_executions se JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'workplace_career'
+    """)
+    upward_row = (await db.execute(upward_sql, {"uid": user_uuid})).fetchone()
+    if upward_row and float(upward_row.avg_c or 0) >= 0.85:
+        new_badges.append({"id": "upward", "name": "向上高手", "icon": "👑",
+                            "desc": "向上管理能力卓越，深受领导认可"})
+
+    # 5. 铁壁防御：depression_prevention ≥5次
+    defense_sql = text("""
+        SELECT COUNT(*) AS cnt FROM skill_executions se
+        JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'depression_prevention'
+    """)
+    defense_row = (await db.execute(defense_sql, {"uid": user_uuid})).fetchone()
+    if defense_row and int(defense_row.cnt or 0) >= 5:
+        new_badges.append({"id": "ironwall", "name": "铁壁防御", "icon": "🛡️",
+                            "desc": "防御与抗压能力卓越，稳如磐石"})
+
+    # 6. 谈判之王：workplace_jungle avg > 0.75
+    nego_sql = text("""
+        SELECT AVG(se.confidence_score) AS avg_c
+        FROM skill_executions se JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'workplace_jungle'
+    """)
+    nego_row = (await db.execute(nego_sql, {"uid": user_uuid})).fetchone()
+    if nego_row and float(nego_row.avg_c or 0) >= 0.75:
+        new_badges.append({"id": "negotiator", "name": "谈判之王", "icon": "⚔️",
+                            "desc": "职场博弈与谈判能力出众"})
+
+    # 7. 破冰达人：family_relationship 高分 ≥3次
+    ice_sql = text("""
+        SELECT COUNT(*) AS cnt FROM skill_executions se
+        JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'family_relationship'
+          AND se.confidence_score > 0.80
+    """)
+    ice_row = (await db.execute(ice_sql, {"uid": user_uuid})).fetchone()
+    if ice_row and int(ice_row.cnt or 0) >= 3:
+        new_badges.append({"id": "icebreaker", "name": "破冰达人", "icon": "🧊",
+                            "desc": "社交破冰能力出众，轻松建立信任"})
+
+    # 8. 本周MVP：本周高质量会话 ≥5条
+    mvp_sql = text("""
+        SELECT COUNT(DISTINCT s.id) AS cnt
+        FROM skill_executions se JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.created_at >= :week_ago
+          AND se.confidence_score > 0.75
+    """)
+    mvp_row = (await db.execute(mvp_sql, {"uid": user_uuid, "week_ago": week_ago})).fetchone()
+    if mvp_row and int(mvp_row.cnt or 0) >= 5:
+        new_badges.append({"id": "mvp", "name": "本周MVP", "icon": "🏆",
+                            "desc": f"本周完成 {int(mvp_row.cnt)} 次高质量对话"})
+
+    return new_badges
 
 if __name__ == "__main__":
     import uvicorn

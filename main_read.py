@@ -262,13 +262,25 @@ async def get_task_list(
             api_base = os.getenv("API_PUBLIC_URL", "http://123.57.29.111:8000").rstrip("/")
             for sa in sa_result.scalars().all():
                 sid = str(sa.session_id)
+                # 优先：从 visual_data[0] 取封面（旧版图片生成流程）
                 vd = sa.visual_data
                 if isinstance(vd, list) and len(vd) > 0:
                     first_v = vd[0] if isinstance(vd[0], dict) else getattr(vd[0], "__dict__", {})
                     img_url = first_v.get("image_url") if isinstance(first_v, dict) else getattr(first_v, "image_url", None)
-                    # 仅在 img_url 为真实 OSS 地址时返回封面，避免图片未上传成功时客户端请求 404
                     if img_url and isinstance(img_url, str) and ("oss" in img_url or "geminipicture" in img_url.lower()):
                         cover_map[sid] = f"{api_base}/api/v1/images/{sid}/0"
+                # 兜底：从 scene_images[0] 取封面（新版并行生图流程）
+                if sid not in cover_map:
+                    scene_imgs = sa.scene_images
+                    if isinstance(scene_imgs, list) and len(scene_imgs) > 0:
+                        for si in scene_imgs:
+                            si_dict = si if isinstance(si, dict) else {}
+                            si_url = si_dict.get("image_url")
+                            if si_url and isinstance(si_url, str) and ("oss" in si_url or "geminipicture" in si_url.lower()):
+                                _m = re.search(r"/([0-9]+)\.png", si_url)
+                                if _m:
+                                    cover_map[sid] = f"{api_base}/api/v1/images/{sid}/{_m.group(1)}"
+                                    break
 
         task_items = [
             TaskItem(
@@ -636,6 +648,8 @@ async def get_or_check_strategies(
         result_dict["applied_skills"] = applied_skills
         result_dict["scene_category"] = scene_category
         result_dict["scene_confidence"] = scene_confidence
+        result_dict["scene_images"] = getattr(existing_strategy, "scene_images", None) or []
+        result_dict["matched_scenes"] = []
 
         return APIResponse(
             code=200,
@@ -909,6 +923,279 @@ async def health():
     """健康检查"""
     return {"status": "ok", "mode": "read-only"}
 
+
+
+# ── 六维能力评分系统 ─────────────────────────────────────────────────────────
+
+ABILITY_SKILL_MAP = {
+    "empathy":   ["family_relationship", "emotion_recognition", "education_communication"],
+    "control":   ["workplace_jungle", "workplace_psychology", "workplace_career"],
+    "insight":   ["workplace_scenario", "workplace_capability", "workplace_psychology"],
+    "influence": ["workplace_role", "brainstorm", "workplace_jungle"],
+    "defense":   ["depression_prevention", "emotion_recognition", "workplace_jungle"],
+    "execution": ["brainstorm", "workplace_career", "workplace_capability"],
+}
+
+ABILITY_META = {
+    "empathy":   {"name": "共情力", "icon": "💞", "related_labels": ["治愈共情", "情绪识别", "沟通引导"]},
+    "control":   {"name": "控制力", "icon": "🎯", "related_labels": ["职场博弈", "心理洞察", "向上管理"]},
+    "insight":   {"name": "洞察力", "icon": "🔭", "related_labels": ["场景分析", "能力评估", "心理分析"]},
+    "influence": {"name": "影响力", "icon": "⚡", "related_labels": ["影响力提升", "头脑风暴", "职场博弈"]},
+    "defense":   {"name": "防御力", "icon": "🛡️", "related_labels": ["情绪防护", "冲突化解", "职场防御"]},
+    "execution": {"name": "执行力", "icon": "🚀", "related_labels": ["任务推进", "职业规划", "头脑风暴"]},
+}
+
+def _ability_level(score: float):
+    if score > 80:
+        return "大师期", "💎"
+    elif score > 60:
+        return "精通期", "🔥"
+    elif score > 40:
+        return "稳定期", "⭐"
+    elif score > 20:
+        return "成长期", "🌿"
+    else:
+        return "萌芽期", "🌱"
+
+
+@app.get("/api/v1/ability-scores")
+async def get_ability_scores(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    获取用户六维能力评分。
+    零 AI 调用，复用 skill_executions 数据。
+    能力值 = 置信度均值×60% + 大事件数量×20%(上限20) + 近30天活跃度×20%
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now       = datetime.now(timezone.utc)
+    month_ago = now - timedelta(days=30)
+    week_ago  = now - timedelta(days=7)
+
+    user_uuid = uuid.UUID(user_id)
+    abilities = []
+
+    for ability_type, skill_ids in ABILITY_SKILL_MAP.items():
+        ids_literal = ",".join(f"'{s}'" for s in skill_ids)
+        meta = ABILITY_META[ability_type]
+
+        # ── 1. 基础统计 ──────────────────────────────────────────────────
+        stats_sql = text(f"""
+            SELECT
+                COALESCE(AVG(se.confidence_score), 0)   AS avg_conf,
+                COUNT(DISTINCT s.id)                     AS session_count,
+                MAX(se.created_at)                       AS last_active,
+                COUNT(DISTINCT CASE
+                    WHEN se.created_at >= :month_ago THEN s.id
+                END)                                     AS monthly_sessions,
+                COUNT(DISTINCT CASE
+                    WHEN se.confidence_score > 0.65 THEN s.id
+                END)                                     AS event_count
+            FROM skill_executions se
+            JOIN sessions s ON se.session_id = s.id
+            WHERE s.user_id   = :user_id
+              AND se.skill_id IN ({ids_literal})
+        """)
+        row = (await db.execute(stats_sql, {"user_id": user_uuid, "month_ago": month_ago})).fetchone()
+
+        avg_conf         = float(row.avg_conf or 0)
+        session_count    = int(row.session_count or 0)
+        monthly_sessions = int(row.monthly_sessions or 0)
+        event_count      = int(row.event_count or 0)
+        last_active      = row.last_active
+
+        # 活跃度分：近7天 20分，近30天 10分
+        if last_active:
+            la = last_active.replace(tzinfo=timezone.utc) if last_active.tzinfo is None else last_active
+            activity = 20 if la >= week_ago else (10 if la >= month_ago else 0)
+        else:
+            activity = 0
+
+        # 能力值 = 置信度60 + 事件数20 + 活跃度20
+        score = min(100.0, round(
+            avg_conf * 100 * 0.6 +
+            min(event_count * 4, 20) +
+            activity,
+            1
+        ))
+
+        # 月增长（本月会话*1.5，上限20）
+        monthly_growth = min(int(monthly_sessions * 1.5), 20)
+
+        # ── 2. 四周成长趋势 ────────────────────────────────────────────
+        trend_sql = text(f"""
+            SELECT
+                FLOOR(EXTRACT(EPOCH FROM (NOW() - se.created_at)) / 604800) AS week_bucket,
+                AVG(se.confidence_score)  AS avg_c,
+                COUNT(DISTINCT s.id)      AS wk_cnt
+            FROM skill_executions se
+            JOIN sessions s ON se.session_id = s.id
+            WHERE s.user_id   = :user_id
+              AND se.skill_id IN ({ids_literal})
+              AND se.created_at >= NOW() - INTERVAL '28 days'
+            GROUP BY week_bucket
+        """)
+        trend_rows = (await db.execute(trend_sql, {"user_id": user_uuid})).fetchall()
+        trend_map: dict = {}
+        for r in trend_rows:
+            if r.week_bucket is not None:
+                w = min(int(r.week_bucket), 3)
+                trend_map[w] = round(float(r.avg_c) * 100 * 0.6 + min(int(r.wk_cnt) * 4, 20), 1)
+        growth_trend = [trend_map.get(w, 0.0) for w in [3, 2, 1, 0]]
+        if growth_trend[-1] == 0 and score > 0:
+            growth_trend[-1] = score
+
+        # ── 3. 近期大事件（高置信度会话，最多3条）─────────────────────
+        events_sql = text(f"""
+            SELECT DISTINCT ON (s.id)
+                s.id::text                AS session_id,
+                s.created_at,
+                ar.summary                AS ar_summary,
+                se.confidence_score,
+                sk.name                   AS skill_name
+            FROM skill_executions se
+            JOIN sessions s  ON se.session_id = s.id
+            JOIN skills sk   ON sk.skill_id = se.skill_id
+            LEFT JOIN analysis_results ar ON ar.session_id = s.id
+            WHERE s.user_id   = :user_id
+              AND se.skill_id IN ({ids_literal})
+              AND s.status NOT IN ('failed', 'recording', 'analyzing')
+            ORDER BY s.id, se.confidence_score DESC
+        """)
+        raw = (await db.execute(events_sql, {"user_id": user_uuid})).fetchall()
+        raw_sorted = sorted(raw, key=lambda r: r.created_at or now, reverse=True)[:3]
+
+        recent_events = []
+        for er in raw_sorted:
+            conf   = float(er.confidence_score or 0)
+            contrib = 5 if conf >= 0.85 else (3 if conf >= 0.75 else (2 if conf >= 0.60 else 1))
+            summary = (er.ar_summary or "").strip()
+            title   = f"{er.skill_name}突破" if conf >= 0.75 else f"{er.skill_name}实践"
+            date_str = er.created_at.strftime("%m.%d") if er.created_at else ""
+            recent_events.append({
+                "session_id":         er.session_id,
+                "date":               date_str,
+                "title":              title,
+                "summary":            summary[:60] + ("…" if len(summary) > 60 else ""),
+                "score_contribution": contrib,
+            })
+
+        level_name, level_emoji = _ability_level(score)
+        abilities.append({
+            "type":           ability_type,
+            "name":           meta["name"],
+            "icon":           meta["icon"],
+            "score":          score,
+            "level":          level_name,
+            "level_emoji":    level_emoji,
+            "monthly_growth": monthly_growth,
+            "related_skills": meta["related_labels"],
+            "recent_events":  recent_events,
+            "growth_trend":   growth_trend,
+        })
+
+    # ── 勋章检查 ──────────────────────────────────────────────────────────────
+    new_badges = await _check_badges(user_uuid, abilities, db)
+
+    return APIResponse(
+        code=200,
+        message="success",
+        data={"abilities": abilities, "new_badges": new_badges},
+        timestamp=datetime.now().isoformat(),
+    )
+
+
+async def _check_badges(user_uuid, abilities: list, db: AsyncSession) -> list:
+    """检查是否触发新勋章，纯 DB 统计，不调用 AI。"""
+    from datetime import datetime, timedelta, timezone
+    now      = datetime.now(timezone.utc)
+    week_ago = now - timedelta(days=7)
+
+    ability_map = {a["type"]: a["score"] for a in abilities}
+    new_badges: list = []
+
+    # 1. 职场老炮：6维均 > 40
+    if all(v >= 40 for v in ability_map.values()):
+        new_badges.append({"id": "veteran", "name": "职场老炮", "icon": "🔥",
+                            "desc": "六维能力均衡发展，综合实力出众"})
+
+    # 2. 治愈系存在：emotion_recognition ≥3次且均值>0.80
+    heal_sql = text("""
+        SELECT COUNT(DISTINCT s.id) AS cnt, AVG(se.confidence_score) AS avg_c
+        FROM skill_executions se
+        JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'emotion_recognition'
+    """)
+    heal_row = (await db.execute(heal_sql, {"uid": user_uuid})).fetchone()
+    if heal_row and int(heal_row.cnt or 0) >= 3 and float(heal_row.avg_c or 0) > 0.80:
+        new_badges.append({"id": "healer", "name": "治愈系存在", "icon": "💫",
+                            "desc": "情感共情能力出众，是他人的心灵港湾"})
+
+    # 3. 冲突平息者：emotion_recognition ≥3次且均值>0.70
+    if heal_row and int(heal_row.cnt or 0) >= 3 and float(heal_row.avg_c or 0) > 0.70:
+        new_badges.append({"id": "peacemaker", "name": "冲突平息者", "icon": "🕊️",
+                            "desc": "情绪疏导与冲突化解能力突出"})
+
+    # 4. 向上高手：workplace_career avg > 0.85
+    upward_sql = text("""
+        SELECT AVG(se.confidence_score) AS avg_c
+        FROM skill_executions se JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'workplace_career'
+    """)
+    upward_row = (await db.execute(upward_sql, {"uid": user_uuid})).fetchone()
+    if upward_row and float(upward_row.avg_c or 0) >= 0.85:
+        new_badges.append({"id": "upward", "name": "向上高手", "icon": "👑",
+                            "desc": "向上管理能力卓越，深受领导认可"})
+
+    # 5. 铁壁防御：depression_prevention ≥5次
+    defense_sql = text("""
+        SELECT COUNT(*) AS cnt FROM skill_executions se
+        JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'depression_prevention'
+    """)
+    defense_row = (await db.execute(defense_sql, {"uid": user_uuid})).fetchone()
+    if defense_row and int(defense_row.cnt or 0) >= 5:
+        new_badges.append({"id": "ironwall", "name": "铁壁防御", "icon": "🛡️",
+                            "desc": "防御与抗压能力卓越，稳如磐石"})
+
+    # 6. 谈判之王：workplace_jungle avg > 0.75
+    nego_sql = text("""
+        SELECT AVG(se.confidence_score) AS avg_c
+        FROM skill_executions se JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'workplace_jungle'
+    """)
+    nego_row = (await db.execute(nego_sql, {"uid": user_uuid})).fetchone()
+    if nego_row and float(nego_row.avg_c or 0) >= 0.75:
+        new_badges.append({"id": "negotiator", "name": "谈判之王", "icon": "⚔️",
+                            "desc": "职场博弈与谈判能力出众"})
+
+    # 7. 破冰达人：family_relationship 高分 ≥3次
+    ice_sql = text("""
+        SELECT COUNT(*) AS cnt FROM skill_executions se
+        JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.skill_id = 'family_relationship'
+          AND se.confidence_score > 0.80
+    """)
+    ice_row = (await db.execute(ice_sql, {"uid": user_uuid})).fetchone()
+    if ice_row and int(ice_row.cnt or 0) >= 3:
+        new_badges.append({"id": "icebreaker", "name": "破冰达人", "icon": "🧊",
+                            "desc": "社交破冰能力出众，轻松建立信任"})
+
+    # 8. 本周MVP：本周高质量会话 ≥5条
+    mvp_sql = text("""
+        SELECT COUNT(DISTINCT s.id) AS cnt
+        FROM skill_executions se JOIN sessions s ON se.session_id = s.id
+        WHERE s.user_id = :uid AND se.created_at >= :week_ago
+          AND se.confidence_score > 0.75
+    """)
+    mvp_row = (await db.execute(mvp_sql, {"uid": user_uuid, "week_ago": week_ago})).fetchone()
+    if mvp_row and int(mvp_row.cnt or 0) >= 5:
+        new_badges.append({"id": "mvp", "name": "本周MVP", "icon": "🏆",
+                            "desc": f"本周完成 {int(mvp_row.cnt)} 次高质量对话"})
+
+    return new_badges
 
 if __name__ == "__main__":
     import uvicorn

@@ -21,6 +21,7 @@ async def generate_scene_images(
     user_id: str,
     gemini_flash_model: str,    # 传入 GEMINI_FLASH_MODEL 常量
     generate_image_fn,          # 传入 generate_image_from_prompt 函数
+    get_profile_refs_fn=None,   # 传入 _get_profile_reference_images（async）
 ):
     """分析录音场景并并行生成图片，保存到 strategy_analysis.scene_images"""
     async with AsyncSessionLocal() as db:
@@ -67,12 +68,22 @@ async def generate_scene_images(
 
             logger.info(f"[场景生图] 提取到 {len(scenes)} 个场景: {scenes}")
 
-            # 4. 并行生成所有图片
+            # 4. 加载档案参考图（用于人物一致性）
+            profile_refs = []
+            if get_profile_refs_fn:
+                try:
+                    profile_refs = await get_profile_refs_fn(session_id, user_id, db)
+                    logger.info(f"[场景生图] 已加载 {len(profile_refs)} 张档案参考图")
+                except Exception as _pe:
+                    logger.warning(f"[场景生图] 档案参考图加载失败: {_pe}")
+
+            # 5. 并行生成所有图片
             async def gen_one(i, scene):
+                # generate_image_fn is sync (old SDK), call via asyncio.to_thread
                 return await asyncio.to_thread(
                     generate_image_fn,
                     scene, user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
-                    None, 3, style_key
+                    profile_refs if profile_refs else None, 3, style_key
                 )
 
             results = await asyncio.gather(
@@ -80,13 +91,13 @@ async def generate_scene_images(
                 return_exceptions=True
             )
 
-            # 5. 组装 scene_images
+            # 6. 组装 scene_images
             scene_images = []
             for i, (scene, img) in enumerate(zip(scenes, results)):
                 if isinstance(img, Exception) or img is None:
                     logger.error(f"[场景生图] 图{i}失败: {img}")
                     scene_images.append({
-                        "index": i,
+                        "index": 1000 + i,  # 与 OSS upload index 对齐
                         "scene_description": scene,
                         "image_url": None,
                         "image_base64": None,
@@ -94,14 +105,14 @@ async def generate_scene_images(
                 else:
                     is_url = img.startswith("http")
                     scene_images.append({
-                        "index": i,
+                        "index": 1000 + i,  # 与 OSS upload index 对齐
                         "scene_description": scene,
                         "image_url": img if is_url else None,
                         "image_base64": img if not is_url else None,
                     })
                     logger.info(f"[场景生图] 图{i} ✅ {'url' if is_url else 'b64'}")
 
-            # 6. 保存到 strategy_analysis（upsert）
+            # 7. 保存到 strategy_analysis（upsert）
             sa_q = await db.execute(
                 select(StrategyAnalysis).where(StrategyAnalysis.session_id == _uuid.UUID(session_id))
             )
@@ -135,7 +146,7 @@ async def generate_scene_images(
                 else:
                     logger.warning(f"[场景生图] 兜底重试超时，strategy_analysis 未出现, session={session_id}")
 
-            # 7. 更新 image_status = completed
+            # 8. 更新 image_status = completed
             sess3 = await db.get(Session, _uuid.UUID(session_id))
             if sess3:
                 sess3.image_status = "completed"
