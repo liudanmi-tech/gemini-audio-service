@@ -38,19 +38,19 @@ struct SkillCatalogCardView: View {
                         case .success(let img):
                             img.resizable()
                                 .aspectRatio(contentMode: .fill)
-                                .frame(height: 120)
-                                .clipped()
                         case .failure:
-                            coverGradient.frame(height: 120)
+                            coverGradient
                         default:
-                            coverGradient.frame(height: 120)
+                            coverGradient
                                 .overlay(ProgressView().tint(.white).scaleEffect(0.7))
                         }
                     }
+                    .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
+                    .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
                     coverGradient
-                        .frame(height: 120)
+                        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
                         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
 
