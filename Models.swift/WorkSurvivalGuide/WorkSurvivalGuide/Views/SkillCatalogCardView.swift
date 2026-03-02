@@ -32,6 +32,7 @@ struct SkillCatalogCardView: View {
         VStack(alignment: .leading, spacing: 0) {
             // Cover area
             ZStack(alignment: .topTrailing) {
+                // 封面：图片或渐变占位，统一由外层 frame + clipped 控制尺寸
                 if let proxyURL = coverProxyURL {
                     AsyncImage(url: proxyURL) { phase in
                         switch phase {
@@ -45,17 +46,11 @@ struct SkillCatalogCardView: View {
                                 .overlay(ProgressView().tint(.white).scaleEffect(0.7))
                         }
                     }
-                    .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 } else {
                     coverGradient
-                        .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
 
-                // 自动模式：右上角不显示圆圈，自动模式的"选中"用封面右上角小徽章表示
-                // 手动模式：显示可点击的勾选圆圈
+                // 手动模式：右上角勾选圆圈
                 if isManualMode {
                     Button(action: onToggle) {
                         ZStack {
@@ -76,6 +71,9 @@ struct SkillCatalogCardView: View {
                     .padding(10)
                 }
             }
+            .frame(height: 120)          // ← 高度统一在 ZStack 层锁定
+            .clipped()                   // ← 超出部分裁掉
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .contentShape(Rectangle())
             .onTapGesture { onTapCover() }
 
