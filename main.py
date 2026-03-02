@@ -2580,7 +2580,33 @@ async def _generate_strategies_core(
         logger.info("[策略流程] 步骤2.2: 技能匹配(match_skills/查 skills 表)...")
         matched_skills = await match_skills(scene_result, db, transcript=transcript, profiles=_participant_profiles or None)
         logger.info(f"[策略流程] 步骤2.2: 完成 匹配到 {len(matched_skills)} 个技能")
-        
+
+        # 2.2c 手动模式过滤：若用户开启手动编排，仅保留用户勾选的技能
+        try:
+            from database.models import UserSkillPreference as _USP
+            _pref_q = await db.execute(
+                select(_USP.skill_id).where(
+                    _USP.user_id == uuid.UUID(user_id),
+                    _USP.selected == True,
+                )
+            )
+            _pref_ids = {row[0] for row in _pref_q.all()}
+            _is_manual = "__manual_mode__" in _pref_ids
+            if _is_manual:
+                _user_selected = _pref_ids - {"__manual_mode__"}
+                if _user_selected:
+                    # 情绪/防抑郁技能强制保留（不受手动模式限制）
+                    _ALWAYS_KEEP = {"emotion_recognition", "depression_prevention"}
+                    matched_skills = [
+                        s for s in matched_skills
+                        if s["skill_id"] in _user_selected or s["skill_id"] in _ALWAYS_KEEP
+                    ]
+                    logger.info(f"[策略流程] 手动编排模式：过滤后保留 {len(matched_skills)} 个技能 (用户已选: {_user_selected})")
+                else:
+                    logger.info("[策略流程] 手动编排模式：用户未选任何技能，跳过过滤")
+        except Exception as _mf_err:
+            logger.warning(f"[策略流程] 手动模式过滤失败，跳过: {_mf_err}")
+
         if not matched_skills:
             logger.warning("未匹配到任何技能，使用默认技能")
             default_skill = await get_skill("workplace_role", db)

@@ -88,6 +88,7 @@ class SkillUpdate(BaseModel):
 class SkillPreferencesUpdate(BaseModel):
     """更新技能偏好请求"""
     selected_skills: List[str]
+    is_manual_mode: Optional[bool] = None  # None 表示不改变当前模式
 
 
 _CATALOG_CATEGORY_ORDER = ["workplace", "family", "personal"]
@@ -257,6 +258,9 @@ async def get_skills_catalog(
         raise HTTPException(status_code=500, detail=f"获取技能目录失败: {e}")
 
 
+_MANUAL_MODE_KEY = "__manual_mode__"  # 用于在 user_skill_preferences 表中存储模式标记
+
+
 @router.get("/preferences", summary="获取用户技能偏好")
 async def get_skill_preferences(
     user_id: str = Depends(get_current_user_id),
@@ -269,8 +273,13 @@ async def get_skill_preferences(
                 UserSkillPreference.selected == True,
             )
         )
-        selected = [row[0] for row in result.all()]
-        return {"code": 200, "message": "success", "data": {"selected_skills": selected}}
+        rows = [row[0] for row in result.all()]
+        is_manual_mode = _MANUAL_MODE_KEY in rows
+        selected = [sid for sid in rows if sid != _MANUAL_MODE_KEY]
+        return {"code": 200, "message": "success", "data": {
+            "selected_skills": selected,
+            "is_manual_mode": is_manual_mode,
+        }}
     except Exception as e:
         logger.error(f"获取技能偏好失败: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -283,13 +292,32 @@ async def update_skill_preferences(
     db: AsyncSession = Depends(get_db)
 ):
     try:
+        # 若 is_manual_mode 为 None，保留原有模式设置
+        if body.is_manual_mode is None:
+            mode_result = await db.execute(
+                select(UserSkillPreference.skill_id).where(
+                    UserSkillPreference.user_id == user_id,
+                    UserSkillPreference.skill_id == _MANUAL_MODE_KEY,
+                    UserSkillPreference.selected == True,
+                )
+            )
+            keep_manual = mode_result.scalar_one_or_none() is not None
+        else:
+            keep_manual = body.is_manual_mode
+
         await db.execute(
             delete(UserSkillPreference).where(UserSkillPreference.user_id == user_id)
         )
         for sid in body.selected_skills:
-            db.add(UserSkillPreference(user_id=user_id, skill_id=sid, selected=True))
+            if sid != _MANUAL_MODE_KEY:
+                db.add(UserSkillPreference(user_id=user_id, skill_id=sid, selected=True))
+        if keep_manual:
+            db.add(UserSkillPreference(user_id=user_id, skill_id=_MANUAL_MODE_KEY, selected=True))
         await db.commit()
-        return {"code": 200, "message": "success", "data": {"selected_skills": body.selected_skills}}
+        return {"code": 200, "message": "success", "data": {
+            "selected_skills": body.selected_skills,
+            "is_manual_mode": keep_manual,
+        }}
     except Exception as e:
         await db.rollback()
         logger.error(f"更新技能偏好失败: {e}")

@@ -934,16 +934,44 @@ class NetworkManager {
         }
     }
 
-    func updateSkillPreferences(selectedSkills: [String]) async throws {
+    func getSkillPreferences() async throws -> SkillPreferencesData {
+        guard hasValidToken() else {
+            throw NSError(domain: "NetworkError", code: 401,
+                          userInfo: [NSLocalizedDescriptionKey: "请先登录"])
+        }
+        let dataTask = AF.request(
+            "\(baseURLForRead)/skills/preferences",
+            method: .get,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 10 }
+        )
+        let dataResponse = await dataTask.serializingData().response
+        let responseData = dataResponse.data ?? Data()
+        let decoder = JSONDecoder()
+        let response = try decoder.decode(SkillPreferencesResponse.self, from: responseData)
+        guard response.code == 200, let data = response.data else {
+            throw NSError(domain: "NetworkError", code: response.code,
+                          userInfo: [NSLocalizedDescriptionKey: response.message])
+        }
+        return data
+    }
+
+    func updateSkillPreferences(selectedSkills: [String], isManualMode: Bool? = nil) async throws {
         guard hasValidToken() else {
             throw NSError(domain: "NetworkError", code: 401,
                           userInfo: [NSLocalizedDescriptionKey: "请先登录"])
         }
 
-        let body: [String: Any] = ["selected_skills": selectedSkills]
+        var body: [String: Any] = ["selected_skills": selectedSkills]
+        if let mode = isManualMode {
+            body["is_manual_mode"] = mode
+        }
 
         let dataTask = AF.request(
-            "\(baseURLForRead)/skills/preferences",
+            "\(baseURLForWrite)/skills/preferences",
             method: .put,
             parameters: body,
             encoding: JSONEncoding.default,
