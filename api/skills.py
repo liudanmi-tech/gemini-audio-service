@@ -2,8 +2,9 @@
 技能管理API接口
 包括获取技能列表、技能详情、重新加载技能等
 """
-import time
+import os, time
 from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from pydantic import BaseModel
@@ -174,6 +175,16 @@ async def get_all_skills(
         )
 
 
+def _cover_filename(cover_image_val: str | None) -> str | None:
+    """从完整 OSS URL 或 key 中提取文件名（用于 /skills/covers/{filename} 代理端点）"""
+    if not cover_image_val:
+        return None
+    if cover_image_val.startswith("http"):
+        from urllib.parse import urlparse
+        return urlparse(cover_image_val).path.rstrip("/").rsplit("/", 1)[-1]
+    return cover_image_val.rsplit("/", 1)[-1]
+
+
 @router.get("/catalog", summary="获取技能目录（分类+子技能展开）")
 async def get_skills_catalog(
     user_id: str = Depends(get_current_user_id),
@@ -221,7 +232,7 @@ async def get_skills_catalog(
                         "name": sub.get("name", sub_id),
                         "description": sub.get("description", ""),
                         "cover_color": sub.get("cover_color"),
-                        "cover_image": sub.get("cover_image") or None,
+                        "cover_image": _cover_filename(sub.get("cover_image")),
                         "video_url": None,
                         "selected": sub_id in selected_set,
                         "pro_content": sub.get("pro_content") or None,
@@ -257,6 +268,42 @@ async def get_skills_catalog(
     except Exception as e:
         logger.error(f"获取技能目录失败: {e}")
         raise HTTPException(status_code=500, detail=f"获取技能目录失败: {e}")
+
+
+def _oss_key_from_cover_image(cover_image_val: str | None) -> str | None:
+    """从 cover_image 值中提取 OSS key（支持完整 OSS URL 或已有 key 格式）"""
+    if not cover_image_val:
+        return None
+    if cover_image_val.startswith("http"):
+        # https://bucket.endpoint/skill_covers/foo_pixar.png → skill_covers/foo_pixar.png
+        from urllib.parse import urlparse
+        path = urlparse(cover_image_val).path.lstrip("/")
+        return path
+    return cover_image_val  # already a relative key
+
+
+@router.get("/covers/{filename}", summary="技能封面图（公开，无需登录）", include_in_schema=False)
+async def get_skill_cover(filename: str):
+    """从私有 OSS 代理返回技能封面图，无需认证（封面为全局静态资源）"""
+    try:
+        import oss2
+        auth = oss2.Auth(
+            os.getenv("OSS_ACCESS_KEY_ID", ""),
+            os.getenv("OSS_ACCESS_KEY_SECRET", ""),
+        )
+        bucket = oss2.Bucket(
+            auth,
+            os.getenv("OSS_ENDPOINT", "oss-cn-beijing.aliyuncs.com"),
+            os.getenv("OSS_BUCKET_NAME", "geminipicture2"),
+        )
+        oss_key = f"skill_covers/{filename}"
+        obj = bucket.get_object(oss_key)
+        data = obj.read()
+        return Response(content=data, media_type="image/png",
+                        headers={"Cache-Control": "public, max-age=86400"})
+    except Exception as e:
+        logger.error(f"技能封面获取失败 {filename}: {e}")
+        raise HTTPException(status_code=404, detail="cover not found")
 
 
 _MANUAL_MODE_KEY = "__manual_mode__"  # 用于在 user_skill_preferences 表中存储模式标记

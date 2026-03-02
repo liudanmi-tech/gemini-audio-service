@@ -23,6 +23,16 @@ struct SkillDetailSheet: View {
         )
     }
 
+    /// 将 cover_image（文件名或完整 URL）转为可访问的代理 URL
+    private var coverProxyURL: URL? {
+        guard let raw = skill.coverImage, !raw.isEmpty else { return nil }
+        let filename = raw.hasPrefix("http")
+            ? (URL(string: raw)?.lastPathComponent ?? raw)
+            : raw.components(separatedBy: "/").last ?? raw
+        let base = NetworkManager.shared.getBaseURL()
+        return URL(string: "\(base)/skills/covers/\(filename)")
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -30,9 +40,8 @@ struct SkillDetailSheet: View {
 
                     // ── Hero 封面图（有 cover_image 显示生成图，否则显示渐变色占位）──
                     ZStack(alignment: .bottomLeading) {
-                        if let coverUrl = skill.coverImage, !coverUrl.isEmpty,
-                           let url = URL(string: coverUrl) {
-                            AsyncImage(url: url) { phase in
+                        if let proxyURL = coverProxyURL {
+                            AsyncImage(url: proxyURL) { phase in
                                 switch phase {
                                 case .success(let img):
                                     img.resizable()
