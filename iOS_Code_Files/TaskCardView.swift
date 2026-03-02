@@ -86,7 +86,7 @@ struct TaskCardView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     if task.status == .archived {
                         Text(task.cardTitle ?? task.refinedTitle)
-                            .font(.system(size: 13, weight: .medium, design: .rounded))
+                            .font(.system(size: 18, weight: .medium, design: .rounded))
                             .foregroundColor(.white.opacity(0.95))
                             .multilineTextAlignment(.leading)
                             .lineLimit(2)

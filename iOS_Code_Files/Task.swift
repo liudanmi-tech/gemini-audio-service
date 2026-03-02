@@ -338,11 +338,12 @@ struct TaskDetailResponse: Codable {
     let speakerCount: Int?
     let dialogues: [DialogueItem]
     let risks: [String]
-    let summary: String?  // 新增：对话总结
-    let coverImageUrl: String?  // 封面图 URL，仅当策略首图已上传到 OSS 时非空
+    let summary: String?
+    let coverImageUrl: String?
+    let audioUrl: String?  // 原始录音播放 URL
     let createdAt: String
     let updatedAt: String
-    
+
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case title
@@ -355,29 +356,30 @@ struct TaskDetailResponse: Codable {
         case speakerCount = "speaker_count"
         case dialogues
         case risks
-        case summary  // 新增
+        case summary
         case coverImageUrl = "cover_image_url"
+        case audioUrl = "audio_url"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
     }
-    
+
     // 自定义日期解码器
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         sessionId = try container.decode(String.self, forKey: .sessionId)
         title = try container.decode(String.self, forKey: .title)
-        
+
         let startTimeString = try container.decode(String.self, forKey: .startTime)
         let dateFormatter = ISO8601DateFormatter()
         dateFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         startTime = dateFormatter.date(from: startTimeString) ?? Date()
-        
+
         if let endTimeString = try? container.decode(String.self, forKey: .endTime) {
             endTime = dateFormatter.date(from: endTimeString)
         } else {
             endTime = nil
         }
-        
+
         duration = try container.decode(Int.self, forKey: .duration)
         tags = try container.decode([String].self, forKey: .tags)
         status = try container.decode(String.self, forKey: .status)
@@ -387,10 +389,11 @@ struct TaskDetailResponse: Codable {
         risks = try container.decode([String].self, forKey: .risks)
         summary = try? container.decode(String.self, forKey: .summary)
         coverImageUrl = try? container.decode(String.self, forKey: .coverImageUrl)
+        audioUrl = try? container.decode(String.self, forKey: .audioUrl)
         createdAt = try container.decode(String.self, forKey: .createdAt)
         updatedAt = try container.decode(String.self, forKey: .updatedAt)
     }
-    
+
     // 便利初始化方法（用于创建临时详情）
     init(
         sessionId: String,
@@ -406,6 +409,7 @@ struct TaskDetailResponse: Codable {
         risks: [String],
         summary: String?,
         coverImageUrl: String? = nil,
+        audioUrl: String? = nil,
         createdAt: String,
         updatedAt: String
     ) {
@@ -422,6 +426,7 @@ struct TaskDetailResponse: Codable {
         self.risks = risks
         self.summary = summary
         self.coverImageUrl = coverImageUrl
+        self.audioUrl = audioUrl
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

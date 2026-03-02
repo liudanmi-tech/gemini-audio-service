@@ -13,26 +13,27 @@ struct TaskDetailView: View {
     @State private var isLoading = false
     @State private var errorMessage: String?
     @State private var moodStats: [MoodStat] = []
-    
+    @StateObject private var audioPlayer = SessionAudioPlayerService()
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
                 // 背景色（底层）
                 AppColors.background
                     .ignoresSafeArea()
-                
+
                 // 信纸网格底纹（在背景色上方）
                 PaperGridBackground()
                     .ignoresSafeArea()
-                
+
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 23.99) { // 卡片间距改为 23.99px
                     // Header（返回按钮 + 标题）
                     DetailHeaderView()
                         .padding(.top, 10) // 进一步减少顶部间距，让内容更靠近顶部
-                    
+
                     // 顶部日期/时间信息栏
-                    DateTimeInfoBar(task: task)
+                    DateTimeInfoBar(task: task, audioPlayer: audioPlayer)
                     
                     // 移除今日心情模块（Figma中没有对应设计）
                     
@@ -148,6 +149,9 @@ struct TaskDetailView: View {
                 }
             }
             .navigationBarHidden(true)
+            .onDisappear {
+                audioPlayer.stop()
+            }
             .onAppear {
                 // 优先使用缓存
                 let cacheManager = DetailCacheManager.shared
@@ -156,6 +160,7 @@ struct TaskDetailView: View {
                 if let cachedDetail = cacheManager.getCachedDetail(sessionId: task.id) {
                     print("✅ [TaskDetailView] 使用缓存的详情数据: \(task.id)")
                     self.detail = cachedDetail
+                    self.audioPlayer.setAudioUrl(cachedDetail.audioUrl)
                     self.isLoading = false
                     self.errorMessage = nil
                     generateMoodStats()
@@ -309,9 +314,10 @@ struct TaskDetailView: View {
                 
                 // 缓存详情
                 cacheManager.cacheDetail(taskDetail, for: task.id)
-                
+
                 await MainActor.run {
                     self.detail = taskDetail
+                    self.audioPlayer.setAudioUrl(taskDetail.audioUrl)
                     self.isLoading = false
                     self.errorMessage = nil
                     generateMoodStats()
@@ -439,7 +445,8 @@ struct DetailHeaderView: View {
 // 顶部日期/时间信息栏
 struct DateTimeInfoBar: View {
     let task: TaskItem
-    
+    @ObservedObject var audioPlayer: SessionAudioPlayerService
+
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             // 左侧：时间组件（自适应宽度，不固定）
@@ -449,7 +456,7 @@ struct DateTimeInfoBar: View {
                     .font(.system(size: 18))
                     .foregroundColor(AppColors.headerText.opacity(0.8))
                     .frame(width: 18, height: 18)
-                
+
                 // 日期文本（格式：2026/01/20 星期一）
                 Text(dateTimeString)
                     .font(.system(size: 14, weight: .bold, design: .rounded)) // Nunito 700, 14px
@@ -469,33 +476,49 @@ struct DateTimeInfoBar: View {
                             .stroke(Color.white.opacity(0.2), lineWidth: 0.69) // rgba(255, 255, 255, 0.2), strokeWeight 0.69px
                     )
             )
-            
-            Spacer(minLength: 8) // 最小间距，确保左右元素不贴得太近
-            
-            // 右侧：表情图标（播放按钮，圆形，白色半透明背景）
-            Button(action: {
-                // TODO: 实现播放功能
-            }) {
-                ZStack {
-                    Circle()
-                        .fill(Color.white.opacity(0.8)) // rgba(255, 255, 255, 0.8)
-                        .frame(width: 49.37, height: 49.37) // 根据Figma: 49.37 x 49.37px
-                        .overlay(
+
+            Spacer(minLength: 8)
+
+            // 右侧：播放控制区
+            HStack(spacing: 8) {
+                // 重头播放按钮（仅播放中显示）
+                if audioPlayer.isPlaying {
+                    Button(action: { audioPlayer.restartFromBeginning() }) {
+                        ZStack {
                             Circle()
-                                .stroke(Color.white.opacity(0.4), lineWidth: 0.69) // rgba(255, 255, 255, 0.4), strokeWeight 0.69px
-                        )
-                        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1) // 根据Figma: boxShadow
-                    
-                    // 使用表情图标或播放图标
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(AppColors.headerText.opacity(0.8))
+                                .fill(Color.white.opacity(0.6))
+                                .frame(width: 36, height: 36)
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(AppColors.headerText.opacity(0.8))
+                        }
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                }
+
+                // 播放/暂停按钮
+                Button(action: { audioPlayer.togglePlayback() }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.8))
+                            .frame(width: 49.37, height: 49.37)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white.opacity(0.4), lineWidth: 0.69)
+                            )
+                            .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1)
+
+                        Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(AppColors.headerText.opacity(0.8))
+                    }
                 }
             }
+            .animation(.easeInOut(duration: 0.2), value: audioPlayer.isPlaying)
         }
         .frame(maxWidth: .infinity, alignment: .leading) // 确保不超出父容器
     }
-    
+
     private var dateTimeString: String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")

@@ -1344,6 +1344,7 @@ class TaskDetailResponse(BaseModel):
     speaker_mapping: Optional[dict] = None  # Speaker_0/1 -> profile_id
     speaker_names: Optional[dict] = None  # Speaker_0/1 -> 档案名（关系），如 张三（自己），便于前端展示
     conversation_summary: Optional[str] = None  # 「谁和谁对话」总结
+    audio_url: Optional[str] = None  # 原始录音播放 URL（OSS 直链 或 /audio-file 代理）
     created_at: str
     updated_at: str
 
@@ -2173,6 +2174,14 @@ async def get_task_detail(
                     dialogues = new_dialogues
                 logger.info(f"[任务详情] session={session_id} 已对 summary/conversation_summary/dialogues 做档案名替换 speaker_names={list(speaker_names.keys())}")
         
+        # 原始录音 URL：OSS 直链 > 本地代理
+        _audio_url: Optional[str] = None
+        if getattr(db_session, "audio_url", None):
+            _audio_url = db_session.audio_url
+        elif getattr(db_session, "audio_path", None):
+            _api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213").rstrip("/")
+            _audio_url = f"{_api_base}/api/v1/tasks/sessions/{session_id}/audio-file"
+
         detail = TaskDetailResponse(
             session_id=str(db_session.id),
             title=db_session.title or "",
@@ -2190,10 +2199,11 @@ async def get_task_detail(
             speaker_mapping=speaker_mapping,
             speaker_names=speaker_names,
             conversation_summary=conversation_summary,
+            audio_url=_audio_url,
             created_at=db_session.created_at.isoformat() if db_session.created_at else "",
             updated_at=db_session.updated_at.isoformat() if db_session.updated_at else ""
         )
-        
+
         return APIResponse(
             code=200,
             message="success",
@@ -2206,6 +2216,45 @@ async def get_task_detail(
         logger.error(f"获取任务详情失败: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取详情失败: {str(e)}")
+
+
+@app.get("/api/v1/tasks/sessions/{session_id}/audio-file")
+async def serve_session_audio(
+    session_id: str,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """代理播放原始录音文件（JWT 鉴权）"""
+    from fastapi.responses import FileResponse as _FileResponse
+    try:
+        result = await db.execute(
+            select(Session).where(
+                Session.id == uuid.UUID(session_id),
+                Session.user_id == uuid.UUID(user_id)
+            )
+        )
+        db_session = result.scalar_one_or_none()
+        if not db_session:
+            raise HTTPException(status_code=404, detail="任务不存在")
+
+        audio_path = getattr(db_session, "audio_path", None)
+        if not audio_path or not os.path.isfile(audio_path):
+            raise HTTPException(status_code=404, detail="音频文件不存在")
+
+        ext = os.path.splitext(audio_path)[1].lower()
+        media_type_map = {".m4a": "audio/mp4", ".mp3": "audio/mpeg", ".wav": "audio/wav", ".aac": "audio/aac", ".ogg": "audio/ogg"}
+        media_type = media_type_map.get(ext, "audio/mpeg")
+
+        return _FileResponse(
+            path=audio_path,
+            media_type=media_type,
+            headers={"Accept-Ranges": "bytes", "Cache-Control": "no-cache"}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"音频文件服务失败: {e}")
+        raise HTTPException(status_code=500, detail=f"音频服务失败: {str(e)}")
 
 
 @app.get("/api/v1/tasks/sessions/{session_id}/status")
@@ -2502,9 +2551,34 @@ async def _generate_strategies_core(
             _ms.analysis_stage_detail = None
             await db.commit()
 
+        # 2.2 前置：通过 speaker_mapping 查询参与者档案，用于场景强制
+        _participant_profiles: list = []
+        try:
+            _ar_q = await db.execute(
+                select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
+            )
+            _ar = _ar_q.scalar_one_or_none()
+            if _ar and isinstance(getattr(_ar, "speaker_mapping", None), dict):
+                _sp_map = _ar.speaker_mapping  # {Speaker_0: profile_id, ...}
+                _profile_ids = [str(v) for v in _sp_map.values() if v]
+                if _profile_ids:
+                    from database.models import Profile
+                    _pq = await db.execute(
+                        select(Profile).where(Profile.id.in_([uuid.UUID(pid) for pid in _profile_ids]))
+                    )
+                    _profiles = _pq.scalars().all()
+                    _participant_profiles = [
+                        {"relationship_type": p.relationship_type, "name": p.name}
+                        for p in _profiles
+                        if p.relationship_type and p.relationship_type != "自己"
+                    ]
+                    logger.info(f"[策略流程] 档案关系: {[(p['name'], p['relationship_type']) for p in _participant_profiles]}")
+        except Exception as _pe:
+            logger.warning(f"[策略流程] 档案查询失败，跳过场景强制: {_pe}")
+
         # 2.2 技能匹配（若此处报 PG type 114，可能是 skills 表 meta_data 列为 json）
         logger.info("[策略流程] 步骤2.2: 技能匹配(match_skills/查 skills 表)...")
-        matched_skills = await match_skills(scene_result, db, transcript=transcript)
+        matched_skills = await match_skills(scene_result, db, transcript=transcript, profiles=_participant_profiles or None)
         logger.info(f"[策略流程] 步骤2.2: 完成 匹配到 {len(matched_skills)} 个技能")
         
         if not matched_skills:
@@ -2944,9 +3018,27 @@ async def classify_scene_endpoint(
         # 场景识别
         model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
         scene_result = classify_scene(transcript, model)
-        
+
+        # 档案查询（通过 speaker_mapping 获取参与者关系）
+        _reclassify_profiles: list = []
+        try:
+            if isinstance(getattr(analysis_result_db, "speaker_mapping", None), dict):
+                _r_pids = [str(v) for v in analysis_result_db.speaker_mapping.values() if v]
+                if _r_pids:
+                    from database.models import Profile
+                    _rp_q = await db.execute(
+                        select(Profile).where(Profile.id.in_([uuid.UUID(p) for p in _r_pids]))
+                    )
+                    _reclassify_profiles = [
+                        {"relationship_type": p.relationship_type, "name": p.name}
+                        for p in _rp_q.scalars().all()
+                        if p.relationship_type and p.relationship_type != "自己"
+                    ]
+        except Exception:
+            pass
+
         # 技能匹配（传入 transcript 用于参与者关键词补充）
-        matched_skills = await match_skills(scene_result, db, transcript=transcript)
+        matched_skills = await match_skills(scene_result, db, transcript=transcript, profiles=_reclassify_profiles or None)
         
         return APIResponse(
             code=200,

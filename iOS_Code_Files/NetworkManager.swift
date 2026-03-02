@@ -470,6 +470,10 @@ class NetworkManager {
         let statusCode = dataResponse.response?.statusCode ?? 0
         let responseData = dataResponse.data ?? Data()
         if statusCode != 200 {
+            if statusCode == 401 {
+                print("🔐 [NetworkManager] getTaskDetail 收到 401，清除登录状态")
+                Task { @MainActor in AuthManager.shared.logout() }
+            }
             let message = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
                 ?? (responseData.isEmpty ? nil : String(data: responseData, encoding: .utf8))
                 ?? "请求失败 (HTTP \(statusCode))"
@@ -481,7 +485,7 @@ class NetworkManager {
         }
         return data
     }
-    
+
     // 获取任务状态（authToken 可选：轮询时传入缓存的 token，避免被其他请求的 401 登出导致中断）
     func getTaskStatus(sessionId: String, authToken: String? = nil) async throws -> TaskStatusResponse {
         // 如果使用 Mock 数据

@@ -312,18 +312,21 @@ struct StrategyItem: Codable, Identifiable {
     let id: String
     let title: String
     let content: String
-    
+    let emoji: String?
+
     enum CodingKeys: String, CodingKey {
         case id
         case title
         case content
+        case emoji
     }
-    
+
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         title = try container.decode(String.self, forKey: .title)
         content = try container.decode(String.self, forKey: .content)
         id = (try? container.decode(String.self, forKey: .id)) ?? title
+        emoji = try? container.decode(String.self, forKey: .emoji)
     }
 }
 

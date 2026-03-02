@@ -176,6 +176,7 @@ class TaskDetailResponse(BaseModel):
     speaker_names: Optional[dict] = None
     conversation_summary: Optional[str] = None
     cover_image_url: Optional[str] = None
+    audio_url: Optional[str] = None  # 原始录音播放 URL
     created_at: str
     updated_at: str
 
@@ -474,6 +475,14 @@ async def get_task_detail(
                 api_base = os.getenv("API_PUBLIC_URL", "http://123.57.29.111:8000").rstrip("/")
                 cover_image_url = f"{api_base}/api/v1/images/{session_id}/0"
 
+        # 原始录音 URL：OSS 直链 > 新加坡代理
+        _audio_url: Optional[str] = None
+        if getattr(db_session, "audio_url", None):
+            _audio_url = db_session.audio_url
+        elif getattr(db_session, "audio_path", None):
+            _sg_base = "http://47.79.254.213"
+            _audio_url = f"{_sg_base}/api/v1/tasks/sessions/{session_id}/audio-file"
+
         detail = TaskDetailResponse(
             session_id=str(db_session.id),
             title=db_session.title or "",
@@ -492,6 +501,7 @@ async def get_task_detail(
             speaker_names=speaker_names,
             conversation_summary=conversation_summary,
             cover_image_url=cover_image_url,
+            audio_url=_audio_url,
             created_at=db_session.created_at.isoformat() if db_session.created_at else "",
             updated_at=db_session.updated_at.isoformat() if db_session.updated_at else "",
         )

@@ -5,7 +5,7 @@
 import os
 import json
 import logging
-from typing import List, Dict
+from typing import List, Dict, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import google.generativeai as genai
@@ -196,6 +196,68 @@ WORKPLACE_KEYWORDS = ("同事", "领导", "老板", "上级", "下属", "经理"
 FAMILY_KEYWORDS = ("爸爸", "妈妈", "老婆", "老公", "孩子", "儿子", "女儿", "家人", "父亲", "母亲", "爹", "妈", "爸")
 
 
+# 档案关系类型 -> 强制场景映射
+_WORKPLACE_RELATIONSHIP_TYPES = {
+    "领导", "上级", "老板", "直属领导", "总监", "经理", "主管", "科长", "处长", "局长",
+    "同事", "平级", "同级", "合作方", "客户", "甲方", "下属", "团队成员",
+}
+_FAMILY_RELATIONSHIP_TYPES = {
+    "老婆", "妻子", "老公", "丈夫", "爸爸", "父亲", "妈妈", "母亲",
+    "儿子", "女儿", "孩子", "兄弟", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",
+    "爷爷", "奶奶", "外公", "外婆", "祖父", "祖母", "家人",
+}
+
+
+def _force_scene_by_profiles(profiles: List[Dict], scene_result: Dict) -> Dict:
+    """
+    根据对话档案的 relationship_type 强制覆盖顶级场景。
+
+    规则：
+    - 若任一档案的 relationship_type 属于职场关系 → 强制 primary_scene = workplace，
+      并在 scenes 中把 workplace 置顶（confidence=1.0），同时保留其他场景
+    - 若任一档案的 relationship_type 属于家庭关系 → 强制 primary_scene = family，
+      并在 scenes 中把 family 置顶（confidence=1.0）
+    - 若同时命中两者，以出现顺序（档案列表顺序）优先最先命中的类型
+    - 若未命中，原样返回
+    """
+    if not profiles:
+        return scene_result
+
+    forced_scene = None
+    for p in profiles:
+        rel = (p.get("relationship_type") or "").strip()
+        if rel in _WORKPLACE_RELATIONSHIP_TYPES and forced_scene is None:
+            forced_scene = "workplace"
+        elif rel in _FAMILY_RELATIONSHIP_TYPES and forced_scene is None:
+            forced_scene = "family"
+
+    if forced_scene is None:
+        return scene_result
+
+    # 深拷贝避免修改原 dict
+    import copy
+    result = copy.deepcopy(scene_result)
+    scenes = result.get("scenes", [])
+
+    # 检查目标场景是否已存在，若存在则提升 confidence，否则插入
+    existing = next((s for s in scenes if s.get("category") == forced_scene), None)
+    if existing:
+        existing["confidence"] = 1.0
+        existing["reasoning"] = existing.get("reasoning", "") + "（档案关系强制命中）"
+    else:
+        scenes.insert(0, {
+            "category": forced_scene,
+            "confidence": 1.0,
+            "reasoning": "档案关系类型强制命中",
+        })
+
+    result["scenes"] = scenes
+    result["primary_scene"] = forced_scene
+
+    logger.info(f"[档案场景强制] profiles 中发现 {forced_scene} 关系，强制 primary_scene={forced_scene}")
+    return result
+
+
 def _supplement_scenes_by_participants(transcript: list, scenes: list) -> list:
     """
     根据对话转录中的人称/角色关键词，补充 workplace/family 场景（用于 LLM 漏判时兜底）。
@@ -265,7 +327,7 @@ _DIMENSION_TO_SKILL = {
 }
 
 
-async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = None) -> List[Dict]:
+async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = None, profiles: Optional[List[Dict]] = None) -> List[Dict]:
     """
     根据场景分类结果匹配技能（支持职场多维度匹配）
     
@@ -280,9 +342,13 @@ async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = 
                     matched_sub_skill_id 字段
     """
     matched_skills = []
-    
+
     all_skills = await list_skills(enabled=True, db=db)
-    
+
+    # 档案关系强制场景（优先于 LLM 分类结果）
+    if profiles:
+        scene_result = _force_scene_by_profiles(profiles, scene_result)
+
     scenes = scene_result.get("scenes", [])
     primary_scene = scene_result.get("primary_scene", "other")
     workplace_dimensions = scene_result.get("workplace_dimensions", [])

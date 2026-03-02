@@ -140,11 +140,9 @@ struct StrategyAnalysisView_Updated: View {
                     if !cardsToShow.isEmpty {
                         // 场景图片轮播（置于技能卡片之上）
                         let sceneImgs = analysis.sceneImages ?? []
-                        if !sceneImgs.isEmpty {
-                            SceneRestoreImageCarouselView(sceneImages: sceneImgs, baseURL: baseURL)
-                                .padding(.horizontal, 0.69)
-                                .padding(.top, 0)
-                        }
+                        SceneRestoreImageCarouselView(sceneImages: sceneImgs, baseURL: baseURL)
+                            .padding(.horizontal, 0.69)
+                            .padding(.top, 0)
                         SkillCardsTabView(cards: cardsToShow, baseURL: baseURL)
                             .padding(.horizontal, 0.69)
                             .padding(.top, 0)
@@ -165,11 +163,9 @@ struct StrategyAnalysisView_Updated: View {
                                 .padding(.vertical, 8)
                             }
                             let legacySceneImgs = analysis.sceneImages ?? []
-                            if !legacySceneImgs.isEmpty {
-                                SceneRestoreImageCarouselView(sceneImages: legacySceneImgs, baseURL: baseURL)
+                            SceneRestoreImageCarouselView(sceneImages: legacySceneImgs, baseURL: baseURL)
                                 .padding(.horizontal, 0.69)
                                 .padding(.top, 0)
-                            }
                             
                             LegacyStrategyContent(
                                 analysis: analysis,
@@ -967,42 +963,174 @@ struct StrategyButtonView: View {
 struct StrategyPouchSheet: View {
     let strategy: StrategyItem
     let onClose: () -> Void
-    
+
     var body: some View {
         VStack(spacing: 0) {
-            // 顶部栏：关闭按钮右对齐
-            HStack {
-                Spacer()
+            // 拖拽把手
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(Color(hex: "#D1C9BC"))
+                .frame(width: 36, height: 5)
+                .padding(.top, 12)
+                .padding(.bottom, 18)
+
+            // 标题行
+            HStack(alignment: .top, spacing: 10) {
+                if let emoji = strategy.emoji, !emoji.isEmpty {
+                    Text(emoji)
+                        .font(.system(size: 26))
+                        .padding(.top, 2)
+                }
+                Text(strategy.title)
+                    .font(.system(size: 20, weight: .black, design: .rounded))
+                    .foregroundColor(AppColors.headerText)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
                 Button(action: onClose) {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 28))
-                        .foregroundColor(AppColors.headerText.opacity(0.5))
+                        .font(.system(size: 26))
+                        .foregroundColor(AppColors.headerText.opacity(0.28))
                 }
-                .padding(.trailing, 16)
-                .padding(.top, 12)
             }
-            
+            .padding(.horizontal, 20)
+            .padding(.bottom, 16)
+
+            // 分隔线
+            Rectangle()
+                .fill(Color(hex: "#E8DCC6"))
+                .frame(height: 1)
+                .padding(.horizontal, 20)
+
+            // 正文：Markdown 渲染
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text(strategy.title)
-                        .font(.system(size: 20, weight: .black, design: .rounded))
-                        .foregroundColor(AppColors.headerText)
-                    
-                    Text(strategy.content)
-                        .font(.system(size: 15, weight: .regular, design: .rounded))
-                        .foregroundColor(AppColors.headerText.opacity(0.85))
-                        .lineSpacing(8)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(24)
+                MarkdownBodyView(content: strategy.content)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 20)
+                    .padding(.bottom, 36)
             }
         }
         .background(AppColors.cardBackground)
-        .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(Color(hex: "#E8DCC6"), lineWidth: 1)
-        )
-        .cornerRadius(16)
+    }
+}
+
+// MARK: - Markdown 块类型（私有）
+private enum MDBlock {
+    case h2(String)
+    case h3(String)
+    case bullet(String)
+    case body(String)
+}
+
+// MARK: - 轻量级 Markdown 渲染（支持 ##/###/列表/加粗斜体）
+private struct MarkdownBodyView: View {
+    let content: String
+
+    // 将 content 文本解析为有序块列表
+    private var blocks: [MDBlock] {
+        var result: [MDBlock] = []
+        var paraLines: [String] = []
+
+        func flushPara() {
+            let text = paraLines.joined(separator: "\n").trimmingCharacters(in: .whitespaces)
+            if !text.isEmpty { result.append(.body(text)) }
+            paraLines.removeAll()
+        }
+
+        for line in content.components(separatedBy: "\n") {
+            if line.hasPrefix("### ") {
+                flushPara()
+                result.append(.h3(String(line.dropFirst(4))))
+            } else if line.hasPrefix("## ") {
+                flushPara()
+                result.append(.h2(String(line.dropFirst(3))))
+            } else if line.hasPrefix("# ") {
+                flushPara()
+                result.append(.h2(String(line.dropFirst(2))))
+            } else if line.hasPrefix("- ") || line.hasPrefix("• ") {
+                flushPara()
+                result.append(.bullet(String(line.dropFirst(2))))
+            } else if line.hasPrefix("* ") {
+                flushPara()
+                result.append(.bullet(String(line.dropFirst(2))))
+            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                flushPara()
+            } else {
+                paraLines.append(line)
+            }
+        }
+        flushPara()
+        return result
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { idx, block in
+                mdBlockView(block, isFirst: idx == 0)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // 渲染单个 Markdown 块
+    @ViewBuilder
+    private func mdBlockView(_ block: MDBlock, isFirst: Bool) -> some View {
+        switch block {
+
+        // ## 一级标题：大字加粗，顶部大间距
+        case .h2(let text):
+            mdText(text)
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundColor(AppColors.headerText)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, isFirst ? 0 : 28)
+                .padding(.bottom, 8)
+
+        // ### 二级标题：彩色小标题
+        case .h3(let text):
+            mdText(text)
+                .font(.system(size: 14, weight: .bold, design: .rounded))
+                .foregroundColor(Color(hex: "#5E7C8B"))
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, isFirst ? 0 : 22)
+                .padding(.bottom, 10)
+
+        // 列表项：圆点 + 内联 Markdown
+        case .bullet(let text):
+            HStack(alignment: .top, spacing: 9) {
+                Circle()
+                    .fill(Color(hex: "#8B9E6A"))
+                    .frame(width: 5, height: 5)
+                    .padding(.top, 8)
+                mdText(text)
+                    .font(.system(size: 14, design: .rounded))
+                    .foregroundColor(AppColors.headerText.opacity(0.83))
+                    .lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.bottom, 7)
+
+        // 正文段落：内联 Markdown，行距舒适
+        case .body(let text):
+            mdText(text)
+                .font(.system(size: 14, design: .rounded))
+                .foregroundColor(AppColors.headerText.opacity(0.78))
+                .lineSpacing(6)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.bottom, 12)
+        }
+    }
+
+    // 用 AttributedString 渲染内联 Markdown（**bold**、_italic_、`code`）
+    // 失败时降级为纯文本
+    @ViewBuilder
+    private func mdText(_ raw: String) -> some View {
+        if let attributed = try? AttributedString(
+            markdown: raw,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) {
+            Text(attributed)
+        } else {
+            Text(raw)
+        }
     }
 }
 
@@ -1046,25 +1174,41 @@ struct SceneRestoreImageCarouselView: View {
         GeometryReader { geo in
             let width = geo.size.width
             let height = width / imageAspectRatio
-            TabView(selection: $currentIndex) {
-                ForEach(Array(sceneImages.enumerated()), id: \.element.id) { index, sceneImage in
-                    SceneRestoreImageView(
-                        sceneImage: sceneImage,
-                        baseURL: baseURL,
-                        onTap: {
-                            fullScreenInitialIndex = index
-                            showFullScreen = true
+            if sceneImages.isEmpty {
+                // 无图片时显示灰色占位区，保持布局稳定
+                Color(hex: "#F5F3EF")
+                    .frame(width: width, height: height)
+                    .overlay(
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.on.rectangle.angled")
+                                .font(.system(size: 28))
+                                .foregroundColor(Color(hex: "#C4B89A").opacity(0.6))
+                            Text("场景还原图生成中")
+                                .font(.system(size: 12))
+                                .foregroundColor(Color(hex: "#9B8C74").opacity(0.8))
                         }
                     )
-                    .frame(width: width, height: height)
-                    .tag(index)
+            } else {
+                TabView(selection: $currentIndex) {
+                    ForEach(Array(sceneImages.enumerated()), id: \.element.id) { index, sceneImage in
+                        SceneRestoreImageView(
+                            sceneImage: sceneImage,
+                            baseURL: baseURL,
+                            onTap: {
+                                fullScreenInitialIndex = index
+                                showFullScreen = true
+                            }
+                        )
+                        .frame(width: width, height: height)
+                        .tag(index)
+                    }
                 }
-            }
-            .tabViewStyle(PageTabViewStyle(indexDisplayMode: sceneImages.count > 1 ? .automatic : .never))
-            .frame(width: width, height: height)
-            .onAppear {
-                UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(red: 94/255, green: 124/255, blue: 139/255, alpha: 1)
-                UIPageControl.appearance().pageIndicatorTintColor = UIColor(red: 232/255, green: 220/255, blue: 198/255, alpha: 1)
+                .tabViewStyle(PageTabViewStyle(indexDisplayMode: sceneImages.count > 1 ? .automatic : .never))
+                .frame(width: width, height: height)
+                .onAppear {
+                    UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(red: 94/255, green: 124/255, blue: 139/255, alpha: 1)
+                    UIPageControl.appearance().pageIndicatorTintColor = UIColor(red: 232/255, green: 220/255, blue: 198/255, alpha: 1)
+                }
             }
         }
         .aspectRatio(imageAspectRatio, contentMode: .fit)
