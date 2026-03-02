@@ -8,6 +8,7 @@ sub_skills:
     name: 向上管理
     description: "与上级建立信任关系，有效汇报工作进展，争取资源支持"
     cover_color: "#FF6B6B"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/managing_up_pixar.png"
     keywords: ["老板", "领导", "上级", "汇报", "请示", "批准", "审批", "总", "总监", "主管"]
     pro_content:
       tagline: "让领导永远不感到意外"
@@ -26,6 +27,7 @@ sub_skills:
     name: 向下管理
     description: "有效领导团队，合理授权委派，激发下属动力与成长"
     cover_color: "#4ECDC4"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/managing_down_pixar.png"
     keywords: ["下属", "团队", "安排", "委派", "指导", "考核", "带人", "新人", "实习"]
     pro_content:
       tagline: "让人才愿意留下来，且愿意拼命"
@@ -44,6 +46,7 @@ sub_skills:
     name: 横向协作
     description: "无权威影响力下推动跨部门合作，建立互利共赢的协作关系"
     cover_color: "#45B7D1"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/peer_collaboration_pixar.png"
     keywords: ["同事", "协作", "配合", "跨部门", "协调", "对接", "合作", "平级"]
     pro_content:
       tagline: "没有权力，照样让事情发生"
@@ -62,6 +65,7 @@ sub_skills:
     name: 对外沟通
     description: "管理客户关系与外部合作，维护品牌形象与商业利益"
     cover_color: "#96CEB4"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/external_communication_pixar.png"
     keywords: ["客户", "合作方", "外部", "销售", "公关", "供应商", "甲方", "乙方", "投资人"]
     pro_content:
       tagline: "先建信任，再做生意"

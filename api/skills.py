@@ -221,7 +221,7 @@ async def get_skills_catalog(
                         "name": sub.get("name", sub_id),
                         "description": sub.get("description", ""),
                         "cover_color": sub.get("cover_color"),
-                        "cover_image": None,
+                        "cover_image": sub.get("cover_image") or None,
                         "video_url": None,
                         "selected": sub_id in selected_set,
                         "pro_content": sub.get("pro_content") or None,

@@ -15,31 +15,62 @@ struct SkillDetailSheet: View {
         Color(hex: skill.coverColor ?? "#636e72")
     }
 
+    private var gradientCover: some View {
+        LinearGradient(
+            colors: [baseColor.opacity(0.85), baseColor.opacity(0.3)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
 
-                    // ── Hero 渐变封面 ──
+                    // ── Hero 封面图（有 cover_image 显示生成图，否则显示渐变色占位）──
                     ZStack(alignment: .bottomLeading) {
-                        LinearGradient(
-                            colors: [baseColor.opacity(0.85), baseColor.opacity(0.3)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        .frame(height: 180)
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        if let coverUrl = skill.coverImage, !coverUrl.isEmpty,
+                           let url = URL(string: coverUrl) {
+                            AsyncImage(url: url) { phase in
+                                switch phase {
+                                case .success(let img):
+                                    img.resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                case .failure:
+                                    gradientCover
+                                default:
+                                    gradientCover
+                                        .overlay(ProgressView().tint(.white))
+                                }
+                            }
+                            .frame(height: 210)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        } else {
+                            gradientCover
+                                .frame(height: 210)
+                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        }
 
-                        // Tagline
+                        // Tagline 叠加在封面底部
                         if let tagline = skill.proContent?.tagline {
+                            LinearGradient(
+                                colors: [.clear, .black.opacity(0.55)],
+                                startPoint: .center,
+                                endPoint: .bottom
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+
                             Text("「\(tagline)」")
-                                .font(.system(size: 14, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.9))
+                                .font(.system(size: 13, weight: .medium, design: .rounded))
+                                .foregroundColor(.white.opacity(0.92))
                                 .padding(.horizontal, 16)
-                                .padding(.bottom, 16)
-                                .shadow(radius: 4)
+                                .padding(.bottom, 14)
+                                .shadow(radius: 3)
                         }
                     }
+                    .frame(height: 210)
                     .padding(.horizontal, 16)
                     .padding(.top, 8)
 
