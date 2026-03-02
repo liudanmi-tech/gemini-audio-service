@@ -8,6 +8,7 @@ sub_skills:
     name: 防御技能
     description: "设定边界与自我保护，学会优雅地说不，守住底线"
     cover_color: "#7F8C8D"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/defensive_pixar.png"
     keywords: ["保护", "边界", "拒绝", "不行", "底线", "退让", "妥协", "被动", "忍"]
     pro_content:
       tagline: "优雅地说「不」，是职场最贵的软实力"
@@ -26,6 +27,7 @@ sub_skills:
     name: 进攻技型
     description: "主动争取与推动变革，有力量地挑战现状、驱动改变"
     cover_color: "#E67E22"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/offensive_pixar.png"
     keywords: ["主动", "挑战", "要求", "争取", "推动", "施压", "改变", "突破"]
     pro_content:
       tagline: "主动出击，是改写职场命运的唯一方式"
@@ -44,6 +46,7 @@ sub_skills:
     name: 建设技能
     description: "以问题解决为导向，构建双赢方案，推动正和博弈"
     cover_color: "#27AE60"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/constructive_pixar.png"
     keywords: ["合作", "双赢", "方案", "解决", "建设", "优化", "改进", "一起"]
     pro_content:
       tagline: "把蛋糕做大，比争分更大的那块更有价值"
@@ -62,6 +65,7 @@ sub_skills:
     name: 治愈技能
     description: "共情式倾听与情感支持，用温暖修复关系与信任"
     cover_color: "#FF9FF3"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/healing_pixar.png"
     keywords: ["安慰", "支持", "倾听", "理解", "共情", "关心", "帮助", "陪伴"]
     pro_content:
       tagline: "被真正听见，是人类最深层的渴望"

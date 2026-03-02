@@ -8,6 +8,7 @@ sub_skills:
     name: 冲突化解
     description: "化解争端与矛盾，将对抗转为合作，维护职场关系"
     cover_color: "#E74C3C"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/conflict_resolution_pixar.png"
     keywords: ["冲突", "争吵", "不满", "投诉", "矛盾", "翻脸", "撕", "怼", "吵"]
     pro_content:
       tagline: "把对抗变成合作，是最高级的职场能力"
@@ -26,6 +27,7 @@ sub_skills:
     name: 谈判博弈
     description: "掌握薪资、资源、条件的谈判技巧，争取最优结果"
     cover_color: "#F39C12"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/negotiation_pixar.png"
     keywords: ["谈判", "博弈", "条件", "底线", "让步", "薪资", "涨薪", "资源", "预算"]
     pro_content:
       tagline: "谈判不是零和游戏，而是创造更大蛋糕"
@@ -44,6 +46,7 @@ sub_skills:
     name: 汇报展示
     description: "结构化表达与展示技巧，让汇报清晰有力、打动听众"
     cover_color: "#3498DB"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/presentation_pixar.png"
     keywords: ["汇报", "展示", "PPT", "方案", "述职", "演讲", "总结", "复盘"]
     pro_content:
       tagline: "结论先行，让决策者在 30 秒内听懂你"
@@ -62,6 +65,7 @@ sub_skills:
     name: 闲聊社交
     description: "职场破冰与社交技巧，建立人脉关系与社交资本"
     cover_color: "#2ECC71"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/small_talk_pixar.png"
     keywords: ["聊天", "闲聊", "吃饭", "团建", "破冰", "社交", "饭局", "应酬"]
     pro_content:
       tagline: "70% 的职场机会，藏在非正式对话里"
@@ -80,6 +84,7 @@ sub_skills:
     name: 危机公关
     description: "危机应对与声誉修复，将损失降到最低并化危为机"
     cover_color: "#9B59B6"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/crisis_management_pixar.png"
     keywords: ["危机", "公关", "道歉", "失误", "事故", "舆论", "背锅", "甩锅", "追责"]
     pro_content:
       tagline: "危机中的每一分钟，都在重写你的职场故事"

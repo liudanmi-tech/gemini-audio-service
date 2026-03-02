@@ -8,6 +8,7 @@ sub_skills:
     name: 新人小白技能
     description: "快速融入团队，建立专业信任，掌握职场生存基础法则"
     cover_color: "#74B9FF"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/rookie_pixar.png"
     keywords: ["新人", "刚来", "实习", "试用期", "不懂", "请教", "学习", "入职", "应届"]
     pro_content:
       tagline: "头 90 天的印象，影响未来 2 年的机会"
@@ -26,6 +27,7 @@ sub_skills:
     name: 骨干/中层技能
     description: "高效执行与团队协调，管理资源分配与上下沟通"
     cover_color: "#A29BFE"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/core_manager_pixar.png"
     keywords: ["负责", "带队", "项目经理", "主管", "骨干", "晋升", "管理", "KPI"]
     pro_content:
       tagline: "夹心层的艺术：上能影响决策，下能激活团队"
@@ -44,6 +46,7 @@ sub_skills:
     name: 高管/领袖技能
     description: "战略决策与愿景沟通，塑造组织文化与领导影响力"
     cover_color: "#6C5CE7"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/executive_pixar.png"
     keywords: ["战略", "决策", "方向", "全局", "布局", "愿景", "文化", "董事"]
     pro_content:
       tagline: "高管的核心工作是让组织相信未来"

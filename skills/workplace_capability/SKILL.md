@@ -8,6 +8,7 @@ sub_skills:
     name: 逻辑思维技能
     description: "结构化思考与表达，用金字塔原理让沟通清晰有力"
     cover_color: "#00B894"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/logical_thinking_pixar.png"
     keywords: ["逻辑", "分析", "结构", "数据", "论证", "推理", "条理", "框架", "方法论"]
     pro_content:
       tagline: "一张嘴说清楚，比十页 PPT 更有力量"
@@ -26,6 +27,7 @@ sub_skills:
     name: 情商提升
     description: "提升情绪感知与社交技能，让沟通更有温度和分寸"
     cover_color: "#FDCB6E"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/eq_pixar.png"
     keywords: ["情绪", "感受", "氛围", "面子", "台阶", "尴尬", "委婉", "暗示", "察言观色"]
     pro_content:
       tagline: "情商不是讨好，是在对的时机说对的话"
@@ -44,6 +46,7 @@ sub_skills:
     name: 影响力提升
     description: "提升说服力与感召力，让你的声音被听到、被跟随"
     cover_color: "#E17055"
+    cover_image: "https://geminipicture2.oss-cn-beijing.aliyuncs.com/skill_covers/influence_pixar.png"
     keywords: ["说服", "影响", "推动", "号召", "带动", "激励", "感染", "领导力"]
     pro_content:
       tagline: "真正的影响力，是让别人主动说「是」"
