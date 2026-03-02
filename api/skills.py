@@ -247,9 +247,10 @@ async def get_skills_catalog(
                     "name": skill["name"],
                     "description": display_desc,
                     "cover_color": cover_color,
-                    "cover_image": None,
+                    "cover_image": _cover_filename(metadata.get("cover_image")),
                     "video_url": None,
                     "selected": sid in selected_set,
+                    "pro_content": metadata.get("pro_content") or None,
                 })
 
         categories = []

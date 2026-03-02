@@ -31,51 +31,50 @@ struct SkillCatalogCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Cover area
-            ZStack(alignment: .topTrailing) {
-                // 封面：图片或渐变占位，统一由外层 frame + clipped 控制尺寸
-                if let proxyURL = coverProxyURL {
-                    AsyncImage(url: proxyURL) { phase in
-                        switch phase {
-                        case .success(let img):
-                            img.resizable()
-                                .aspectRatio(contentMode: .fill)
-                        case .failure:
-                            coverGradient
-                        default:
-                            coverGradient
-                                .overlay(ProgressView().tint(.white).scaleEffect(0.7))
-                        }
-                    }
-                } else {
-                    coverGradient
-                }
-
-                // 手动模式：右上角勾选圆圈
-                if isManualMode {
-                    Button(action: onToggle) {
-                        ZStack {
-                            if isSelected {
-                                Circle()
-                                    .fill(Color.white)
-                                    .frame(width: 24, height: 24)
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 12, weight: .bold))
-                                    .foregroundColor(baseColor)
-                            } else {
-                                Circle()
-                                    .stroke(Color.white.opacity(0.6), lineWidth: 1.5)
-                                    .frame(width: 24, height: 24)
+            // 封面：渐变色占位作为尺寸锚点，图片叠在上面
+            coverGradient
+                .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
+                .overlay {
+                    if let proxyURL = coverProxyURL {
+                        AsyncImage(url: proxyURL) { phase in
+                            switch phase {
+                            case .success(let img):
+                                img.resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            case .failure:
+                                EmptyView()
+                            default:
+                                ProgressView().tint(.white).scaleEffect(0.7)
                             }
                         }
+                        .clipped()
                     }
-                    .padding(10)
                 }
-            }
-            .frame(height: 120)          // ← 高度统一在 ZStack 层锁定
-            .clipped()                   // ← 超出部分裁掉
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(Rectangle())
-            .onTapGesture { onTapCover() }
+                .overlay(alignment: .topTrailing) {
+                    // 手动模式：右上角勾选圆圈
+                    if isManualMode {
+                        Button(action: onToggle) {
+                            ZStack {
+                                if isSelected {
+                                    Circle()
+                                        .fill(Color.white)
+                                        .frame(width: 24, height: 24)
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 12, weight: .bold))
+                                        .foregroundColor(baseColor)
+                                } else {
+                                    Circle()
+                                        .stroke(Color.white.opacity(0.6), lineWidth: 1.5)
+                                        .frame(width: 24, height: 24)
+                                }
+                            }
+                        }
+                        .padding(10)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .contentShape(Rectangle())
+                .onTapGesture { onTapCover() }
 
             // Name + description
             VStack(alignment: .leading, spacing: 4) {
