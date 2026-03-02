@@ -971,7 +971,7 @@ class NetworkManager {
         }
 
         let dataTask = AF.request(
-            "\(baseURLForWrite)/skills/preferences",
+            "\(baseURLForRead)/skills/preferences",
             method: .put,
             parameters: body,
             encoding: JSONEncoding.default,
