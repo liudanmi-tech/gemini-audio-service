@@ -19,13 +19,40 @@ struct SkillCatalogCardView: View {
         return Color(hex: "#636e72")
     }
 
+    /// 将 cover_image 文件名转为代理 URL
+    private var coverProxyURL: URL? {
+        guard let raw = skill.coverImage, !raw.isEmpty else { return nil }
+        let filename = raw.hasPrefix("http")
+            ? (URL(string: raw)?.lastPathComponent ?? raw)
+            : raw.components(separatedBy: "/").last ?? raw
+        return URL(string: "\(NetworkManager.shared.getBaseURL())/skills/covers/\(filename)")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Cover area
             ZStack(alignment: .topTrailing) {
-                coverGradient
-                    .frame(height: 120)
+                if let proxyURL = coverProxyURL {
+                    AsyncImage(url: proxyURL) { phase in
+                        switch phase {
+                        case .success(let img):
+                            img.resizable()
+                                .aspectRatio(contentMode: .fill)
+                                .frame(height: 120)
+                                .clipped()
+                        case .failure:
+                            coverGradient.frame(height: 120)
+                        default:
+                            coverGradient.frame(height: 120)
+                                .overlay(ProgressView().tint(.white).scaleEffect(0.7))
+                        }
+                    }
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                } else {
+                    coverGradient
+                        .frame(height: 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
 
                 // 自动模式：右上角不显示圆圈，自动模式的"选中"用封面右上角小徽章表示
                 // 手动模式：显示可点击的勾选圆圈
