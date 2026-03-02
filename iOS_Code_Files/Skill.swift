@@ -159,6 +159,23 @@ struct SkillsAPIResponse: Codable {
 
 // MARK: - 技能目录模型（分类+子技能展开）
 
+// 技能专业内容（书单 + 研究数据 + 匿名案例 + 效果）
+struct SkillProContent: Codable {
+    let tagline: String?
+    let books: [String]?
+    let research: String?
+    let casestudy: String?
+    let effects: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case tagline
+        case books
+        case research
+        case casestudy = "case_study"
+        case effects
+    }
+}
+
 struct SkillCatalogItem: Codable, Identifiable, Hashable {
     let skillId: String
     let parentSkillId: String?
@@ -168,6 +185,7 @@ struct SkillCatalogItem: Codable, Identifiable, Hashable {
     let coverImage: String?
     let videoUrl: String?
     var selected: Bool
+    let proContent: SkillProContent?
 
     var id: String { skillId }
 
@@ -183,6 +201,7 @@ struct SkillCatalogItem: Codable, Identifiable, Hashable {
         case coverImage = "cover_image"
         case videoUrl = "video_url"
         case selected
+        case proContent = "pro_content"
     }
 }
 

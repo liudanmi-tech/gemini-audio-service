@@ -224,6 +224,7 @@ async def get_skills_catalog(
                         "cover_image": None,
                         "video_url": None,
                         "selected": sub_id in selected_set,
+                        "pro_content": sub.get("pro_content") or None,
                     })
             else:
                 sid = skill["skill_id"]
