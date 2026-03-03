@@ -32,11 +32,11 @@ struct TaskCardView: View {
     /// 是否处于策略阶段（7-12 步），用于右上角 badge
     private var isStrategyPhase: Bool {
         guard let stage = task.progressDescription else { return false }
-        return stage.contains("识别场景")
-            || stage.contains("匹配技能") || stage.contains("匹配了")
-            || stage.contains("技能加工")
-            || stage.contains("生成图片")
-            || stage.contains("策略就绪")
+        return stage.contains("Identifying scene")
+            || stage.contains("Matching skills") || stage.contains("Matched")
+            || stage.contains("Processing skills")
+            || stage.contains("Generating images")
+            || stage.contains("Strategy ready")
     }
     
     var body: some View {
@@ -46,7 +46,7 @@ struct TaskCardView: View {
                 ImageLoaderView(
                     imageUrl: accessibleImageURL(url),
                     imageBase64: nil,
-                    placeholder: "加载中",
+                    placeholder: "Loading",
                     contentMode: .fill,
                     onLoadFailed: { coverLoadFailed = true }
                 )
@@ -182,15 +182,15 @@ struct TaskCardView: View {
     private var placeholderText: String {
         switch task.status {
         case .recording:
-            return "录音中"
+            return "Recording"
         case .analyzing:
-            return task.progressDescription ?? "分析中"
+            return task.progressDescription ?? "Analyzing"
         case .archived:
             return ""
         case .burned:
-            return "已焚毁"
+            return "Burned"
         case .failed:
-            return "分析失败"
+            return "Analysis Failed"
         }
     }
     
@@ -224,8 +224,8 @@ struct TaskCardView: View {
     
     private var formattedTime: String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.dateFormat = "M月d日 HH:mm"
+        formatter.locale = Locale(identifier: "en_US")
+        formatter.dateFormat = "MMM d, h:mm a"
         return formatter.string(from: task.startTime)
     }
     

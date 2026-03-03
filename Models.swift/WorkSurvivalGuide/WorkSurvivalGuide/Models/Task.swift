@@ -516,23 +516,23 @@ struct TaskStatusResponse: Codable {
     var stageDisplayText: String? {
         guard let s = analysisStage, !s.isEmpty else { return nil }
         switch s {
-        case "upload_done": return "上传完成"
-        case "saving_audio": return "保存音频…"
-        case "transcribing": return "转写音频…"
-        case "matching_profiles": return "匹配档案…"
-        case "strategy_scene": return "识别场景…"
-        case "strategy_matching": return "匹配技能…"
+        case "upload_done": return "Upload complete"
+        case "saving_audio": return "Saving audio…"
+        case "transcribing": return "Transcribing…"
+        case "matching_profiles": return "Matching profiles…"
+        case "strategy_scene": return "Identifying scene…"
+        case "strategy_matching": return "Matching skills…"
         case "strategy_matched_n":
             if let n = analysisStageDetail?.skillsMatched {
-                return "匹配了 \(n) 个技能"
+                return "Matched \(n) skills"
             }
-            return "匹配技能完成"
-        case "strategy_executing": return "技能加工中…"
-        case "strategy_images": return "生成图片中…"
-        case "strategy_done": return "策略就绪"
-        case "oss_upload": return "正在上传到云端…"
-        case "gemini_analysis": return "正在分析对话…"
-        case "voiceprint": return "正在匹配说话人…"
+            return "Skills matched"
+        case "strategy_executing": return "Processing skills…"
+        case "strategy_images": return "Generating images…"
+        case "strategy_done": return "Strategy ready"
+        case "oss_upload": return "Uploading to cloud…"
+        case "gemini_analysis": return "Analyzing conversation…"
+        case "voiceprint": return "Matching speakers…"
         default: return nil
         }
     }

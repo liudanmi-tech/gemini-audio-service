@@ -13,7 +13,7 @@ class RecordingViewModel: ObservableObject {
     @Published var recordingTime: TimeInterval = 0
     @Published var isUploading = false
     @Published var uploadProgress: Double = 0  // 0~1，1.0 表示已发送完毕，等待服务器响应
-    @Published var uploadPhaseDescription: String = "上传中"  // "上传中" | "正在处理，请稍候..."
+    @Published var uploadPhaseDescription: String = "Uploading"  // "Uploading" | "Processing, please wait..."
     
     private let audioRecorder = AudioRecorderService.shared
     private let networkManager = NetworkManager.shared
@@ -41,7 +41,7 @@ class RecordingViewModel: ObservableObject {
         
         let newTask = TaskItem(
             id: taskId,
-            title: "录音 \(timeString)",
+            title: "Recording \(timeString)",
             startTime: startTime,
             endTime: nil,
             duration: 0,
@@ -108,7 +108,7 @@ class RecordingViewModel: ObservableObject {
         timer = nil
         isUploading = true
         uploadProgress = 0
-        uploadPhaseDescription = "上传中"
+        uploadPhaseDescription = "Uploading"
         
         // 更新卡片状态为"分析中"（在 Real API 模式下，后续会用服务器 ID 替换）
         if let taskId = currentRecordingTaskId {
@@ -119,7 +119,7 @@ class RecordingViewModel: ObservableObject {
             
             let updatedTask = TaskItem(
                 id: taskId,
-                title: "录音 \(timeString)",
+                title: "Recording \(timeString)",
                 startTime: startTime,
                 endTime: nil,
                 duration: recordingDuration,
@@ -127,7 +127,7 @@ class RecordingViewModel: ObservableObject {
                 status: .analyzing,
                 emotionScore: nil,
                 speakerCount: nil,
-                progressDescription: "上传中"
+                progressDescription: "Uploading"
             )
             
             print("🔄 [RecordingViewModel] 更新卡片状态为'分析中':")
@@ -180,7 +180,7 @@ class RecordingViewModel: ObservableObject {
                     // 注意：Mock模式下，analysisResult可能没有summary，使用nil
                     let completedTask = TaskItem(
                         id: taskId, // 使用现有的任务 ID
-                        title: "录音 \(timeString)",
+                        title: "Recording \(timeString)",
                         startTime: startTime,
                         endTime: endTime,
                         duration: recordingDuration,
@@ -211,7 +211,7 @@ class RecordingViewModel: ObservableObject {
                         onProgress: { [weak self] pct in
                             Task { @MainActor in
                                 self?.uploadProgress = pct
-                                let text = pct >= 1.0 ? "上传完成" : "上传中 \(Int(pct * 100))%"
+                                let text = pct >= 1.0 ? "Upload complete" : "Uploading \(Int(pct * 100))%"
                                 self?.uploadPhaseDescription = text
                                 if let taskId = self?.currentRecordingTaskId {
                                     NotificationCenter.default.post(
@@ -255,7 +255,7 @@ class RecordingViewModel: ObservableObject {
                         status: .analyzing,
                         emotionScore: nil,
                         speakerCount: nil,
-                        progressDescription: "上传完成"
+                        progressDescription: "Upload complete"
                     )
                     
                     print("📝 [RecordingViewModel] 使用服务器 ID 创建任务:")
@@ -343,7 +343,7 @@ class RecordingViewModel: ObservableObject {
         // 创建本地任务卡片
         let newTask = TaskItem(
             id: taskId,
-            title: "本地上传 \(timeString)",
+            title: "Local Upload \(timeString)",
             startTime: startTime,
             endTime: nil,
             duration: 0,
@@ -351,7 +351,7 @@ class RecordingViewModel: ObservableObject {
             status: .analyzing,
             emotionScore: nil,
             speakerCount: nil,
-            progressDescription: "上传中"
+            progressDescription: "Uploading"
         )
         
         Task { @MainActor in
@@ -360,7 +360,7 @@ class RecordingViewModel: ObservableObject {
         
         isUploading = true
         uploadProgress = 0
-        uploadPhaseDescription = "上传中"
+        uploadPhaseDescription = "Uploading"
         print("📤 [RecordingViewModel] 上传状态已设置为 true")
         
         Task {
@@ -378,7 +378,7 @@ class RecordingViewModel: ObservableObject {
                     let analysisResult = try await GeminiAnalysisService.shared.analyzeAudio(fileURL: tempURL)
                     let completedTask = TaskItem(
                         id: taskId,
-                        title: "本地上传 \(timeString)",
+                        title: "Local Upload \(timeString)",
                         startTime: startTime,
                         endTime: Date(),
                         duration: 0,
@@ -397,11 +397,11 @@ class RecordingViewModel: ObservableObject {
                     print("🌐 [RecordingViewModel] 真实 API：开始本地上传（调用 uploadAudio）...")
                     let response = try await networkManager.uploadAudio(
                         fileURL: tempURL,
-                        title: "本地上传 \(timeString)",
+                        title: "Local Upload \(timeString)",
                         onProgress: { [weak self] pct in
                             Task { @MainActor in
                                 self?.uploadProgress = pct
-                                let text = pct >= 1.0 ? "上传完成" : "上传中 \(Int(pct * 100))%"
+                                let text = pct >= 1.0 ? "Upload complete" : "Uploading \(Int(pct * 100))%"
                                 self?.uploadPhaseDescription = text
                                 NotificationCenter.default.post(
                                     name: NSNotification.Name("TaskProgressUpdated"),
@@ -427,7 +427,7 @@ class RecordingViewModel: ObservableObject {
                         status: .analyzing,
                         emotionScore: nil,
                         speakerCount: nil,
-                        progressDescription: "上传完成"
+                        progressDescription: "Upload complete"
                     )
                     
                     await MainActor.run {
@@ -586,7 +586,7 @@ class RecordingViewModel: ObservableObject {
                     if status.status == "failed" {
                         let message = status.failureReason?.isEmpty == false
                             ? status.failureReason!
-                            : "音频分析失败，请重试"
+                            : "Audio analysis failed, please try again"
                         print("❌ [RecordingViewModel] 分析失败: \(message)")
                         await MainActor.run {
                             print("📢 [RecordingViewModel] 发送 TaskAnalysisFailed 通知")
@@ -631,7 +631,7 @@ class RecordingViewModel: ObservableObject {
                     NotificationCenter.default.post(
                         name: NSNotification.Name("TaskAnalysisTimeout"),
                         object: sessionId,
-                        userInfo: ["message": "分析超时，请稍后查看任务状态"]
+                        userInfo: ["message": "Analysis timed out, please check task status later"]
                     )
                 }
             }

@@ -246,11 +246,11 @@ class TaskListViewModel: ObservableObject {
         
         let calendar = Calendar.current
         if calendar.isDateInToday(date) {
-            return "今天"
+            return "Today"
         } else if calendar.isDateInYesterday(date) {
-            return "昨天"
+            return "Yesterday"
         } else {
-            formatter.dateFormat = "yyyy年MM月dd日"
+            formatter.dateFormat = "MMM d, yyyy"
             return formatter.string(from: date)
         }
     }
