@@ -14,6 +14,57 @@ from sqlalchemy import select
 logger = logging.getLogger(__name__)
 
 
+async def _detect_speaker_genders(transcript_str: str, gemini_flash_model: str) -> str:
+    """
+    分析对话文本，判断各说话人性别，返回可直接拼入 prompt 的性别提示字符串。
+    例："左侧人物为男性，右侧人物为女性。"
+    失败或无法判断时返回空字符串。
+    """
+    try:
+        prompt = (
+            "请分析以下对话，判断每位说话人最可能的性别（男/女/未知）。\n"
+            "只返回 JSON，格式：{\"Speaker_0\": \"男\", \"Speaker_1\": \"女\"}\n\n"
+            f"对话内容：\n{transcript_str[:1200]}"
+        )
+        model = genai.GenerativeModel(gemini_flash_model)
+        response = await asyncio.to_thread(model.generate_content, prompt)
+        raw = response.text.strip()
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if not m:
+            return ""
+        gender_data: dict = json.loads(m.group())
+        speakers = list(gender_data.keys())
+
+        def gender_zh(key):
+            v = gender_data.get(key, "未知")
+            if v == "男":
+                return "男性"
+            if v == "女":
+                return "女性"
+            return None
+
+        if len(speakers) >= 2:
+            lg = gender_zh(speakers[0])
+            rg = gender_zh(speakers[1])
+            parts = []
+            if lg:
+                parts.append(f"左侧人物为{lg}")
+            if rg:
+                parts.append(f"右侧人物为{rg}")
+            hint = "，".join(parts) + "。" if parts else ""
+        elif len(speakers) == 1:
+            g = gender_zh(speakers[0])
+            hint = f"画面中人物为{g}。" if g else ""
+        else:
+            hint = ""
+
+        logger.info(f"[场景生图] 性别检测结果: {gender_data} -> hint='{hint}'")
+        return hint
+    except Exception as e:
+        logger.warning(f"[场景生图] 性别检测失败: {e}")
+        return ""
+
+
 async def generate_scene_images(
     transcript: list,           # 已解析的对话列表
     style_key: str,
@@ -77,12 +128,28 @@ async def generate_scene_images(
                 except Exception as _pe:
                     logger.warning(f"[场景生图] 档案参考图加载失败: {_pe}")
 
+            # 4.5. 无档案参考图时：分析说话人性别，生成性别提示注入 prompt
+            gender_hint = ""
+            if not profile_refs:
+                logger.info(f"[场景生图] 无档案参考图，启动性别检测...")
+                gender_hint = await _detect_speaker_genders(transcript_str, gemini_flash_model)
+                if gender_hint:
+                    logger.info(f"[场景生图] 将在 prompt 中注入性别提示: {gender_hint}")
+                else:
+                    logger.info(f"[场景生图] 无法确定性别，使用原始 prompt")
+
             # 5. 并行生成所有图片
             async def gen_one(i, scene):
+                # 有档案参考图：正常传入参考图，原始场景描述
+                # 无档案参考图：将性别提示拼入场景描述开头
+                scene_prompt = scene
+                if not profile_refs and gender_hint:
+                    scene_prompt = gender_hint + scene
+
                 # generate_image_fn is sync (old SDK), call via asyncio.to_thread
                 return await asyncio.to_thread(
                     generate_image_fn,
-                    scene, user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
+                    scene_prompt, user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
                     profile_refs if profile_refs else None, 3, style_key
                 )
 
@@ -97,7 +164,7 @@ async def generate_scene_images(
                 if isinstance(img, Exception) or img is None:
                     logger.error(f"[场景生图] 图{i}失败: {img}")
                     scene_images.append({
-                        "index": 1000 + i,  # 与 OSS upload index 对齐
+                        "index": 1000 + i,
                         "scene_description": scene,
                         "image_url": None,
                         "image_base64": None,
@@ -105,7 +172,7 @@ async def generate_scene_images(
                 else:
                     is_url = img.startswith("http")
                     scene_images.append({
-                        "index": 1000 + i,  # 与 OSS upload index 对齐
+                        "index": 1000 + i,
                         "scene_description": scene,
                         "image_url": img if is_url else None,
                         "image_base64": img if not is_url else None,
