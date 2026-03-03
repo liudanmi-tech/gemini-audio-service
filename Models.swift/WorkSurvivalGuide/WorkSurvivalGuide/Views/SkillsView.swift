@@ -24,7 +24,7 @@ struct SkillsView: View {
                         Image(systemName: "sparkles")
                             .font(.system(size: 50))
                             .foregroundColor(.white.opacity(0.4))
-                        Text("还没有技能")
+                        Text("No skills yet")
                             .font(.system(size: 16, weight: .medium, design: .rounded))
                             .foregroundColor(.white.opacity(0.4))
                         if let err = viewModel.errorMessage {
@@ -34,7 +34,7 @@ struct SkillsView: View {
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal, 32)
                         }
-                        Button("重新加载") {
+                        Button("Reload") {
                             viewModel.loadCatalog(forceRefresh: true)
                         }
                         .font(.system(size: 14, weight: .medium, design: .rounded))
@@ -88,12 +88,12 @@ struct SkillsView: View {
         if viewModel.isManualMode {
             let count = viewModel.manualSelectedCount
             Text(count == 0
-                 ? "手动编排：请勾选需要的技能，录音将只从已选技能中匹配。"
-                 : "手动编排：已选 \(count) 个技能参与录音匹配。")
+                 ? "Manual mode: Select skills to match during recording."
+                 : "Manual mode: \(count) skill(s) selected for matching.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundColor(Color(hex: "#E8A44A").opacity(0.85))
         } else {
-            Text("自动编排：系统根据录音内容智能匹配最合适的技能。")
+            Text("Auto mode: System intelligently matches the best skills from your recording.")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundColor(.white.opacity(0.5))
         }
@@ -160,7 +160,7 @@ struct SkillsHeaderView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
-            Text("技能库")
+            Text("Skill Library")
                 .font(.system(size: 24, weight: .black, design: .rounded))
                 .foregroundColor(.white)
                 .tracking(0.6)
@@ -176,7 +176,7 @@ struct SkillsHeaderView: View {
                     Image(systemName: viewModel.isManualMode ? "hand.tap" : "sparkles")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(.white)
-                    Text(viewModel.isManualMode ? "手动编排" : "自动编排")
+                    Text(viewModel.isManualMode ? "Manual" : "Auto")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundColor(.white)
                 }

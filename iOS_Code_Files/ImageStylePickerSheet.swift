@@ -35,11 +35,11 @@ struct ImageStylePickerSheet: View {
                 .padding(16)
             }
             .background(AppColors.cardBackground)
-            .navigationTitle("图片风格")
+            .navigationTitle("Image Style")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
+                    Button("Cancel") {
                         dismiss()
                     }
                     .foregroundColor(AppColors.headerText)

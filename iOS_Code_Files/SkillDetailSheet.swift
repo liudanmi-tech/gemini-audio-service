@@ -95,7 +95,7 @@ struct SkillDetailSheet: View {
                     if let pro = skill.proContent {
                         // ── 理论基础（书单）──
                         if let books = pro.books, !books.isEmpty {
-                            ProSection(icon: "books.vertical.fill", iconColor: Color(hex: "#A29BFE"), title: "理论基础") {
+                            ProSection(icon: "books.vertical.fill", iconColor: Color(hex: "#A29BFE"), title: "Theory") {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ForEach(books, id: \.self) { book in
                                         HStack(alignment: .top, spacing: 10) {
@@ -113,7 +113,7 @@ struct SkillDetailSheet: View {
 
                         // ── 数据支撑 ──
                         if let research = pro.research, !research.isEmpty {
-                            ProSection(icon: "chart.bar.fill", iconColor: Color(hex: "#00B894"), title: "数据支撑") {
+                            ProSection(icon: "chart.bar.fill", iconColor: Color(hex: "#00B894"), title: "Evidence") {
                                 Text(research)
                                     .font(.system(size: 14, design: .rounded))
                                     .foregroundColor(.white.opacity(0.85))
@@ -124,7 +124,7 @@ struct SkillDetailSheet: View {
 
                         // ── 真实案例 ──
                         if let cs = pro.casestudy, !cs.isEmpty {
-                            ProSection(icon: "person.fill.checkmark", iconColor: Color(hex: "#FDCB6E"), title: "真实案例") {
+                            ProSection(icon: "person.fill.checkmark", iconColor: Color(hex: "#FDCB6E"), title: "Real Case") {
                                 Text(cs)
                                     .font(.system(size: 14, design: .rounded))
                                     .foregroundColor(.white.opacity(0.85))
@@ -135,7 +135,7 @@ struct SkillDetailSheet: View {
 
                         // ── 已验证效果 ──
                         if let effects = pro.effects, !effects.isEmpty {
-                            ProSection(icon: "checkmark.seal.fill", iconColor: baseColor, title: "已验证效果") {
+                            ProSection(icon: "checkmark.seal.fill", iconColor: baseColor, title: "Verified Results") {
                                 VStack(alignment: .leading, spacing: 8) {
                                     ForEach(effects, id: \.self) { effect in
                                         HStack(alignment: .top, spacing: 10) {
@@ -165,7 +165,7 @@ struct SkillDetailSheet: View {
                     HStack(spacing: 8) {
                         Image(systemName: isSelected ? "checkmark.circle.fill" : "plus.circle.fill")
                             .font(.system(size: 18))
-                        Text(isSelected ? "取消选择" : "选择此技能")
+                        Text(isSelected ? "Deselect" : "Select Skill")
                             .font(.system(size: 16, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(.white)

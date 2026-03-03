@@ -28,11 +28,11 @@ struct LoginView: View {
                         .foregroundColor(.blue)
                         .padding(.top, 60)
                     
-                    Text("欢迎使用")
+                    Text("Welcome")
                         .font(.system(size: 28, weight: .bold))
                         .foregroundColor(.white)
                     
-                    Text("请登录以继续")
+                    Text("Sign in to continue")
                         .font(.system(size: 16))
                         .foregroundColor(.white.opacity(0.7))
                 }
@@ -42,11 +42,11 @@ struct LoginView: View {
                 VStack(spacing: 20) {
                     // 手机号输入
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("手机号")
+                        Text("Phone Number")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.white.opacity(0.8))
-                        
-                        TextField("请输入11位手机号", text: $phoneText)
+
+                        TextField("Enter your phone number", text: $phoneText)
                             .keyboardType(.numberPad)
                             .textFieldStyle(.roundedBorder)
                             .autocorrectionDisabled()
@@ -70,21 +70,21 @@ struct LoginView: View {
                     // 验证码输入
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text("验证码")
+                            Text("Verification Code")
                                 .font(.system(size: 14, weight: .medium))
                                 .foregroundColor(.white.opacity(0.8))
-                            
+
                             Spacer()
                             
                             Button(action: {
                                 viewModel.sendCode()
                             }) {
                                 if viewModel.countdown > 0 {
-                                    Text("\(viewModel.countdown)秒后重试")
+                                    Text("\(viewModel.countdown)s to resend")
                                         .font(.system(size: 14))
                                         .foregroundColor(.secondary)
                                 } else {
-                                    Text("发送验证码")
+                                    Text("Send Code")
                                         .font(.system(size: 14))
                                         .foregroundColor(.blue)
                                 }
@@ -92,7 +92,7 @@ struct LoginView: View {
                             .disabled(!viewModel.canSendCode || viewModel.isLoading)
                         }
                         
-                        TextField("请输入6位验证码", text: $codeText)
+                        TextField("Enter 6-digit code", text: $codeText)
                             .keyboardType(.numberPad)
                             .textFieldStyle(.roundedBorder)
                             .autocorrectionDisabled()
@@ -123,7 +123,7 @@ struct LoginView: View {
                                 ProgressView()
                                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             } else {
-                                Text("登录")
+                                Text("Sign In")
                                     .font(.system(size: 16, weight: .semibold))
                             }
                         }
@@ -141,7 +141,7 @@ struct LoginView: View {
                     .padding(.top, 10)
                     
                     // 注册入口
-                    NavigationLink("没有账号？去注册", destination: RegisterView())
+                    NavigationLink("Don't have an account? Sign up", destination: RegisterView())
                         .font(.system(size: 14))
                         .foregroundColor(.blue)
                         .padding(.top, 16)
@@ -152,10 +152,10 @@ struct LoginView: View {
                 
                 // 提示信息
                 VStack(spacing: 4) {
-                    Text("开发阶段验证码: 123456")
+                    Text("Dev code: 123456")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.5))
-                    Text("手机号格式: 11位数字")
+                    Text("Phone format: 11 digits")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.5))
                 }
@@ -167,15 +167,15 @@ struct LoginView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("完成") {
+                    Button("Done") {
                         focusedField = nil
                     }
                 }
             }
-            .alert("错误", isPresented: $viewModel.showError) {
-                Button("确定", role: .cancel) { }
+            .alert("Error", isPresented: $viewModel.showError) {
+                Button("OK", role: .cancel) { }
             } message: {
-                Text(viewModel.errorMessage ?? "未知错误")
+                Text(viewModel.errorMessage ?? "Unknown error")
             }
         }
     }

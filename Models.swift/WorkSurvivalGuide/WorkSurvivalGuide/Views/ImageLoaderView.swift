@@ -37,13 +37,13 @@ struct ImageLoaderView: View {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.title2)
                         .foregroundColor(.orange)
-                    Text("图片加载失败")
+                    Text("Failed to load image")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                Text("无图片")
+                Text("No image")
                     .font(.caption)
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

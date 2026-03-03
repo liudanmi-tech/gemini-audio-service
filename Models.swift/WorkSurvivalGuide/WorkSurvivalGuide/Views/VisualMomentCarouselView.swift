@@ -19,7 +19,7 @@ struct VisualMomentCarouselView: View {
                         .stroke(Color(hex: "#D1D5DC"), lineWidth: 1.38)
                 )
                 .overlay(
-                    Text("暂无关键时刻")
+                    Text("No key moments yet")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 )
@@ -103,11 +103,11 @@ struct VisualMomentCardView: View {
                     Image(systemName: "photo")
                         .font(.title2)
                         .foregroundColor(.secondary)
-                    Text("暂无图片")
+                    Text("No images yet")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     if let originalURL = moment.imageUrl {
-                        Text("原始 URL: \(originalURL)")
+                        Text("Raw URL: \(originalURL)")
                             .font(.caption2)
                             .foregroundColor(.red)
                             .lineLimit(2)

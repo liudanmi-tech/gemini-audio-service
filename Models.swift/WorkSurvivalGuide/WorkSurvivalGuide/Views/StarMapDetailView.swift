@@ -25,18 +25,18 @@ struct StarMapDetailView: View {
     @State private var timelineFilter: TimelineFilter = .month
 
     enum TimelineFilter: String, CaseIterable {
-        case week  = "本周"
-        case month = "本月"
-        case all   = "全部"
+        case week  = "This Week"
+        case month = "This Month"
+        case all   = "All"
     }
 
     // MARK: - 计算属性
 
     private var pageTitle: String {
         switch categoryId {
-        case "workplace": return "职场星域"
-        case "family":    return "家庭星域"
-        default:          return "成长星域"
+        case "workplace": return "Work Galaxy"
+        case "family":    return "Family Galaxy"
+        default:          return "Growth Galaxy"
         }
     }
 
@@ -80,10 +80,10 @@ struct StarMapDetailView: View {
                                 Image(systemName: "moon.stars")
                                     .font(.system(size: 32))
                                     .foregroundColor(.white.opacity(0.15))
-                                Text("暂无能力数据")
+                                Text("No ability data yet")
                                     .font(.system(size: 14, design: .rounded))
                                     .foregroundColor(.white.opacity(0.3))
-                                Text("完成第一次对话分析后解锁")
+                                Text("Unlock after your first conversation analysis")
                                     .font(.system(size: 11, design: .rounded))
                                     .foregroundColor(.white.opacity(0.2))
                             }
@@ -179,11 +179,11 @@ struct StarMapDetailView: View {
             VStack(spacing: 0) {
                 // 标题行
                 HStack {
-                    Text("六维能力雷达")
+                    Text("Ability Radar")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundColor(Color(hex: "#00D4FF"))
                     Spacer()
-                    Text("点击节点查看详情")
+                    Text("Tap a node for details")
                         .font(.system(size: 10, design: .rounded))
                         .foregroundColor(.white.opacity(0.25))
                 }
@@ -265,7 +265,7 @@ struct StarMapDetailView: View {
                 Text("\(Int(ability.score))")
                     .font(.system(size: 42, weight: .bold, design: .rounded))
                     .foregroundColor(accent)
-                Text("分")
+                Text("pts")
                     .font(.system(size: 15, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.6))
                     .padding(.bottom, 2)
@@ -274,7 +274,7 @@ struct StarMapDetailView: View {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 11, weight: .semibold))
-                        Text("本月+\(ability.monthlyGrowth)")
+                        Text("+\(ability.monthlyGrowth) this month")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(Color(hex: "#34D399"))
@@ -311,7 +311,7 @@ struct StarMapDetailView: View {
 
     private func relatedSkillsSection(_ ability: AbilityScore, accent: Color) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("关联技能")
+            Text("Related Skills")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.5))
 
@@ -336,11 +336,11 @@ struct StarMapDetailView: View {
     private func eventsSection(_ ability: AbilityScore, accent: Color) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("近期大事件")
+                Text("Recent Events")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundColor(.white.opacity(0.5))
                 Spacer()
-                Text("全部")
+                Text("All")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundColor(accent.opacity(0.8))
             }
@@ -446,7 +446,7 @@ struct StarMapDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             // 标题 + 筛选器
             HStack {
-                Text("成长时间轴")
+                Text("Timeline")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundColor(.white.opacity(0.5))
                 Spacer()
@@ -476,7 +476,7 @@ struct StarMapDetailView: View {
             }
 
             // 趋势折线图（4周数据）
-            let allLabels = ["-3周", "-2周", "-1周", "本周"]
+            let allLabels = ["-3W", "-2W", "-1W", "Now"]
             let dataPoints: [(String, Double)] = {
                 switch timelineFilter {
                 case .week:  return Array(zip(allLabels, ability.growthTrend).suffix(1))
@@ -488,8 +488,8 @@ struct StarMapDetailView: View {
             Chart {
                 ForEach(dataPoints, id: \.0) { label, value in
                     LineMark(
-                        x: .value("时段", label),
-                        y: .value("分数", value)
+                        x: .value("Period", label),
+                        y: .value("Score", value)
                     )
                     .foregroundStyle(LinearGradient(
                         colors: [accent.opacity(0.6), accent],
@@ -499,8 +499,8 @@ struct StarMapDetailView: View {
                     .interpolationMethod(.catmullRom)
 
                     AreaMark(
-                        x: .value("时段", label),
-                        y: .value("分数", value)
+                        x: .value("Period", label),
+                        y: .value("Score", value)
                     )
                     .foregroundStyle(LinearGradient(
                         colors: [accent.opacity(0.22), accent.opacity(0.02)],
@@ -509,8 +509,8 @@ struct StarMapDetailView: View {
                     .interpolationMethod(.catmullRom)
 
                     PointMark(
-                        x: .value("时段", label),
-                        y: .value("分数", value)
+                        x: .value("Period", label),
+                        y: .value("Score", value)
                     )
                     .foregroundStyle(.white)
                     .symbolSize(25)
@@ -661,9 +661,9 @@ struct StarMapDetailView: View {
 
     private func outcomeLabel(_ outcome: String?) -> String {
         switch outcome {
-        case "breakthrough": return "⬆ 突破"
-        case "setback":      return "⚠ 复盘"
-        default:             return "↗ 实践"
+        case "breakthrough": return "⬆ Breakthrough"
+        case "setback":      return "⚠ Review"
+        default:             return "↗ Practice"
         }
     }
 

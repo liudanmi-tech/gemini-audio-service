@@ -81,7 +81,7 @@ struct AbilityRadarView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // Header
                 HStack {
-                    Text("能力雷达")
+                    Text("Ability Radar")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundColor(Color(hex: "#00D4FF"))
                     Spacer()
@@ -101,10 +101,10 @@ struct AbilityRadarView: View {
 
                 if vm.abilities.isEmpty && !vm.isLoading {
                     VStack(spacing: 8) {
-                        Text("暂无能力数据")
+                        Text("No ability data yet")
                             .font(.system(size: 13, design: .rounded))
                             .foregroundColor(.white.opacity(0.3))
-                        Text("完成第一次对话分析后解锁")
+                        Text("Unlock after your first conversation analysis")
                             .font(.system(size: 11, design: .rounded))
                             .foregroundColor(.white.opacity(0.2))
                     }
@@ -133,11 +133,11 @@ struct AbilityRadarView: View {
                 if let top = vm.abilities.max(by: { $0.score < $1.score }) {
                     HStack(spacing: 6) {
                         Text(top.icon)
-                        Text("\(top.name) · \(Int(top.score))分")
+                        Text("\(top.name) · \(Int(top.score)) pts")
                             .font(.system(size: 11, weight: .semibold, design: .rounded))
                             .foregroundColor(Color(hex: "#00D4FF").opacity(0.8))
                         Spacer()
-                        Text("点击节点查看详情")
+                        Text("Tap a node for details")
                             .font(.system(size: 10, design: .rounded))
                             .foregroundColor(.white.opacity(0.2))
                     }
@@ -356,7 +356,7 @@ struct BadgeUnlockView: View {
 
                 // 文字
                 VStack(spacing: 10) {
-                    Text("🎖️ 解锁成就")
+                    Text("🎖️ Achievement Unlocked")
                         .font(.system(size: 13, weight: .medium, design: .rounded))
                         .foregroundColor(cyan.opacity(0.7))
 
@@ -382,7 +382,7 @@ struct BadgeUnlockView: View {
                     }
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { onDismiss() }
                 } label: {
-                    Text("精彩！")
+                    Text("Excellent!")
                         .font(.system(size: 16, weight: .semibold, design: .rounded))
                         .foregroundColor(.white)
                         .frame(width: 160, height: 48)

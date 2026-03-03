@@ -1,18 +1,25 @@
+//
+//  BottomNavView.swift
+//  WorkSurvivalGuide
+//
+//  底部导航栏 - 按照Figma设计稿实现
+//
+
 import SwiftUI
 
 enum TabItem: String, CaseIterable {
-    case fragments = "碎片"
-    case status = "状态"
-    case mine = "我的"
+    case fragments = "Moments"
+    case skills = "Skills"
+    case profile = "Profile"
     
     var iconName: String {
         switch self {
         case .fragments:
             return "square.grid.2x2.fill"
-        case .status:
-            return "chart.bar.fill"
-        case .mine:
-            return "person.fill"
+        case .skills:
+            return "sparkles" // 技能图标
+        case .profile:
+            return "person.circle.fill" // 档案图标
         }
     }
 }
@@ -21,31 +28,52 @@ struct BottomNavView: View {
     @Binding var selectedTab: TabItem
     
     var body: some View {
-        HStack(spacing: 0) {
-            ForEach(TabItem.allCases, id: \.self) { tab in
-                BottomNavItem(
-                    tab: tab,
-                    isSelected: selectedTab == tab,
-                    action: {
-                        selectedTab = tab
+        ZStack {
+            // 毛玻璃背景层
+            RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight])
+                .fill(.ultraThinMaterial)
+                .overlay(
+                    RoundedCornerShape(radius: 24, corners: [.topLeft, .topRight])
+                        .stroke(AppColors.BottomNav.borderLine, lineWidth: 1)
+                )
+                .overlay(
+                    // 顶部边缘部分亮变：中间亮，向两侧渐隐
+                    VStack {
+                        LinearGradient(
+                            colors: [
+                                Color.clear,
+                                Color.white.opacity(0.5),
+                                Color.white.opacity(0.5),
+                                Color.clear
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .frame(height: 2)
+                        Spacer()
                     }
                 )
-                .frame(maxWidth: .infinity)
+            
+            // 内容层
+            HStack(spacing: 0) {
+                ForEach(TabItem.allCases, id: \.self) { tab in
+                    BottomNavItem(
+                        tab: tab,
+                        isSelected: selectedTab == tab,
+                        action: {
+                            selectedTab = tab
+                        }
+                    )
+                    .frame(maxWidth: .infinity)
+                }
             }
+            .padding(.leading, 23.99) // 根据 Figma: Padding Left 23.99
+            .padding(.trailing, 23.99) // 根据 Figma: Padding Right 23.99
+            .padding(.top, 0) // 根据 Figma: Padding Top 0
+            .padding(.bottom, 0) // 根据 Figma: Padding Bottom 0
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 0)
-        .frame(height: 80)
-        .background(AppColors.background)
-        .overlay(
-            Rectangle()
-                .frame(height: 1.38)
-                .foregroundColor(AppColors.border)
-                .offset(y: -40),
-            alignment: .top
-        )
-        .shadow(color: Color.black.opacity(0.05), radius: 4, x: 0, y: -4)
-        .cornerRadius(24, corners: [.topLeft, .topRight])
+        .frame(width: 380.74, height: 79.99) // 根据 Figma: Width 380.74, Height 79.99
+        .ignoresSafeArea(edges: .bottom) // 延伸到安全区域底部
     }
 }
 
@@ -63,6 +91,11 @@ struct BottomNavItem: View {
                         Circle()
                             .fill(AppColors.BottomNav.activeIconBg)
                             .frame(width: 40, height: 40)
+                            .overlay(
+                                Circle()
+                                    .stroke(bottomNavEdgeGradient, lineWidth: 1.5)
+                                    .frame(width: 40, height: 40)
+                            )
                     }
                     Image(systemName: tab.iconName)
                         .font(.system(size: 24))
@@ -77,25 +110,19 @@ struct BottomNavItem: View {
         }
         .frame(maxWidth: .infinity)
     }
-}
-
-// 扩展View以支持部分圆角
-extension View {
-    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
-        clipShape(RoundedCorner(radius: radius, corners: corners))
-    }
-}
-
-struct RoundedCorner: Shape {
-    var radius: CGFloat = .infinity
-    var corners: UIRectCorner = .allCorners
     
-    func path(in rect: CGRect) -> Path {
-        let path = UIBezierPath(
-            roundedRect: rect,
-            byRoundingCorners: corners,
-            cornerRadii: CGSize(width: radius, height: radius)
+    /// 底部导航图标边缘部分亮变：上下弧亮，左右渐隐
+    private var bottomNavEdgeGradient: AngularGradient {
+        AngularGradient(
+            colors: [
+                Color.white.opacity(0.6),
+                Color.white.opacity(0.12),
+                Color.white.opacity(0.6),
+                Color.white.opacity(0.12)
+            ],
+            center: .center
         )
-        return Path(path.cgPath)
     }
 }
+
+// 注意：cornerRadius扩展已移至ViewExtensions.swift，这里不再重复定义

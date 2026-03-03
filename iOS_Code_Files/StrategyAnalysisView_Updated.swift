@@ -40,7 +40,7 @@ struct StrategyAnalysisView_Updated: View {
                         .tracking(0.5)
                         .textCase(.uppercase)
                     
-                    Text("技能分析")
+                    Text("Skill Analysis")
                         .font(.system(size: 18, weight: .black, design: .rounded))
                         .foregroundColor(AppColors.headerText)
                 }
@@ -52,7 +52,7 @@ struct StrategyAnalysisView_Updated: View {
                     Button(action: { loadStrategyAnalysis(forceRegenerate: true) }) {
                         HStack(spacing: 4) {
                             Image(systemName: "photo.artframe")
-                            Text("用新风格重新生成")
+                            Text("Regenerate with new style")
                                 .font(.system(size: 11, weight: .medium))
                         }
                         .foregroundColor(AppColors.headerText.opacity(0.8))
@@ -83,7 +83,7 @@ struct StrategyAnalysisView_Updated: View {
                     Spacer()
                     ProgressView()
                         .scaleEffect(0.8)
-                    Text("策略分析加载中...")
+                    Text("Loading analysis...")
                         .font(.system(size: 12, design: .rounded))
                         .foregroundColor(.secondary)
                     Spacer()
@@ -103,7 +103,7 @@ struct StrategyAnalysisView_Updated: View {
                     Button(action: {
                         loadStrategyAnalysis()
                     }) {
-                        Text("重试")
+                        Text("Retry")
                             .font(.system(size: 14, weight: .semibold, design: .rounded))
                             .foregroundColor(.white)
                             .padding(.horizontal, 20)
@@ -154,7 +154,7 @@ struct StrategyAnalysisView_Updated: View {
                                 Button(action: { loadStrategyAnalysis(forceRegenerate: true) }) {
                                     HStack(spacing: 6) {
                                         Image(systemName: "arrow.clockwise")
-                                        Text("重新生成（含情绪分析）")
+                                        Text("Regenerate (with emotion analysis)")
                                     }
                                     .font(.system(size: 12, weight: .medium))
                                     .foregroundColor(Color(hex: "#5E7C8B"))
@@ -377,7 +377,7 @@ struct SkillCardsTabView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if cards.isEmpty {
-                Text("暂无技能分析")
+                Text("No skill analysis yet")
                     .font(.system(size: 14, design: .rounded))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
@@ -529,7 +529,7 @@ private struct SkillAccordionPanel: View {
                         // 策略型卡片只展示策略列表（visual 已在顶部轮播展示）
                         SkillStrategiesOnlyView(strategies: strategies)
                     } else {
-                        Text("暂无内容")
+                        Text("No content")
                             .font(.system(size: 14, design: .rounded))
                             .foregroundColor(.secondary)
                             .padding(.vertical, 8)
@@ -548,7 +548,7 @@ private struct SkillStrategiesOnlyView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("推荐应对策略")
+            Text("Recommended Strategy")
                 .font(.system(size: 12, weight: .bold, design: .rounded))
                 .foregroundColor(AppColors.headerText.opacity(0.5))
                 .textCase(.uppercase)
@@ -581,7 +581,7 @@ struct StrategySkillCardView: View {
             } else if let content = card.content?.strategyContent {
                 StrategyCardContent(content: content, baseURL: baseURL)
             } else {
-                Text("暂无内容")
+                Text("No content")
                     .font(.system(size: 14, design: .rounded))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 100)
@@ -632,7 +632,7 @@ struct MentalHealthCardView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.red)
-                    Text("请重视当前状态，必要时寻求专业帮助")
+                    Text("Please take care of your mental state. Seek professional help if needed.")
                         .font(.system(size: 14, weight: .semibold, design: .rounded))
                         .foregroundColor(.red)
                 }
@@ -640,14 +640,14 @@ struct MentalHealthCardView: View {
                 .frame(maxWidth: .infinity)
                 .background(Color.red.opacity(0.15))
                 .cornerRadius(8)
-                Text("危机热线：4001619995")
+                Text("Crisis line: 988")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundColor(.red)
             }
             
             // 防御能耗仪表盘
             VStack(alignment: .leading, spacing: 8) {
-                Text("防御能耗")
+                Text("Defense Load")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundColor(AppColors.headerText.opacity(0.6))
                     .textCase(.uppercase)
@@ -674,7 +674,7 @@ struct MentalHealthCardView: View {
             // 认知三联征
             if let triad = content.cognitiveTriad {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("认知趋势")
+                    Text("Cognitive Trend")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundColor(AppColors.headerText.opacity(0.6))
                         .textCase(.uppercase)
@@ -682,21 +682,21 @@ struct MentalHealthCardView: View {
                         if let s = triad.selfStatus {
                             VStack(alignment: .leading, spacing: 4) {
                                 Circle().fill(triadColor(s.status)).frame(width: 8, height: 8)
-                                Text("自我").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
+                                Text("Self").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
                                 Text(s.reason).font(.system(size: 12, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.8))
                             }
                         }
                         if let w = triad.world {
                             VStack(alignment: .leading, spacing: 4) {
                                 Circle().fill(triadColor(w.status)).frame(width: 8, height: 8)
-                                Text("世界").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
+                                Text("World").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
                                 Text(w.reason).font(.system(size: 12, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.8))
                             }
                         }
                         if let f = triad.future {
                             VStack(alignment: .leading, spacing: 4) {
                                 Circle().fill(triadColor(f.status)).frame(width: 8, height: 8)
-                                Text("未来").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
+                                Text("Future").font(.system(size: 11, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.6))
                                 Text(f.reason).font(.system(size: 12, design: .rounded)).foregroundColor(AppColors.headerText.opacity(0.8))
                             }
                         }
@@ -706,7 +706,7 @@ struct MentalHealthCardView: View {
             
             if !content.insight.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("军师洞察")
+                    Text("AI Insight")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundColor(AppColors.headerText.opacity(0.6))
                         .textCase(.uppercase)
@@ -719,7 +719,7 @@ struct MentalHealthCardView: View {
             
             if !content.strategy.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("破局策略")
+                    Text("Breakthrough Strategy")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundColor(AppColors.headerText.opacity(0.6))
                         .textCase(.uppercase)
@@ -767,7 +767,7 @@ struct StrategyCardContent: View {
             }
             if let strategies = content.strategies, !strategies.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("推荐应对策略")
+                    Text("Recommended Strategy")
                         .font(.system(size: 12, weight: .bold, design: .rounded))
                         .foregroundColor(AppColors.headerText.opacity(0.5))
                         .textCase(.uppercase)
@@ -798,7 +798,7 @@ struct LegacyStrategyContent: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 7.9968414306640625) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("情商亮点：")
+                    Text("EQ Highlights:")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundColor(Color(hex: "#5E7C8B"))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -809,7 +809,7 @@ struct LegacyStrategyContent: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("待提升点：")
+                    Text("Areas to Improve:")
                         .font(.system(size: 14, weight: .bold, design: .rounded))
                         .foregroundColor(Color(hex: "#5E7C8B"))
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -822,7 +822,7 @@ struct LegacyStrategyContent: View {
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
             VStack(alignment: .leading, spacing: 11.99520492553711) {
-                Text("推荐应对策略")
+                Text("Recommended Strategy")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .foregroundColor(AppColors.headerText.opacity(0.5))
                     .tracking(1.2)
@@ -1183,7 +1183,7 @@ struct SceneRestoreImageCarouselView: View {
                             Image(systemName: "photo.on.rectangle.angled")
                                 .font(.system(size: 28))
                                 .foregroundColor(Color(hex: "#C4B89A").opacity(0.6))
-                            Text("场景还原图生成中")
+                            Text("Generating scene...")
                                 .font(.system(size: 12))
                                 .foregroundColor(Color(hex: "#9B8C74").opacity(0.8))
                         }
@@ -1278,7 +1278,7 @@ struct SceneRestoreImageView: View {
             
             // 底部文字内容
             VStack(alignment: .leading, spacing: 3.998422622680664) { // 根据Figma: gap 3.99px
-                Text("场景还原")
+                Text("Scene Replay")
                     .font(.system(size: 12, weight: .bold, design: .rounded)) // Nunito 700, 12px
                     .foregroundColor(.white)
                     .padding(.horizontal, 8)

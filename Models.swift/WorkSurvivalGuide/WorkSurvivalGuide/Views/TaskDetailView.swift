@@ -51,7 +51,7 @@ struct TaskDetailView: View {
                             Button(action: {
                                 loadTaskDetail()
                             }) {
-                                Text("重试")
+                                Text("Retry")
                                     .font(.system(size: 16, weight: .semibold, design: .rounded))
                                     .foregroundColor(.white)
                                     .padding(.horizontal, 24)
@@ -70,7 +70,7 @@ struct TaskDetailView: View {
                         if detail.dialogues.isEmpty {
                             // 对话内容为空（可能正在加载），显示占位符
                             VStack(alignment: .leading, spacing: 16) {
-                                Text("对话复盘")
+                                Text("Conversation Review")
                                     .font(AppFonts.cardTitle)
                                     .foregroundColor(AppColors.headerText)
                                     .padding(.horizontal, 21.5)
@@ -90,7 +90,7 @@ struct TaskDetailView: View {
                                     Spacer()
                                     ProgressView()
                                         .scaleEffect(0.8)
-                                    Text("加载对话内容中...")
+                                    Text("Loading conversation...")
                                         .font(.system(size: 12, design: .rounded))
                                         .foregroundColor(.secondary)
                                     Spacer()
@@ -138,7 +138,7 @@ struct TaskDetailView: View {
                             ProgressView()
                                 .scaleEffect(1.5)
                                 .tint(AppColors.headerText)
-                            Text("加载详情中...")
+                            Text("Loading...")
                                 .font(.system(size: 16, design: .rounded))
                                 .foregroundColor(AppColors.headerText)
                         }
@@ -426,7 +426,7 @@ struct DetailHeaderView: View {
             
             Spacer()
             
-            Text("详情")
+            Text("Details")
                 .font(.system(size: 20, weight: .black, design: .rounded))
                 .foregroundColor(AppColors.headerText)
                 .tracking(0.5) // letterSpacing 2.5% of 20px = 0.5pt
@@ -521,7 +521,7 @@ struct DateTimeInfoBar: View {
 
     private var dateTimeString: String {
         let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.locale = Locale(identifier: "en_US")
         formatter.dateFormat = "yyyy/MM/dd EEEE"
         return formatter.string(from: task.startTime)
     }

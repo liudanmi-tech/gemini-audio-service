@@ -108,7 +108,7 @@ struct AbilityDetailSheet: View {
                 Text("\(Int(ability.score))")
                     .font(.system(size: 46, weight: .bold, design: .rounded))
                     .foregroundColor(accentColor)
-                Text("分")
+                Text("pts")
                     .font(.system(size: 16, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.6))
                     .padding(.bottom, 4)
@@ -117,7 +117,7 @@ struct AbilityDetailSheet: View {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 12, weight: .semibold))
-                        Text("本月+\(ability.monthlyGrowth)")
+                        Text("+\(ability.monthlyGrowth) this month")
                             .font(.system(size: 13, weight: .semibold, design: .rounded))
                     }
                     .foregroundColor(Color(hex: "#34D399"))
@@ -145,7 +145,7 @@ struct AbilityDetailSheet: View {
 
     private var relatedSkillsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("关联技能")
+            Text("Related Skills")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.5))
 
@@ -170,11 +170,11 @@ struct AbilityDetailSheet: View {
     private var eventsSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("近期大事件")
+                Text("Recent Events")
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundColor(.white.opacity(0.5))
                 Spacer()
-                Text("全部")
+                Text("All")
                     .font(.system(size: 12, weight: .medium, design: .rounded))
                     .foregroundColor(accentColor.opacity(0.8))
             }
@@ -269,18 +269,18 @@ struct AbilityDetailSheet: View {
 
     private var growthChartSection: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("成长曲线")
+            Text("Growth Curve")
                 .font(.system(size: 13, weight: .semibold, design: .rounded))
                 .foregroundColor(.white.opacity(0.5))
 
-            let labels = ["-3周", "-2周", "-1周", "本周"]
+            let labels = ["-3W", "-2W", "-1W", "Now"]
             let dataPoints = zip(labels, ability.growthTrend).map { ($0.0, $0.1) }
 
             Chart {
                 ForEach(dataPoints, id: \.0) { label, value in
                     LineMark(
-                        x: .value("时段", label),
-                        y: .value("分数", value)
+                        x: .value("Period", label),
+                        y: .value("Score", value)
                     )
                     .foregroundStyle(
                         LinearGradient(colors: [accentColor.opacity(0.6), accentColor],
@@ -290,8 +290,8 @@ struct AbilityDetailSheet: View {
                     .interpolationMethod(.catmullRom)
 
                     AreaMark(
-                        x: .value("时段", label),
-                        y: .value("分数", value)
+                        x: .value("Period", label),
+                        y: .value("Score", value)
                     )
                     .foregroundStyle(
                         LinearGradient(colors: [accentColor.opacity(0.25), accentColor.opacity(0.02)],
@@ -300,8 +300,8 @@ struct AbilityDetailSheet: View {
                     .interpolationMethod(.catmullRom)
 
                     PointMark(
-                        x: .value("时段", label),
-                        y: .value("分数", value)
+                        x: .value("Period", label),
+                        y: .value("Score", value)
                     )
                     .foregroundStyle(accentColor)
                     .symbolSize(30)
@@ -349,9 +349,9 @@ struct AbilityDetailSheet: View {
 
     private func outcomeLabel(_ outcome: String?) -> String {
         switch outcome {
-        case "breakthrough": return "⬆ 突破"
-        case "setback":      return "⚠ 复盘"
-        default:             return "↗ 实践"
+        case "breakthrough": return "⬆ Breakthrough"
+        case "setback":      return "⚠ Review"
+        default:             return "↗ Practice"
         }
     }
 

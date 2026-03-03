@@ -259,7 +259,7 @@ private struct StarCardView: View {
                         .foregroundColor(page.accent)
                     Spacer()
                     let active = page.skills.filter(\.selected).count
-                    Text("\(active)/\(page.skills.count) 已激活")
+                    Text("\(active)/\(page.skills.count) Activated")
                         .font(.system(size: 10, weight: .medium, design: .rounded))
                         .foregroundColor(.white.opacity(0.32))
                 }
@@ -325,10 +325,10 @@ private struct StarCardView: View {
         HStack(spacing: 0) {
             let active = page.skills.filter(\.selected).count
             VStack(alignment: .leading, spacing: 2) {
-                Text("已激活")
+                Text("Activated")
                     .font(.system(size: 9, weight: .medium, design: .rounded))
                     .foregroundColor(.white.opacity(0.35))
-                Text("\(active) 项技能")
+                Text("\(active) Skills")
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .foregroundColor(.white.opacity(0.7))
             }
@@ -336,7 +336,7 @@ private struct StarCardView: View {
 
             if let top = topGrowthAbility, top.monthlyGrowth > 0 {
                 VStack(alignment: .center, spacing: 2) {
-                    Text("成长最快")
+                    Text("Fastest Growth")
                         .font(.system(size: 9, weight: .medium, design: .rounded))
                         .foregroundColor(.white.opacity(0.35))
                     HStack(spacing: 3) {

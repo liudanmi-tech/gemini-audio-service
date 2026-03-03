@@ -8,9 +8,9 @@
 import SwiftUI
 
 enum TabItem: String, CaseIterable {
-    case fragments = "碎片"
-    case skills = "技能"
-    case profile = "档案" // 从"我的"改为"档案"
+    case fragments = "Moments"
+    case skills = "Skills"
+    case profile = "Profile"
     
     var iconName: String {
         switch self {

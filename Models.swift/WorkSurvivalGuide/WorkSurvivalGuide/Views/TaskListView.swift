@@ -46,7 +46,7 @@ struct TaskListView: View {
             VStack(spacing: 0) {
                 if viewModel.isLoading && viewModel.tasks.isEmpty {
                     Spacer()
-                    ProgressView("加载中...")
+                    ProgressView("Loading...")
                         .tint(AppColors.headerText)
                     Spacer()
                 } else if viewModel.tasks.isEmpty {
@@ -55,10 +55,10 @@ struct TaskListView: View {
                         Image(systemName: "mic.slash")
                             .font(.system(size: 50))
                             .foregroundColor(AppColors.secondaryText)
-                        Text("还没有任务")
+                        Text("No recordings yet")
                             .font(AppFonts.cardTitle)
                             .foregroundColor(AppColors.secondaryText)
-                        Text("点击下方按钮开始录音")
+                        Text("Tap the button below to start recording")
                             .font(AppFonts.time)
                             .foregroundColor(AppColors.secondaryText)
                     }
@@ -107,7 +107,7 @@ struct TaskListView: View {
             
             // 顶部 Header 覆盖层（使用与 BottomNavView 相同参数的毛玻璃）
             HStack(alignment: .center, spacing: 0) {
-                Text("碎片")
+                Text("Moments")
                     .font(AppFonts.headerTitle)
                     .foregroundColor(AppColors.headerText)
                 
@@ -117,7 +117,7 @@ struct TaskListView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "antenna.radiowaves.left.and.right")
                             .font(.system(size: 20, weight: .medium))
-                        Text("设备")
+                        Text("Device")
                             .font(.system(size: 14, weight: .medium))
                     }
                     .foregroundColor(deviceManager.isBluetoothConnected ? Color.blue : AppColors.headerText)
@@ -128,24 +128,16 @@ struct TaskListView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                
-                Menu {
-                    Button {
-                        showStylePicker = true
-                    } label: {
-                        Label("图片风格", systemImage: "photo.artframe")
-                    }
-                    Button {
-                        // 更换皮肤 - 占位，后续扩展
-                    } label: {
-                        Label("更换皮肤", systemImage: "paintbrush")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 24))
+
+                Button(action: { showStylePicker = true }) {
+                    Image(systemName: "paintpalette.fill")
+                        .font(.system(size: 18, weight: .medium))
                         .foregroundColor(AppColors.headerText)
                         .frame(width: 36, height: 36)
+                        .background(.ultraThinMaterial)
+                        .clipShape(Circle())
                 }
+                .buttonStyle(.plain)
             }
             .padding(.horizontal, 24)
             .padding(.vertical, 8)  // 顶部高度约 52pt（8+36+8，不含状态栏）
