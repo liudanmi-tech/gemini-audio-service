@@ -2,7 +2,7 @@
 //  OnboardingView.swift
 //  WorkSurvivalGuide
 //
-//  注册后首次引导：Step1 身份 → Step2 分类（最多3）→ Step3 子技能
+//  注册后首次引导：Step1 身份 → Step2 场景分类（最多3）
 //
 
 import SwiftUI
@@ -11,12 +11,10 @@ struct OnboardingView: View {
     @AppStorage("onboarding_completed")  private var onboardingCompleted = false
     @AppStorage("onboarding_identity")   private var savedIdentity = ""
     @AppStorage("onboarding_categories") private var savedCategories = ""
-    @AppStorage("onboarding_subskills")  private var savedSubSkills = ""
 
     @State private var step = 1
     @State private var selectedIdentity: UserIdentity? = nil
     @State private var selectedCategories: Set<OnboardingCategory> = []
-    @State private var selectedSubSkills: Set<OnboardingSubSkill> = []
 
     private let maxCategories = 3
 
@@ -27,7 +25,7 @@ struct OnboardingView: View {
             VStack(spacing: 0) {
                 // ── 顶部进度 + Skip ──
                 HStack {
-                    ProgressDotsView(total: 3, current: step)
+                    ProgressDotsView(total: 2, current: step)
                     Spacer()
                     Button("Skip") { finish() }
                         .font(.system(size: 14))
@@ -39,11 +37,7 @@ struct OnboardingView: View {
 
                 // ── 步骤内容 ──
                 Group {
-                    switch step {
-                    case 1: step1View
-                    case 2: step2View
-                    default: step3View
-                    }
+                    if step == 1 { step1View } else { step2View }
                 }
 
                 // ── 底部按钮 ──
@@ -84,7 +78,7 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Step 2: 分类选择（最多3个）
+    // MARK: - Step 2: 场景选择（最多3个）
 
     private var step2View: some View {
         ScrollView(showsIndicators: false) {
@@ -122,72 +116,12 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Step 3: 子技能选择
-
-    private var step3View: some View {
-        ScrollView(showsIndicators: false) {
-            VStack(spacing: 32) {
-                VStack(spacing: 10) {
-                    Text("Choose your focus areas")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundColor(.white)
-                        .multilineTextAlignment(.center)
-                    Text("Select all that apply")
-                        .font(.system(size: 15))
-                        .foregroundColor(.white.opacity(0.5))
-                }
-                .padding(.top, 24)
-                .padding(.horizontal, 24)
-
-                ForEach(Array(selectedCategories).sorted(by: { $0.name < $1.name })) { category in
-                    VStack(alignment: .leading, spacing: 12) {
-                        // 分类标题
-                        HStack(spacing: 8) {
-                            Text(category.emoji)
-                                .font(.system(size: 18))
-                            Text(category.name)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                        .padding(.horizontal, 24)
-
-                        // 子技能列表
-                        VStack(spacing: 8) {
-                            ForEach(category.subSkills) { skill in
-                                SubSkillRow(
-                                    skill: skill,
-                                    isSelected: selectedSubSkills.contains(skill)
-                                ) {
-                                    if selectedSubSkills.contains(skill) {
-                                        selectedSubSkills.remove(skill)
-                                    } else {
-                                        selectedSubSkills.insert(skill)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 24)
-                    }
-                }
-
-                Spacer(minLength: 16)
-            }
-        }
-    }
-
     // MARK: - 底部按钮
 
     private var bottomButton: some View {
         VStack(spacing: 0) {
-            let isEnabled: Bool = {
-                switch step {
-                case 1: return selectedIdentity != nil
-                case 2: return !selectedCategories.isEmpty
-                default: return true
-                }
-            }()
-
-            let label: String = step == 3 ? "Get Started" : "Continue"
+            let isEnabled: Bool = step == 1 ? selectedIdentity != nil : !selectedCategories.isEmpty
+            let label: String = step == 2 ? "Get Started" : "Continue"
 
             Button(action: advance) {
                 Text(label)
@@ -206,7 +140,7 @@ struct OnboardingView: View {
     // MARK: - Navigation
 
     private func advance() {
-        if step < 3 {
+        if step < 2 {
             withAnimation(.easeInOut(duration: 0.25)) { step += 1 }
         } else {
             finish()
@@ -214,10 +148,8 @@ struct OnboardingView: View {
     }
 
     private func finish() {
-        // 存到 UserDefaults
         savedIdentity   = selectedIdentity?.rawValue ?? ""
         savedCategories = selectedCategories.map(\.id).joined(separator: ",")
-        savedSubSkills  = selectedSubSkills.map(\.id).joined(separator: ",")
         onboardingCompleted = true
     }
 }
@@ -327,45 +259,5 @@ private struct CategoryCard: View {
         .buttonStyle(.plain)
         .disabled(isDisabled && !isSelected)
         .animation(.easeInOut(duration: 0.15), value: isSelected)
-    }
-}
-
-// MARK: - SubSkillRow
-
-private struct SubSkillRow: View {
-    let skill: OnboardingSubSkill
-    let isSelected: Bool
-    let onTap: () -> Void
-
-    var body: some View {
-        Button(action: onTap) {
-            HStack(spacing: 12) {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20))
-                    .foregroundColor(isSelected ? .blue : .white.opacity(0.3))
-                    .frame(width: 24)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(skill.name)
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.white)
-                    Text(skill.description)
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.45))
-                }
-
-                Spacer()
-            }
-            .padding(.vertical, 10)
-            .padding(.horizontal, 14)
-            .background(isSelected ? Color.blue.opacity(0.12) : Color.white.opacity(0.05))
-            .cornerRadius(10)
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(isSelected ? Color.blue.opacity(0.4) : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
-        .animation(.easeInOut(duration: 0.12), value: isSelected)
     }
 }
