@@ -15,8 +15,8 @@ struct OnboardingView: View {
 
     @State private var step = 1
     @State private var selectedIdentity: UserIdentity? = nil
-    @State private var selectedCategories: Set<SkillCategory> = []
-    @State private var selectedSubSkills: Set<SubSkillItem> = []
+    @State private var selectedCategories: Set<OnboardingCategory> = []
+    @State private var selectedSubSkills: Set<OnboardingSubSkill> = []
 
     private let maxCategories = 3
 
@@ -285,7 +285,7 @@ private struct IdentityCard: View {
 // MARK: - CategoryCard
 
 private struct CategoryCard: View {
-    let category: SkillCategory
+    let category: OnboardingCategory
     let isSelected: Bool
     let isDisabled: Bool
     let onTap: () -> Void
@@ -333,7 +333,7 @@ private struct CategoryCard: View {
 // MARK: - SubSkillRow
 
 private struct SubSkillRow: View {
-    let skill: SubSkillItem
+    let skill: OnboardingSubSkill
     let isSelected: Bool
     let onTap: () -> Void
 
