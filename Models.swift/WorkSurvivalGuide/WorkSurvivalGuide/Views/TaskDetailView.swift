@@ -508,13 +508,23 @@ struct DateTimeInfoBar: View {
                             )
                             .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1)
 
-                        Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(AppColors.headerText.opacity(0.8))
+                        if audioPlayer.isBuffering {
+                            // 缓冲中：旋转 loading 环
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                                .tint(AppColors.headerText.opacity(0.8))
+                                .scaleEffect(1.1)
+                        } else {
+                            Image(systemName: audioPlayer.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 20))
+                                .foregroundColor(AppColors.headerText.opacity(0.8))
+                        }
                     }
                 }
+                .disabled(audioPlayer.isBuffering)
             }
             .animation(.easeInOut(duration: 0.2), value: audioPlayer.isPlaying)
+            .animation(.easeInOut(duration: 0.15), value: audioPlayer.isBuffering)
         }
         .frame(maxWidth: .infinity, alignment: .leading) // 确保不超出父容器
     }

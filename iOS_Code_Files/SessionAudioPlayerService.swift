@@ -12,9 +12,12 @@ import Foundation
 @MainActor
 final class SessionAudioPlayerService: ObservableObject {
     @Published private(set) var isPlaying = false
+    /// true = AVPlayer 正在缓冲/等待，此时按钮显示 loading 动画
+    @Published private(set) var isBuffering = false
 
     private var player: AVPlayer?
     private var endObserver: NSObjectProtocol?
+    private var statusObserver: NSKeyValueObservation?
     private var audioUrl: String?
 
     func setAudioUrl(_ url: String?) {
@@ -59,9 +62,12 @@ final class SessionAudioPlayerService: ObservableObject {
             NotificationCenter.default.removeObserver(o)
             endObserver = nil
         }
+        statusObserver?.invalidate()
+        statusObserver = nil
         player?.pause()
         player = nil
         isPlaying = false
+        isBuffering = false
     }
 
     // MARK: - Private
@@ -77,9 +83,29 @@ final class SessionAudioPlayerService: ObservableObject {
         let asset = AVURLAsset(url: url, options: options)
         let playerItem = AVPlayerItem(asset: asset)
 
-        player = AVPlayer(playerItem: playerItem)
-        player?.play()
+        let newPlayer = AVPlayer(playerItem: playerItem)
+        player = newPlayer
         isPlaying = true
+        isBuffering = true  // 首次播放必定需要缓冲
+
+        // 监听 timeControlStatus：waiting = 缓冲中，playing = 已开始实际播放
+        statusObserver = newPlayer.observe(\.timeControlStatus, options: [.new]) { [weak self] p, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                switch p.timeControlStatus {
+                case .waitingToPlayAtSpecifiedRate:
+                    self.isBuffering = true
+                case .playing:
+                    self.isBuffering = false
+                case .paused:
+                    self.isBuffering = false
+                @unknown default:
+                    self.isBuffering = false
+                }
+            }
+        }
+
+        newPlayer.play()
 
         endObserver = NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
@@ -88,6 +114,7 @@ final class SessionAudioPlayerService: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 self?.isPlaying = false
+                self?.isBuffering = false
             }
         }
     }
