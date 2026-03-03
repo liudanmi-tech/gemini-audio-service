@@ -2,180 +2,166 @@
 //  LoginView.swift
 //  WorkSurvivalGuide
 //
-//  登录页面
+//  登录页面：Apple Sign In + 邮箱/密码
 //
 
 import SwiftUI
+import AuthenticationServices
 
 struct LoginView: View {
     @StateObject private var viewModel = AuthViewModel()
     @FocusState private var focusedField: Field?
-    @State private var phoneText: String = ""
-    @State private var codeText: String = ""
-    
-    enum Field {
-        case phone
-        case code
-    }
-    
+
+    enum Field { case email, password }
+
     var body: some View {
         NavigationView {
-            VStack(spacing: 0) {
-                // Logo和标题区域
-                VStack(spacing: 16) {
-                    Image(systemName: "person.circle.fill")
-                        .font(.system(size: 80))
-                        .foregroundColor(.blue)
-                        .padding(.top, 60)
-                    
-                    Text("Welcome")
-                        .font(.system(size: 28, weight: .bold))
-                        .foregroundColor(.white)
-                    
-                    Text("Sign in to continue")
-                        .font(.system(size: 16))
-                        .foregroundColor(.white.opacity(0.7))
-                }
-                .padding(.bottom, 40)
-                
-                // 输入区域
-                VStack(spacing: 20) {
-                    // 手机号输入
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Phone Number")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white.opacity(0.8))
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-                        TextField("Enter your phone number", text: $phoneText)
-                            .keyboardType(.numberPad)
-                            .textFieldStyle(.roundedBorder)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .focused($focusedField, equals: .phone)
-                            .onChange(of: phoneText) { newValue in
-                                // 限制只能输入数字，最多11位
-                                let filtered = newValue.filter { $0.isNumber }
-                                if filtered != newValue || filtered.count > 11 {
-                                    phoneText = String(filtered.prefix(11))
-                                }
-                                viewModel.phone = phoneText
-                            }
-                            .onChange(of: focusedField) { newValue in
-                                if newValue != .phone {
-                                    viewModel.phone = phoneText
-                                }
-                            }
-                    }
-                    
-                    // 验证码输入
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            Text("Verification Code")
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.white.opacity(0.8))
+                ScrollView {
+                    VStack(spacing: 0) {
 
-                            Spacer()
-                            
+                        // ── Logo & Title ──
+                        VStack(spacing: 16) {
+                            Image(systemName: "sparkles")
+                                .font(.system(size: 64))
+                                .foregroundColor(.blue)
+                                .padding(.top, 64)
+
+                            Text("Welcome")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundColor(.white)
+
+                            Text("Sign in to continue")
+                                .font(.system(size: 16))
+                                .foregroundColor(.white.opacity(0.6))
+                        }
+                        .padding(.bottom, 40)
+
+                        VStack(spacing: 16) {
+
+                            // ── Apple Sign In ──
+                            SignInWithAppleButton(.signIn) { request in
+                                request.requestedScopes = [.fullName, .email]
+                            } onCompletion: { result in
+                                viewModel.handleAppleSignIn(result: result)
+                            }
+                            .frame(height: 50)
+                            .cornerRadius(10)
+                            .disabled(viewModel.isLoading)
+
+                            // ── Divider ──
+                            HStack {
+                                Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.2))
+                                Text("or").font(.system(size: 13)).foregroundColor(.white.opacity(0.5))
+                                    .padding(.horizontal, 8)
+                                Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.2))
+                            }
+
+                            // ── Email ──
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Email")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.8))
+                                TextField("Enter your email", text: $viewModel.email)
+                                    .keyboardType(.emailAddress)
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .textFieldStyle(.roundedBorder)
+                                    .focused($focusedField, equals: .email)
+                            }
+
+                            // ── Password ──
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Password")
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.8))
+                                SecureField("Password (8+ characters)", text: $viewModel.password)
+                                    .textFieldStyle(.roundedBorder)
+                                    .focused($focusedField, equals: .password)
+                            }
+
+                            // ── Sign In Button ──
                             Button(action: {
-                                viewModel.sendCode()
+                                focusedField = nil
+                                viewModel.emailSignIn()
                             }) {
-                                if viewModel.countdown > 0 {
-                                    Text("\(viewModel.countdown)s to resend")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.secondary)
-                                } else {
-                                    Text("Send Code")
-                                        .font(.system(size: 14))
-                                        .foregroundColor(.blue)
+                                HStack {
+                                    if viewModel.isLoading {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                    } else {
+                                        Text("Sign In")
+                                            .font(.system(size: 16, weight: .semibold))
+                                    }
                                 }
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 50)
+                                .background(
+                                    !viewModel.email.isEmpty && viewModel.password.count >= 8 && !viewModel.isLoading
+                                    ? Color.blue : Color.gray.opacity(0.3)
+                                )
+                                .foregroundColor(.white)
+                                .cornerRadius(10)
                             }
-                            .disabled(!viewModel.canSendCode || viewModel.isLoading)
+                            .disabled(viewModel.email.isEmpty || viewModel.password.count < 8 || viewModel.isLoading)
+                            .padding(.top, 4)
+
+                            // ── Register Link ──
+                            NavigationLink(destination: RegisterView()) {
+                                Text("Don't have an account? ")
+                                    .foregroundColor(.white.opacity(0.6))
+                                + Text("Sign Up")
+                                    .foregroundColor(.blue)
+                            }
+                            .font(.system(size: 14))
+                            .padding(.top, 8)
                         }
-                        
-                        TextField("Enter 6-digit code", text: $codeText)
-                            .keyboardType(.numberPad)
-                            .textFieldStyle(.roundedBorder)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                            .focused($focusedField, equals: .code)
-                            .onChange(of: codeText) { newValue in
-                                // 限制只能输入数字，最多6位
-                                let filtered = newValue.filter { $0.isNumber }
-                                if filtered != newValue || filtered.count > 6 {
-                                    codeText = String(filtered.prefix(6))
-                                }
-                                viewModel.code = codeText
-                            }
-                            .onChange(of: focusedField) { newValue in
-                                if newValue != .code {
-                                    viewModel.code = codeText
-                                }
-                            }
+                        .padding(.horizontal, 24)
+
+                        Spacer(minLength: 40)
+
+                        // ── Privacy Policy ──
+                        PrivacyFooterView()
+                            .padding(.bottom, 32)
                     }
-                    
-                    // 登录按钮
-                    Button(action: {
-                        focusedField = nil
-                        viewModel.login()
-                    }) {
-                        HStack {
-                            if viewModel.isLoading {
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            } else {
-                                Text("Sign In")
-                                    .font(.system(size: 16, weight: .semibold))
-                            }
-                        }
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 50)
-                        .background(
-                            phoneText.count == 11 && codeText.count == 6 && !viewModel.isLoading
-                            ? Color.blue
-                            : Color.gray.opacity(0.3)
-                        )
-                        .foregroundColor(.white)
-                        .cornerRadius(10)
-                    }
-                    .disabled(phoneText.count != 11 || codeText.count != 6 || viewModel.isLoading)
-                    .padding(.top, 10)
-                    
-                    // 注册入口
-                    NavigationLink("Don't have an account? Sign up", destination: RegisterView())
-                        .font(.system(size: 14))
-                        .foregroundColor(.blue)
-                        .padding(.top, 16)
                 }
-                .padding(.horizontal, 24)
-                
-                Spacer()
-                
-                // 提示信息
-                VStack(spacing: 4) {
-                    Text("Dev code: 123456")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.5))
-                    Text("Phone format: 11 digits")
-                        .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.5))
-                }
-                .padding(.bottom, 30)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black)
             .navigationBarHidden(true)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
-                    Button("Done") {
-                        focusedField = nil
-                    }
+                    Button("Done") { focusedField = nil }
                 }
             }
             .alert("Error", isPresented: $viewModel.showError) {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text(viewModel.errorMessage ?? "Unknown error")
+            }
+        }
+    }
+}
+
+// MARK: - Privacy Footer
+
+struct PrivacyFooterView: View {
+    var body: some View {
+        VStack(spacing: 4) {
+            Text("By continuing, you agree to our")
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.4))
+            HStack(spacing: 4) {
+                Link("Privacy Policy", destination: URL(string: "https://your-domain.com/privacy")!)
+                    .font(.system(size: 12))
+                    .foregroundColor(.blue.opacity(0.8))
+                Text("and")
+                    .font(.system(size: 12))
+                    .foregroundColor(.white.opacity(0.4))
+                Link("Terms of Service", destination: URL(string: "https://your-domain.com/terms")!)
+                    .font(.system(size: 12))
+                    .foregroundColor(.blue.opacity(0.8))
             }
         }
     }

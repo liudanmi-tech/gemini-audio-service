@@ -2,164 +2,156 @@
 //  RegisterView.swift
 //  WorkSurvivalGuide
 //
-//  注册页面 - 手机号+验证码注册，成功后自动登录
+//  注册页面：Apple Sign In + 邮箱/密码
 //
 
 import SwiftUI
+import AuthenticationServices
 
 struct RegisterView: View {
     @StateObject private var viewModel = AuthViewModel()
     @FocusState private var focusedField: Field?
-    @State private var phoneText: String = ""
-    @State private var codeText: String = ""
-    
-    enum Field {
-        case phone
-        case code
-    }
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            // 标题区域
-            VStack(spacing: 16) {
-                Image(systemName: "person.badge.plus")
-                    .font(.system(size: 80))
-                    .foregroundColor(.blue)
-                    .padding(.top, 60)
-                
-                Text("Create Account")
-                    .font(.system(size: 28, weight: .bold))
-                
-                Text("Enter your phone number to register")
-                    .font(.system(size: 16))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.bottom, 40)
-            
-            // 输入区域
-            VStack(spacing: 20) {
-                // 手机号输入
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Phone Number")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(.secondary)
+    @Environment(\.dismiss) private var dismiss
 
-                    TextField("Enter your phone number", text: $phoneText)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .focused($focusedField, equals: .phone)
-                        .onChange(of: phoneText) { newValue in
-                            let filtered = newValue.filter { $0.isNumber }
-                            if filtered != newValue || filtered.count > 11 {
-                                phoneText = String(filtered.prefix(11))
-                            }
-                            viewModel.phone = phoneText
+    enum Field { case email, password, confirm }
+
+    private var canRegister: Bool {
+        !viewModel.email.isEmpty &&
+        viewModel.password.count >= 8 &&
+        viewModel.password == viewModel.confirmPassword &&
+        !viewModel.isLoading
+    }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 0) {
+
+                    // ── Logo & Title ──
+                    VStack(spacing: 16) {
+                        Image(systemName: "person.badge.plus")
+                            .font(.system(size: 64))
+                            .foregroundColor(.blue)
+                            .padding(.top, 64)
+
+                        Text("Create Account")
+                            .font(.system(size: 28, weight: .bold))
+                            .foregroundColor(.white)
+
+                        Text("Join to start your journey")
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                    .padding(.bottom, 40)
+
+                    VStack(spacing: 16) {
+
+                        // ── Apple Sign Up ──
+                        SignInWithAppleButton(.signUp) { request in
+                            request.requestedScopes = [.fullName, .email]
+                        } onCompletion: { result in
+                            viewModel.handleAppleSignIn(result: result)
                         }
-                        .onChange(of: focusedField) { newValue in
-                            if newValue != .phone {
-                                viewModel.phone = phoneText
+                        .frame(height: 50)
+                        .cornerRadius(10)
+                        .disabled(viewModel.isLoading)
+
+                        // ── Divider ──
+                        HStack {
+                            Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.2))
+                            Text("or").font(.system(size: 13)).foregroundColor(.white.opacity(0.5))
+                                .padding(.horizontal, 8)
+                            Rectangle().frame(height: 1).foregroundColor(.white.opacity(0.2))
+                        }
+
+                        // ── Email ──
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Email")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                            TextField("Enter your email", text: $viewModel.email)
+                                .keyboardType(.emailAddress)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .textFieldStyle(.roundedBorder)
+                                .focused($focusedField, equals: .email)
+                        }
+
+                        // ── Password ──
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Password")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                            SecureField("8+ characters", text: $viewModel.password)
+                                .textFieldStyle(.roundedBorder)
+                                .focused($focusedField, equals: .password)
+                        }
+
+                        // ── Confirm Password ──
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Confirm Password")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                            SecureField("Re-enter password", text: $viewModel.confirmPassword)
+                                .textFieldStyle(.roundedBorder)
+                                .focused($focusedField, equals: .confirm)
+                            if !viewModel.confirmPassword.isEmpty && viewModel.password != viewModel.confirmPassword {
+                                Text("Passwords do not match")
+                                    .font(.system(size: 12))
+                                    .foregroundColor(.red.opacity(0.8))
                             }
                         }
-                }
-                
-                // 验证码输入
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Verification Code")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.secondary)
-                        
-                        Spacer()
-                        
+
+                        // ── Create Account Button ──
                         Button(action: {
-                            viewModel.sendCode()
+                            focusedField = nil
+                            viewModel.emailRegister()
                         }) {
-                            if viewModel.countdown > 0 {
-                                Text("\(viewModel.countdown)s to resend")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary)
-                            } else {
-                                Text("Send Code")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.blue)
+                            HStack {
+                                if viewModel.isLoading {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                } else {
+                                    Text("Create Account")
+                                        .font(.system(size: 16, weight: .semibold))
+                                }
                             }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                            .background(canRegister ? Color.blue : Color.gray.opacity(0.3))
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
                         }
-                        .disabled(!viewModel.canSendCode || viewModel.isLoading)
+                        .disabled(!canRegister)
+                        .padding(.top, 4)
+
+                        // ── Back to Sign In ──
+                        Button(action: { dismiss() }) {
+                            (Text("Already have an account? ")
+                                .foregroundColor(.white.opacity(0.6))
+                            + Text("Sign In")
+                                .foregroundColor(.blue))
+                            .font(.system(size: 14))
+                        }
+                        .padding(.top, 8)
                     }
-                    
-                    TextField("Enter 6-digit code", text: $codeText)
-                        .keyboardType(.numberPad)
-                        .textFieldStyle(.roundedBorder)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                        .focused($focusedField, equals: .code)
-                        .onChange(of: codeText) { newValue in
-                            let filtered = newValue.filter { $0.isNumber }
-                            if filtered != newValue || filtered.count > 6 {
-                                codeText = String(filtered.prefix(6))
-                            }
-                            viewModel.code = codeText
-                        }
-                        .onChange(of: focusedField) { newValue in
-                            if newValue != .code {
-                                viewModel.code = codeText
-                            }
-                        }
+                    .padding(.horizontal, 24)
+
+                    Spacer(minLength: 40)
+
+                    // ── Privacy Policy ──
+                    PrivacyFooterView()
+                        .padding(.bottom, 32)
                 }
-                
-                // 注册按钮（复用 login API，后端自动创建用户）
-                Button(action: {
-                    focusedField = nil
-                    viewModel.login()
-                }) {
-                    HStack {
-                        if viewModel.isLoading {
-                            ProgressView()
-                                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        } else {
-                            Text("Sign Up")
-                                .font(.system(size: 16, weight: .semibold))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 50)
-                    .background(
-                        phoneText.count == 11 && codeText.count == 6 && !viewModel.isLoading
-                        ? Color.blue
-                        : Color.gray.opacity(0.3)
-                    )
-                    .foregroundColor(.white)
-                    .cornerRadius(10)
-                }
-                .disabled(phoneText.count != 11 || codeText.count != 6 || viewModel.isLoading)
-                .padding(.top, 10)
             }
-            .padding(.horizontal, 24)
-            
-            Spacer()
-            
-            // 提示信息
-            VStack(spacing: 4) {
-                Text("Dev code: 123456")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-                Text("Phone format: 11 digits")
-                    .font(.system(size: 12))
-                    .foregroundColor(.secondary)
-            }
-            .padding(.bottom, 30)
         }
-        .navigationBarHidden(false)
-        .navigationTitle("")
-        .navigationBarTitleDisplayMode(.inline)
+        .navigationBarHidden(true)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
-                Button("Done") {
-                    focusedField = nil
-                }
+                Button("Done") { focusedField = nil }
             }
         }
         .alert("Error", isPresented: $viewModel.showError) {

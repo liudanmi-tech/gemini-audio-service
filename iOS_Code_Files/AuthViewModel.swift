@@ -2,109 +2,135 @@
 //  AuthViewModel.swift
 //  WorkSurvivalGuide
 //
-//  登录页面ViewModel
+//  登录/注册 ViewModel：支持邮箱+密码、Apple Sign In
 //
 
 import Foundation
-import Combine
+import AuthenticationServices
 
+@MainActor
 class AuthViewModel: ObservableObject {
-    @Published var phone: String = ""
-    @Published var code: String = ""
+    @Published var email: String = ""
+    @Published var password: String = ""
+    @Published var confirmPassword: String = ""
     @Published var isLoading: Bool = false
     @Published var errorMessage: String?
     @Published var showError: Bool = false
-    @Published var countdown: Int = 0
-    @Published var canSendCode: Bool = true
-    
-    private var countdownTimer: Timer?
-    
-    // 发送验证码
-    func sendCode() {
-        guard !phone.isEmpty, phone.count == 11, phone.allSatisfy({ $0.isNumber }) else {
-            errorMessage = "请输入正确的手机号"
-            showError = true
+
+    // MARK: - Email Sign In (login + auto-register)
+
+    func emailSignIn() {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty else {
+            showAuthError("Please enter your email address")
             return
         }
-        
+        guard password.count >= 8 else {
+            showAuthError("Password must be at least 8 characters")
+            return
+        }
+
         isLoading = true
         errorMessage = nil
-        
+
         Task {
             do {
-                let response = try await AuthService.shared.sendVerificationCode(phone: phone)
-                await MainActor.run {
-                    self.isLoading = false
-                    // 开发阶段显示验证码
-                    if let code = response.code {
-                        print("📱 验证码: \(code)")
-                    }
-                    self.startCountdown()
-                }
-            } catch {
-                await MainActor.run {
-                    self.isLoading = false
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
-                }
-            }
-        }
-    }
-    
-    // 登录
-    func login() {
-        guard !phone.isEmpty, phone.count == 11 else {
-            errorMessage = "请输入正确的手机号"
-            showError = true
-            return
-        }
-        
-        guard !code.isEmpty, code.count == 6 else {
-            errorMessage = "请输入6位验证码"
-            showError = true
-            return
-        }
-        
-        isLoading = true
-        errorMessage = nil
-        
-        Task {
-            do {
-                let response = try await AuthService.shared.login(phone: phone, code: code)
-                // 获取用户信息
+                _ = try await AuthService.shared.emailLogin(email: trimmedEmail, password: password)
                 let userInfo = try await AuthService.shared.getCurrentUser()
-                await MainActor.run {
-                    self.isLoading = false
-                    AuthManager.shared.loginSuccess(userInfo: userInfo)
-                }
+                isLoading = false
+                AuthManager.shared.loginSuccess(userInfo: userInfo)
             } catch {
-                await MainActor.run {
-                    self.isLoading = false
-                    self.errorMessage = error.localizedDescription
-                    self.showError = true
+                isLoading = false
+                showAuthError(error.localizedDescription)
+            }
+        }
+    }
+
+    // MARK: - Email Register (explicit register with confirm password)
+
+    func emailRegister() {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty else {
+            showAuthError("Please enter your email address")
+            return
+        }
+        guard password.count >= 8 else {
+            showAuthError("Password must be at least 8 characters")
+            return
+        }
+        guard password == confirmPassword else {
+            showAuthError("Passwords do not match")
+            return
+        }
+
+        isLoading = true
+        errorMessage = nil
+
+        Task {
+            do {
+                _ = try await AuthService.shared.emailLogin(email: trimmedEmail, password: password)
+                let userInfo = try await AuthService.shared.getCurrentUser()
+                isLoading = false
+                AuthManager.shared.loginSuccess(userInfo: userInfo)
+            } catch {
+                isLoading = false
+                showAuthError(error.localizedDescription)
+            }
+        }
+    }
+
+    // MARK: - Apple Sign In
+
+    func handleAppleSignIn(result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let auth):
+            guard let credential = auth.credential as? ASAuthorizationAppleIDCredential,
+                  let tokenData = credential.identityToken,
+                  let identityToken = String(data: tokenData, encoding: .utf8),
+                  let codeData = credential.authorizationCode,
+                  let authCode = String(data: codeData, encoding: .utf8) else {
+                showAuthError("Apple Sign In failed: missing credentials")
+                return
+            }
+
+            let fullName: String? = {
+                guard let name = credential.fullName else { return nil }
+                let parts = [name.givenName, name.familyName].compactMap { $0 }
+                return parts.isEmpty ? nil : parts.joined(separator: " ")
+            }()
+
+            isLoading = true
+            errorMessage = nil
+
+            Task {
+                do {
+                    _ = try await AuthService.shared.appleLogin(
+                        identityToken: identityToken,
+                        authCode: authCode,
+                        fullName: fullName
+                    )
+                    let userInfo = try await AuthService.shared.getCurrentUser()
+                    isLoading = false
+                    AuthManager.shared.loginSuccess(userInfo: userInfo)
+                } catch {
+                    isLoading = false
+                    showAuthError(error.localizedDescription)
                 }
             }
-        }
-    }
-    
-    // 开始倒计时
-    private func startCountdown() {
-        countdown = 60
-        canSendCode = false
-        
-        countdownTimer?.invalidate()
-        countdownTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self = self else { return }
-            if self.countdown > 0 {
-                self.countdown -= 1
-            } else {
-                self.canSendCode = true
-                self.countdownTimer?.invalidate()
+
+        case .failure(let error):
+            // 用户主动取消不显示错误
+            let nsErr = error as NSError
+            if nsErr.code != ASAuthorizationError.canceled.rawValue {
+                showAuthError("Apple Sign In failed: \(error.localizedDescription)")
             }
         }
     }
-    
-    deinit {
-        countdownTimer?.invalidate()
+
+    // MARK: - Private
+
+    private func showAuthError(_ message: String) {
+        errorMessage = message
+        showError = true
     }
 }
