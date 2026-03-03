@@ -303,7 +303,10 @@ async def execute_skill(
         if knowledge_base:
             # 在 Prompt 末尾添加知识库内容
             prompt += f"\n\n## 知识库参考\n{knowledge_base}"
-        
+
+        # 语言指令：所有输出字段使用英文
+        prompt += "\n\nIMPORTANT: Respond entirely in English. All text fields (title, label, content, summary, context, subtext, my_inner, other_inner, insight, strategy, etc.) must be written in English."
+
         logger.info(f"Prompt 长度: {len(prompt)} 字符")
         logger.debug(f"Prompt 内容: {prompt[:500]}...")
         

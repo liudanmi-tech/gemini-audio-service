@@ -1025,9 +1025,9 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str, sessi
 
 3. **laugh_count**: (Integer) 识别并统计全场出现的所有类型笑声（包括愉快的、尴尬的或嘲讽的笑）。
 
-4. **summary**: (String) 对对话内容、核心矛盾及情绪转折点进行精炼总结（100-200字）。
+4. **summary**: (String) A concise English summary of the conversation content, key conflicts, and emotional turning points (50-100 words). Write in English.
 
-5. **card_title**: (String) 对话核心主题的简短标题，不超过15个汉字（30字以内），直接点明本次对话的关键议题或核心矛盾，适合在卡片上单独展示。
+5. **card_title**: (String) A short English title (max 8 words) that captures the core topic or key conflict of this conversation, suitable for standalone display on a card. Write in English.
 
 6. **transcript**: (Array) 按时间顺序包含所有对话，每个对话包含：
    - speaker: 说话人标识（如：Speaker_0, Speaker_1，其中Speaker_1为用户）
@@ -1063,7 +1063,9 @@ async def analyze_audio_from_path(temp_file_path: str, file_filename: str, sessi
   "risks": ["风险点1", "风险点2", ...]
 }
 
-注意：transcript 数组必须包含所有对话，按时间顺序排列，不要遗漏任何对话。"""
+注意：transcript 数组必须包含所有对话，按时间顺序排列，不要遗漏任何对话。
+
+IMPORTANT: The "summary" and "card_title" fields must be written in English."""
         
         if len(uploaded_files_list) > 1:
             # 多文件时附加说明
