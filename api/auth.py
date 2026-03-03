@@ -248,8 +248,8 @@ async def get_current_user_info(
         "message": "success",
         "data": {
             "user_id": str(current_user.id),
-            "phone": current_user.phone,
-            "email": current_user.email,
+            "phone": getattr(current_user, "phone", None),
+            "email": getattr(current_user, "email", None),
             "created_at": current_user.created_at.isoformat() if current_user.created_at else "",
             "last_login_at": current_user.last_login_at.isoformat() if current_user.last_login_at else None
         }
