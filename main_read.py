@@ -747,6 +747,29 @@ async def get_image_styles(
         raise HTTPException(status_code=500, detail=f"获取图片风格列表失败: {str(e)}")
 
 
+@app.get("/api/v1/style-thumbnails/{style_key}")
+async def get_style_thumbnail(style_key: str):
+    """返回风格缩略图（无需 JWT），从 OSS style_thumbnails/{style_key}.png 读取"""
+    if not re.match(r'^[a-z0-9_]+$', style_key):
+        raise HTTPException(status_code=400, detail="Invalid style_key")
+    if not USE_OSS or oss_bucket is None:
+        raise HTTPException(status_code=503, detail="Image service unavailable")
+    try:
+        oss_key = f"style_thumbnails/{style_key}.png"
+        image_object = oss_bucket.get_object(oss_key)
+        image_data = image_object.read()
+        return Response(
+            content=image_data,
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
+    except Exception as e:
+        if "NoSuchKey" in str(e) or "404" in str(e):
+            raise HTTPException(status_code=404, detail="Thumbnail not found")
+        logger.error(f"[风格缩略图] 获取失败 {style_key}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch thumbnail")
+
+
 @app.get("/api/v1/sessions/major-events")
 async def get_major_events(
     category: Optional[str] = Query(None, description="workplace|family|personal"),
@@ -772,7 +795,7 @@ async def get_major_events(
     # When no category: LEFT JOIN LATERAL keeps all sessions regardless of skill presence.
     if category:
         lateral_join = """JOIN LATERAL (
-            SELECT se2.skill_id, se2.confidence_score
+            SELECT se2.skill_id, se2.confidence_score, se2.success
             FROM   skill_executions se2
             JOIN   skills sk2 ON se2.skill_id = sk2.skill_id
             WHERE  se2.session_id = s.id
@@ -783,7 +806,7 @@ async def get_major_events(
         JOIN skills sk ON se.skill_id = sk.skill_id"""
     else:
         lateral_join = """LEFT JOIN LATERAL (
-            SELECT se2.skill_id, se2.confidence_score
+            SELECT se2.skill_id, se2.confidence_score, se2.success
             FROM   skill_executions se2
             WHERE  se2.session_id = s.id
             ORDER  BY se2.confidence_score DESC NULLS LAST
@@ -793,15 +816,16 @@ async def get_major_events(
 
     sql = text(f"""
         SELECT
-            s.id::text          AS session_id,
+            s.id::text              AS session_id,
             s.title,
             s.created_at,
             s.emotion_score,
-            sa.scene_category   AS category,
-            sa.strategies,
-            ar.summary          AS ar_summary,
+            sa.scene_category       AS category,
+            ar.summary              AS ar_summary,
+            ar.card_title           AS card_title,
+            ar.conversation_summary AS conv_summary,
             se.skill_id,
-            sk.name             AS skill_name,
+            sk.name                 AS skill_name,
             se.confidence_score
         FROM sessions s
         LEFT JOIN strategy_analysis sa ON s.id = sa.session_id
@@ -828,43 +852,34 @@ async def get_major_events(
 
         events = []
         for row in rows:
-            title_text = row.title or ""
-            summary_text = ""
+            # title: 优先用 card_title（对话核心主题，≤30字），兜底用 session title
+            title_text = (row.card_title or "").strip() or (row.title or "") or "对话记录"
+            # summary: 用 _build_event_brief 构建"和谁+发生了什么"（≤40字）
+            brief = _build_event_brief(row.card_title or "", row.conv_summary or "")
+            summary_text = brief or (row.ar_summary or "").strip()[:40]
 
-            strategies = row.strategies
-            if isinstance(strategies, list) and strategies:
-                first_strat = strategies[0]
-                if isinstance(first_strat, dict):
-                    content = (first_strat.get("content") or "").strip()
-                    lines = [ln for ln in content.split("\n")
-                             if ln.strip() and not ln.lstrip().startswith("#")]
-                    clean = " ".join(lines).strip()
-                    if clean:
-                        candidate = clean
-                        for sep in ["。", "！", "？", ".", "!", "?"]:
-                            idx = clean.find(sep)
-                            if 0 < idx < 60:
-                                candidate = clean[: idx + 1]
-                                break
-                        title_text = candidate[:40]
-                        summary_text = clean[:80] + ("…" if len(clean) > 80 else "")
-
-            if not summary_text and row.ar_summary:
-                ar = row.ar_summary.strip()
-                summary_text = ar[:80] + ("…" if len(ar) > 80 else "")
-
-            if not title_text:
-                title_text = row.title or "对话记录"
+            # 能力关联：通过 skill_id 反查 ability_type
+            atype   = _SKILL_TO_ABILITY.get(row.skill_id or "", "")
+            aname   = ABILITY_META.get(atype, {}).get("name", "") if atype else ""
+            suc     = row.success if hasattr(row, 'success') and row.success is not None else True
+            outcome = _determine_outcome(
+                float(row.confidence_score or 0),
+                suc,
+                int(row.emotion_score or 0)
+            )
 
             events.append({
                 "session_id":       row.session_id,
-                "title":            title_text,
-                "summary":          summary_text,
+                "title":            title_text[:40],
+                "summary":          summary_text[:40] + ("…" if len(summary_text) > 40 else ""),
                 "created_at":       row.created_at.isoformat() if row.created_at else None,
                 "skill_name":       row.skill_name,
                 "confidence_score": row.confidence_score,
                 "emotion_score":    row.emotion_score,
                 "category":         row.category or category,
+                "ability_type":     atype or None,
+                "ability_name":     aname or None,
+                "outcome":          outcome,
             })
 
         return APIResponse(
@@ -969,6 +984,48 @@ def _ability_level(score: float):
         return "萌芽期", "🌱"
 
 
+def _build_event_brief(card_title: str, conv_summary: str) -> str:
+    """构建大事件卡片简介（≤40字/2行）：说清楚和谁、发生了什么。
+    card_title:   对话核心主题（analysis_results.card_title，≤30字）
+    conv_summary: 谁和谁对话的概要（analysis_results.conversation_summary）
+    """
+    card_title   = (card_title   or "").strip()
+    conv_summary = (conv_summary or "").strip()
+    if not card_title and not conv_summary:
+        return ""
+    # 从 conversation_summary 提取"和谁"关键词（与/和/跟 + 2-8字）
+    who_part = ""
+    if conv_summary:
+        cs = conv_summary.replace("Speaker_0", "我").replace("Speaker_1", "对方")
+        m = re.search(r'((?:与|和|跟)[^\s，,。]{2,8})', cs)
+        if m:
+            who_part = m.group(1)
+    if card_title and who_part:
+        return f"{who_part}，{card_title}"[:40]
+    elif card_title:
+        return card_title[:40]
+    else:
+        return conv_summary[:40]
+
+
+# 技能ID → 能力类型 反向映射（用于 major-events 端点）
+_SKILL_TO_ABILITY: dict = {}
+for _atype, _sids in ABILITY_SKILL_MAP.items():
+    for _sid in _sids:
+        _SKILL_TO_ABILITY[_sid] = _atype
+
+
+def _determine_outcome(conf: float, success: bool, emotion: int) -> str:
+    """判断大事件结果：breakthrough(能力突破) / practice(有效实践) / setback(值得复盘)"""
+    if not success:
+        return "setback"
+    if conf >= 0.80 and emotion >= 65:
+        return "breakthrough"
+    if conf >= 0.60:
+        return "practice"
+    return "setback"
+
+
 @app.get("/api/v1/ability-scores")
 async def get_ability_scores(
     user_id: str = Depends(get_current_user_id),
@@ -1063,8 +1120,12 @@ async def get_ability_scores(
             SELECT DISTINCT ON (s.id)
                 s.id::text                AS session_id,
                 s.created_at,
+                s.emotion_score,
                 ar.summary                AS ar_summary,
+                ar.card_title             AS card_title,
+                ar.conversation_summary   AS conv_summary,
                 se.confidence_score,
+                se.success,
                 sk.name                   AS skill_name
             FROM skill_executions se
             JOIN sessions s  ON se.session_id = s.id
@@ -1080,17 +1141,26 @@ async def get_ability_scores(
 
         recent_events = []
         for er in raw_sorted:
-            conf   = float(er.confidence_score or 0)
+            conf    = float(er.confidence_score or 0)
+            suc     = er.success if er.success is not None else True
+            emo     = int(er.emotion_score or 0) if er.emotion_score is not None else 0
+            outcome = _determine_outcome(conf, suc, emo)
             contrib = 5 if conf >= 0.85 else (3 if conf >= 0.75 else (2 if conf >= 0.60 else 1))
-            summary = (er.ar_summary or "").strip()
-            title   = f"{er.skill_name}突破" if conf >= 0.75 else f"{er.skill_name}实践"
+            # 标题：优先用 card_title（对话实际发生的事），兜底用技能名
+            title   = (er.card_title or "").strip() or f"{er.skill_name}实践"
+            brief   = _build_event_brief(er.card_title or "", er.conv_summary or "")
+            summary = brief or (er.ar_summary or "").strip()[:40]
             date_str = er.created_at.strftime("%m.%d") if er.created_at else ""
             recent_events.append({
                 "session_id":         er.session_id,
                 "date":               date_str,
-                "title":              title,
-                "summary":            summary[:60] + ("…" if len(summary) > 60 else ""),
+                "title":              title[:30],
+                "summary":            summary[:40] + ("…" if len(summary) > 40 else ""),
                 "score_contribution": contrib,
+                "ability_type":       ability_type,
+                "ability_name":       meta["name"],
+                "skill_name":         er.skill_name or "",
+                "outcome":            outcome,
             })
 
         level_name, level_emoji = _ability_level(score)

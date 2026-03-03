@@ -3403,15 +3403,16 @@ async def get_major_events(
 
     sql = text(f"""
         SELECT
-            s.id::text          AS session_id,
+            s.id::text              AS session_id,
             s.title,
             s.created_at,
             s.emotion_score,
-            sa.scene_category   AS category,
-            sa.strategies,
-            ar.summary          AS ar_summary,
+            sa.scene_category       AS category,
+            ar.summary              AS ar_summary,
+            ar.card_title           AS card_title,
+            ar.conversation_summary AS conv_summary,
             se.skill_id,
-            sk.name             AS skill_name,
+            sk.name                 AS skill_name,
             se.confidence_score
         FROM sessions s
         LEFT JOIN strategy_analysis sa ON s.id = sa.session_id
@@ -3438,46 +3439,16 @@ async def get_major_events(
 
         events = []
         for row in rows:
-            title_text = row.title or ""
-            summary_text = ""
-
-            # Extract readable title & summary from first strategy's content field
-            strategies = row.strategies
-            if isinstance(strategies, list) and strategies:
-                first_strat = strategies[0]
-                if isinstance(first_strat, dict):
-                    content = (first_strat.get("content") or "").strip()
-                    # Drop markdown heading lines (lines starting with #)
-                    lines = [ln for ln in content.split("\n")
-                             if ln.strip() and not ln.lstrip().startswith("#")]
-                    clean = " ".join(lines).strip()
-
-                    if clean:
-                        # First sentence as title (up to 40 chars)
-                        candidate = clean
-                        for sep in ["。", "！", "？", ".", "!", "?"]:
-                            idx = clean.find(sep)
-                            if 0 < idx < 60:
-                                candidate = clean[: idx + 1]
-                                break
-                        title_text = candidate[:40]
-
-                        # First 80 chars as summary
-                        summary_text = clean[:80] + ("…" if len(clean) > 80 else "")
-
-            # Fallback summary from analysis_results.summary
-            if not summary_text and row.ar_summary:
-                ar = row.ar_summary.strip()
-                summary_text = ar[:80] + ("…" if len(ar) > 80 else "")
-
-            # Final title fallback
-            if not title_text:
-                title_text = row.title or "对话记录"
+            # title: 优先用 card_title（对话核心主题，≤30字），兜底用 session title
+            title_text = (row.card_title or "").strip() or (row.title or "") or "对话记录"
+            # summary: 用 _build_event_brief 构建"和谁+发生了什么"（≤40字）
+            brief = _build_event_brief(row.card_title or "", row.conv_summary or "")
+            summary_text = brief or (row.ar_summary or "").strip()[:40]
 
             events.append({
                 "session_id":       row.session_id,
-                "title":            title_text,
-                "summary":          summary_text,
+                "title":            title_text[:40],
+                "summary":          summary_text[:40] + ("…" if len(summary_text) > 40 else ""),
                 "created_at":       row.created_at.isoformat() if row.created_at else None,
                 "skill_name":       row.skill_name,
                 "confidence_score": row.confidence_score,
@@ -3733,6 +3704,30 @@ def _ability_level(score: float):
         return "萌芽期", "🌱"
 
 
+def _build_event_brief(card_title: str, conv_summary: str) -> str:
+    """构建大事件卡片简介（≤40字/2行）：说清楚和谁、发生了什么。
+    card_title:   对话核心主题（analysis_results.card_title，≤30字）
+    conv_summary: 谁和谁对话的概要（analysis_results.conversation_summary）
+    """
+    card_title   = (card_title   or "").strip()
+    conv_summary = (conv_summary or "").strip()
+    if not card_title and not conv_summary:
+        return ""
+    # 从 conversation_summary 提取"和谁"关键词（与/和/跟 + 2-8字）
+    who_part = ""
+    if conv_summary:
+        cs = conv_summary.replace("Speaker_0", "我").replace("Speaker_1", "对方")
+        m = re.search(r'((?:与|和|跟)[^\s，,。]{2,8})', cs)
+        if m:
+            who_part = m.group(1)
+    if card_title and who_part:
+        return f"{who_part}，{card_title}"[:40]
+    elif card_title:
+        return card_title[:40]
+    else:
+        return conv_summary[:40]
+
+
 @app.get("/api/v1/ability-scores")
 async def get_ability_scores(
     user_id: str = Depends(get_current_user_id),
@@ -3828,6 +3823,8 @@ async def get_ability_scores(
                 s.id::text                AS session_id,
                 s.created_at,
                 ar.summary                AS ar_summary,
+                ar.card_title             AS card_title,
+                ar.conversation_summary   AS conv_summary,
                 se.confidence_score,
                 sk.name                   AS skill_name
             FROM skill_executions se
@@ -3844,16 +3841,18 @@ async def get_ability_scores(
 
         recent_events = []
         for er in raw_sorted:
-            conf   = float(er.confidence_score or 0)
+            conf    = float(er.confidence_score or 0)
             contrib = 5 if conf >= 0.85 else (3 if conf >= 0.75 else (2 if conf >= 0.60 else 1))
-            summary = (er.ar_summary or "").strip()
             title   = f"{er.skill_name}突破" if conf >= 0.75 else f"{er.skill_name}实践"
+            # 优先用 card_title+conversation_summary 构建"和谁+发生了什么"简介
+            brief   = _build_event_brief(er.card_title or "", er.conv_summary or "")
+            summary = brief or (er.ar_summary or "").strip()[:40]
             date_str = er.created_at.strftime("%m.%d") if er.created_at else ""
             recent_events.append({
                 "session_id":         er.session_id,
                 "date":               date_str,
                 "title":              title,
-                "summary":            summary[:60] + ("…" if len(summary) > 60 else ""),
+                "summary":            summary[:40] + ("…" if len(summary) > 40 else ""),
                 "score_contribution": contrib,
             })
 

@@ -41,17 +41,10 @@ struct SkillDetailSheet: View {
                     // ── Hero 封面图（有 cover_image 显示生成图，否则显示渐变色占位）──
                     ZStack(alignment: .bottomLeading) {
                         if let proxyURL = coverProxyURL {
-                            AsyncImage(url: proxyURL) { phase in
-                                switch phase {
-                                case .success(let img):
-                                    img.resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                case .failure:
-                                    gradientCover
-                                default:
-                                    gradientCover
-                                        .overlay(ProgressView().tint(.white))
-                                }
+                            ZStack {
+                                gradientCover   // 加载中/失败时渐变色兜底
+                                // 详情页高 210pt 全屏宽，传 420 保证清晰度
+                                SkillCoverImage(url: proxyURL, maxDisplayDimension: 420)
                             }
                             .frame(height: 210)
                             .clipped()

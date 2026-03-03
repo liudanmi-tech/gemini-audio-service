@@ -14,6 +14,10 @@ struct AbilityEvent: Codable, Identifiable {
     let title: String
     let summary: String
     let scoreContribution: Int
+    let abilityType: String?   // "control" / "defense" / ...
+    let abilityName: String?   // "控制力" / "防御力" / ...
+    let skillName: String?     // 具体技能名称
+    let outcome: String?       // "breakthrough" / "practice" / "setback"
 
     var id: String { sessionId + date }
 
@@ -21,6 +25,10 @@ struct AbilityEvent: Codable, Identifiable {
         case sessionId        = "session_id"
         case date, title, summary
         case scoreContribution = "score_contribution"
+        case abilityType      = "ability_type"
+        case abilityName      = "ability_name"
+        case skillName        = "skill_name"
+        case outcome
     }
 }
 

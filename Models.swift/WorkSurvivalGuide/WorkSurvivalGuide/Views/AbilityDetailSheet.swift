@@ -194,18 +194,24 @@ struct AbilityDetailSheet: View {
             navigateToDetail = true
         } label: {
             HStack(alignment: .top, spacing: 12) {
-                // 左侧：分数贡献
-                VStack(spacing: 2) {
-                    Text(eventEmoji(event))
-                        .font(.system(size: 22))
-                    Text("+\(event.scoreContribution)")
-                        .font(.system(size: 11, weight: .bold, design: .rounded))
-                        .foregroundColor(Color(hex: "#34D399"))
+                // 左侧：outcome 图标 + 标签
+                let oColor = outcomeColor(event.outcome)
+                VStack(spacing: 3) {
+                    Image(systemName: outcomeIcon(event.outcome))
+                        .font(.system(size: 20))
+                        .foregroundColor(oColor)
+                    Text(outcomeLabel(event.outcome))
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                        .foregroundColor(oColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(oColor.opacity(0.15)))
                 }
-                .frame(width: 36)
+                .frame(width: 42)
 
                 // 右侧：内容
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 5) {
+                    // 标题 + 日期
                     HStack {
                         Text(event.title)
                             .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -216,6 +222,28 @@ struct AbilityDetailSheet: View {
                             .font(.system(size: 11, weight: .medium, design: .rounded))
                             .foregroundColor(accentColor.opacity(0.8))
                     }
+                    // 能力标签 + 技能标签
+                    if let aName = event.abilityName, !aName.isEmpty,
+                       let aType = event.abilityType {
+                        HStack(spacing: 6) {
+                            let aColor = abilityTagColor(aType)
+                            Text(abilityEmojiFor(aType) + " " + aName)
+                                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                                .foregroundColor(aColor)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(aColor.opacity(0.15)))
+                            if let sName = event.skillName, !sName.isEmpty {
+                                Text(sName)
+                                    .font(.system(size: 10, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.35))
+                                    .padding(.horizontal, 7)
+                                    .padding(.vertical, 2)
+                                    .background(Capsule().fill(Color.white.opacity(0.06)))
+                            }
+                        }
+                    }
+                    // 摘要
                     if !event.summary.isEmpty {
                         Text(event.summary)
                             .font(.system(size: 12, weight: .regular, design: .rounded))
@@ -303,10 +331,52 @@ struct AbilityDetailSheet: View {
 
     // MARK: - Helpers
 
-    private func eventEmoji(_ event: AbilityEvent) -> String {
-        if event.scoreContribution >= 5 { return "🔥" }
-        if event.scoreContribution >= 3 { return "⭐" }
-        return "💡"
+    private func outcomeIcon(_ outcome: String?) -> String {
+        switch outcome {
+        case "breakthrough": return "arrow.up.circle.fill"
+        case "setback":      return "exclamationmark.circle.fill"
+        default:             return "arrow.up.right.circle.fill"
+        }
+    }
+
+    private func outcomeColor(_ outcome: String?) -> Color {
+        switch outcome {
+        case "breakthrough": return Color(hex: "#34D399")
+        case "setback":      return Color(hex: "#FBBF24")
+        default:             return Color(hex: "#60A5FA")
+        }
+    }
+
+    private func outcomeLabel(_ outcome: String?) -> String {
+        switch outcome {
+        case "breakthrough": return "⬆ 突破"
+        case "setback":      return "⚠ 复盘"
+        default:             return "↗ 实践"
+        }
+    }
+
+    private func abilityTagColor(_ type: String) -> Color {
+        switch type {
+        case "influence": return Color(hex: "#FFD700")
+        case "control":   return Color(hex: "#45B7D1")
+        case "insight":   return Color(hex: "#A78BFA")
+        case "empathy":   return Color(hex: "#F472B6")
+        case "defense":   return Color(hex: "#34D399")
+        case "execution": return Color(hex: "#FB923C")
+        default:          return Color(hex: "#45B7D1")
+        }
+    }
+
+    private func abilityEmojiFor(_ type: String) -> String {
+        switch type {
+        case "influence": return "💞"
+        case "control":   return "🎯"
+        case "insight":   return "🔭"
+        case "empathy":   return "⚡"
+        case "defense":   return "🛡️"
+        case "execution": return "🚀"
+        default:          return "✨"
+        }
     }
 
     private func makeTaskItem(from event: AbilityEvent) -> TaskItem {

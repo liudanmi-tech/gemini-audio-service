@@ -5,6 +5,76 @@
 
 import SwiftUI
 
+// MARK: - 带缓存的技能封面图
+/// 接入 ImageCacheManager（内存+磁盘），切换 Tab 时缓存命中直接渲染，无 spinner
+/// 所有磁盘 I/O 和网络请求在后台线程执行，不阻塞主线程
+/// 按 maxDisplayDimension 降采样解码，内存比 UIImage(data:) 少 5-10x
+struct SkillCoverImage: View {
+    let url: URL
+    /// 最大显示尺寸 pt：卡片传 180，详情页传 420
+    var maxDisplayDimension: CGFloat = 420
+
+    @State private var uiImage: UIImage?
+    @State private var isLoading = true
+
+    var body: some View {
+        Group {
+            if let uiImage {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } else if isLoading {
+                ProgressView().tint(.white).scaleEffect(0.7)
+            }
+            // 失败时为空，背景渐变透出
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        guard uiImage == nil else { return }
+        let key = "\(url.absoluteString)@\(Int(maxDisplayDimension))"
+        let targetURL = url
+        let dim = maxDisplayDimension
+        // UIScreen.main 必须在主线程访问，在 dispatch 前提前捕获
+        let scale = UIScreen.main.scale
+
+        // 磁盘读写和网络请求全部在后台线程，避免阻塞主线程导致切 Tab 卡顿
+        DispatchQueue.global(qos: .userInitiated).async {
+            // 内存/磁盘缓存命中 → 回主线程直接渲染
+            if let cached = ImageCacheManager.shared.image(for: key) {
+                DispatchQueue.main.async { self.uiImage = cached; self.isLoading = false }
+                return
+            }
+            // 网络加载 + 降采样解码
+            URLSession.shared.dataTask(with: targetURL) { data, _, _ in
+                guard let data else {
+                    DispatchQueue.main.async { self.isLoading = false }
+                    return
+                }
+                let img = Self.downsample(data: data, maxDimension: dim, scale: scale)
+                if let img { ImageCacheManager.shared.cache(img, for: key) }
+                DispatchQueue.main.async { self.uiImage = img; self.isLoading = false }
+            }.resume()
+        }
+    }
+
+    /// CGImageSource 降采样：仅解码到显示所需分辨率
+    /// 1024×1024 图 → 180pt卡片 → 约 200KB（vs UIImage(data:) 的 4MB）
+    private static func downsample(data: Data, maxDimension: CGFloat, scale: CGFloat) -> UIImage? {
+        let opts = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let src = CGImageSourceCreateWithData(data as CFData, opts) else { return nil }
+        let thumbOpts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxDimension * scale
+        ]
+        guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, thumbOpts as CFDictionary) else { return nil }
+        return UIImage(cgImage: cg, scale: scale, orientation: .up)
+    }
+}
+
 struct SkillCatalogCardView: View {
     let skill: SkillCatalogItem
     let isSelected: Bool
@@ -36,18 +106,9 @@ struct SkillCatalogCardView: View {
                 .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
                 .overlay {
                     if let proxyURL = coverProxyURL {
-                        AsyncImage(url: proxyURL) { phase in
-                            switch phase {
-                            case .success(let img):
-                                img.resizable()
-                                    .aspectRatio(contentMode: .fill)
-                            case .failure:
-                                EmptyView()
-                            default:
-                                ProgressView().tint(.white).scaleEffect(0.7)
-                            }
-                        }
-                        .clipped()
+                        // 卡片高度 120pt，传 180 提供 retina 余量，解码内存约 200KB/张
+                        SkillCoverImage(url: proxyURL, maxDisplayDimension: 180)
+                            .clipped()
                     }
                 }
                 .overlay(alignment: .topTrailing) {
