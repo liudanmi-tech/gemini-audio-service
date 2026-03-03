@@ -65,7 +65,7 @@ private struct StyleCard: View {
                             .stroke(isSelected ? Color.blue : Color.clear, lineWidth: 3)
                     )
 
-                Text(style.name)
+                Text(style.nameEn)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundColor(AppColors.primaryText)
                     .lineLimit(1)
