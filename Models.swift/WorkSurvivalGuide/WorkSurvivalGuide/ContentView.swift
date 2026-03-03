@@ -13,7 +13,8 @@ struct ContentView: View {
     @State private var selectedTab: TabItem = .fragments
     @StateObject private var recordingViewModel = RecordingViewModel()
     @State private var showFilePicker = false
-    
+    @AppStorage("onboarding_completed") private var onboardingCompleted = false
+
     var body: some View {
         Group {
             if authManager.isLoggedIn {
@@ -68,8 +69,11 @@ struct ContentView: View {
                             BottomNavView(selectedTab: $selectedTab)
                         }
                     }
-                    .ignoresSafeArea(edges: .bottom) // 整个 ZStack 延伸到安全区域底部
+                    .ignoresSafeArea(edges: .bottom)
                     .navigationBarHidden(true)
+                }
+                .fullScreenCover(isPresented: .constant(!onboardingCompleted)) {
+                    OnboardingView()
                 }
             } else {
                 LoginView()

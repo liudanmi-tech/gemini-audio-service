@@ -1,18 +1,31 @@
+//
+//  ContentView.swift
+//  WorkSurvivalGuide
+//
+//  主视图 - 按照Figma设计稿实现
+//
+
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ContentView: View {
-    @ObservedObject private var authManager = AuthManager.shared
+    @StateObject private var authManager = AuthManager.shared
     @State private var selectedTab: TabItem = .fragments
     @StateObject private var recordingViewModel = RecordingViewModel()
-    
+    @State private var showFilePicker = false
+    @AppStorage("onboarding_completed") private var onboardingCompleted = false
+
     var body: some View {
         Group {
             if authManager.isLoggedIn {
-                // 调试日志
-                let _ = print("🖥️ [ContentView] 显示主界面，isLoggedIn = \(authManager.isLoggedIn)")
                 NavigationStack {
                     ZStack {
+                        // 背景色（底层）
                         AppColors.background
+                            .ignoresSafeArea()
+                        
+                        // 信纸网格底纹（在背景色上方，但不覆盖底部导航栏）
+                        PaperGridBackground()
                             .ignoresSafeArea()
                         
                         VStack(spacing: 0) {
@@ -23,41 +36,65 @@ struct ContentView: View {
                                     switch selectedTab {
                                     case .fragments:
                                         TaskListView()
-                                    case .status:
-                                        StatusView()
-                                    case .mine:
-                                        MineView()
+                                    case .skills:
+                                        SkillsView()
+                                    case .profile:
+                                        ProfileListView()
                                     }
                                 }
                                 
-                                // 录音按钮（只在碎片页面显示）
+                                // 录音按钮 + 本地上传按钮（只在碎片页面显示）
                                 if selectedTab == .fragments {
                                     VStack {
                                         Spacer()
                                         HStack {
                                             Spacer()
-                                            RecordingButtonView(viewModel: recordingViewModel)
-                                                .padding(.trailing, 0)
-                                                .padding(.bottom, 100) // 位于底部导航栏上方
+                                            RecordingButtonView(
+                                                viewModel: recordingViewModel,
+                                                onUploadTap: { showFilePicker = true }
+                                            )
+                                            .padding(.trailing, 0)
+                                            .padding(.bottom, 100) // 位于底部导航栏上方
                                         }
                                     }
                                 }
+                                
+                                // 进度已移至卡片内显示，不再使用悬浮层
                             }
-                            
-                            // 底部导航栏
+                        }
+                        
+                        // 底部导航栏（最顶层，不被网格覆盖）
+                        VStack {
+                            Spacer()
                             BottomNavView(selectedTab: $selectedTab)
                         }
                     }
+                    .ignoresSafeArea(edges: .bottom)
                     .navigationBarHidden(true)
                 }
+                .fullScreenCover(isPresented: .constant(!onboardingCompleted)) {
+                    OnboardingView()
+                }
             } else {
-                // 调试日志
-                let _ = print("🖥️ [ContentView] 显示登录页面，isLoggedIn = \(authManager.isLoggedIn)")
                 LoginView()
             }
         }
         .onAppear {
             authManager.checkLoginStatus()
+        }
+        .fileImporter(
+            isPresented: $showFilePicker,
+            allowedContentTypes: [.audio, .mpeg4Audio, .mp3, .wav],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                if let url = urls.first {
+                    recordingViewModel.uploadLocalFile(fileURL: url)
+                }
+            case .failure(let error):
+                print("❌ [ContentView] 选择文件失败: \(error)")
+            }
         }
     }
 }
@@ -90,4 +127,8 @@ struct MineView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(AppColors.background)
     }
+}
+
+#Preview {
+    ContentView()
 }
