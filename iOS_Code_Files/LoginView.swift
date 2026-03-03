@@ -40,7 +40,7 @@ struct LoginView: View {
                     Spacer()
 
                     // ── Auth Buttons ──
-                    VStack(spacing: 14) {
+                    VStack(spacing: 12) {
 
                         // Apple Sign In — 主 CTA
                         SignInWithAppleButton(.signIn) { request in
@@ -55,8 +55,23 @@ struct LoginView: View {
                         if viewModel.isLoading {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                .padding(.top, 4)
                         }
+
+                        // Continue with phone — 测试用按钮
+                        NavigationLink(destination: PhoneSignInView()) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "phone.fill")
+                                    .font(.system(size: 15))
+                                Text("Continue with phone")
+                                    .font(.system(size: 15, weight: .medium))
+                            }
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 50)
+                            .background(Color.white.opacity(0.12))
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
+                        }
+                        .disabled(viewModel.isLoading)
 
                         // Continue with email — 次级文字链接
                         NavigationLink(destination: EmailSignInView()) {
@@ -187,6 +202,160 @@ private struct EmailSignInView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(viewModel.errorMessage ?? "Unknown error")
+        }
+    }
+}
+
+// MARK: - Phone Sign In (测试用)
+
+private struct PhoneSignInView: View {
+    @State private var phone = ""
+    @State private var code = ""
+    @State private var isLoading = false
+    @State private var countdown = 0
+    @State private var showError = false
+    @State private var errorMessage = ""
+    @FocusState private var focusedField: Field?
+
+    enum Field { case phone, code }
+
+    private var canSendCode: Bool { phone.count == 11 && countdown == 0 && !isLoading }
+    private var canSignIn: Bool { phone.count == 11 && code.count == 6 && !isLoading }
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            ScrollView {
+                VStack(spacing: 20) {
+
+                    VStack(spacing: 8) {
+                        Text("Phone Sign In")
+                            .font(.system(size: 26, weight: .bold))
+                            .foregroundColor(.white)
+                        Text("Enter your phone number")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                    .padding(.top, 32)
+
+                    // ── Phone ──
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Phone Number")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
+                        TextField("11-digit phone number", text: $phone)
+                            .keyboardType(.numberPad)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focusedField, equals: .phone)
+                            .onChange(of: phone) { v in
+                                let f = v.filter { $0.isNumber }
+                                phone = String((f != v ? f : v).prefix(11))
+                            }
+                    }
+
+                    // ── Code ──
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("Verification Code")
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.8))
+                            Spacer()
+                            Button(action: sendCode) {
+                                Text(countdown > 0 ? "\(countdown)s" : "Send Code")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(canSendCode ? .blue : .gray)
+                            }
+                            .disabled(!canSendCode)
+                        }
+                        TextField("6-digit code", text: $code)
+                            .keyboardType(.numberPad)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($focusedField, equals: .code)
+                            .onChange(of: code) { v in
+                                let f = v.filter { $0.isNumber }
+                                code = String((f != v ? f : v).prefix(6))
+                            }
+                    }
+
+                    // ── Sign In Button ──
+                    Button(action: {
+                        focusedField = nil
+                        signIn()
+                    }) {
+                        HStack {
+                            if isLoading {
+                                ProgressView().progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            } else {
+                                Text("Sign In").font(.system(size: 16, weight: .semibold))
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 50)
+                        .background(canSignIn ? Color.blue : Color.gray.opacity(0.3))
+                        .foregroundColor(.white)
+                        .cornerRadius(10)
+                    }
+                    .disabled(!canSignIn)
+                    .padding(.top, 4)
+                }
+                .padding(.horizontal, 24)
+            }
+        }
+        .navigationTitle("Phone Sign In")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") { focusedField = nil }
+            }
+        }
+        .alert("Error", isPresented: $showError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(errorMessage)
+        }
+    }
+
+    private func sendCode() {
+        Task {
+            isLoading = true
+            do {
+                _ = try await AuthService.shared.sendVerificationCode(phone: phone)
+                isLoading = false
+                startCountdown()
+            } catch {
+                isLoading = false
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
+    }
+
+    private func signIn() {
+        Task {
+            isLoading = true
+            do {
+                _ = try await AuthService.shared.login(phone: phone, code: code)
+                let userInfo = try await AuthService.shared.getCurrentUser()
+                isLoading = false
+                AuthManager.shared.loginSuccess(userInfo: userInfo)
+            } catch {
+                isLoading = false
+                errorMessage = error.localizedDescription
+                showError = true
+            }
+        }
+    }
+
+    private func startCountdown() {
+        countdown = 60
+        Task {
+            while countdown > 0 {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                countdown -= 1
+            }
         }
     }
 }
