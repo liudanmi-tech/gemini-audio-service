@@ -79,31 +79,38 @@ private extension OnboardingSubSkill {
 struct SkillsView: View {
     @ObservedObject private var viewModel = SkillsViewModel.shared
 
+    // Source of truth: sub-skill IDs (set by onboarding + SkillAddSheet)
+    @AppStorage("onboarding_subskills") private var savedSubSkills = ""
+    // Fallback: category IDs written by onboarding (used to seed subskills if empty)
     @AppStorage("onboarding_categories") private var savedCategories = ""
 
     @State private var selectedSkill: OnboardingSubSkill? = nil
+    @State private var showAddSheet = false
+    @State private var customSkills: [CustomSkill] = []
+    @State private var selectedCustomSkill: CustomSkill? = nil
 
-    private var selectedCategoryIds: Set<String> {
-        Set(savedCategories.split(separator: ",").map(String.init).filter { !$0.isEmpty })
+    private var selectedSubSkillIds: Set<String> {
+        Set(savedSubSkills.split(separator: ",").map(String.init).filter { !$0.isEmpty })
     }
 
-    private var selectedCategories: [OnboardingCategory] {
-        // 按 SkillCategoryPresets.all 的顺序过滤
-        SkillCategoryPresets.all.filter { selectedCategoryIds.contains($0.id) }
+    /// Categories that have at least one selected sub-skill, paired with their selected sub-skills only
+    private var categoriesWithSelections: [(category: OnboardingCategory, subSkills: [OnboardingSubSkill])] {
+        SkillCategoryPresets.all.compactMap { cat in
+            let selected = cat.subSkills.filter { selectedSubSkillIds.contains($0.id) }
+            return selected.isEmpty ? nil : (cat, selected)
+        }
     }
 
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                SkillsHeaderView(viewModel: viewModel)
+                SkillsHeaderView(viewModel: viewModel, onAddTap: { showAddSheet = true })
 
-                // 星域卡片（始终显示，用于记录与能力分析）
                 SkillConstellationView()
                     .padding(.top, 8)
                     .padding(.bottom, 4)
 
-                if selectedCategories.isEmpty {
-                    // 未选择场景时的引导提示
+                if categoriesWithSelections.isEmpty && customSkills.isEmpty {
                     Spacer()
                     VStack(spacing: 14) {
                         Image(systemName: "list.star")
@@ -112,7 +119,7 @@ struct SkillsView: View {
                         Text("No focus areas selected")
                             .font(.system(size: 16, weight: .medium, design: .rounded))
                             .foregroundColor(.white.opacity(0.4))
-                        Text("Complete the setup to personalize your skill library.")
+                        Text("Tap + to add skills to your library.")
                             .font(.system(size: 13, design: .rounded))
                             .foregroundColor(.white.opacity(0.3))
                             .multilineTextAlignment(.center)
@@ -122,10 +129,19 @@ struct SkillsView: View {
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 28) {
-                            ForEach(selectedCategories) { category in
+                            ForEach(categoriesWithSelections, id: \.category.id) { item in
                                 OnboardingCategorySection(
-                                    category: category,
+                                    category: item.category,
+                                    displaySubSkills: item.subSkills,
                                     onSelectSkill: { selectedSkill = $0 }
+                                )
+                            }
+
+                            if !customSkills.isEmpty {
+                                CustomSkillsSection(
+                                    skills: customSkills,
+                                    onSelectSkill: { selectedCustomSkill = $0 },
+                                    onDelete: { id in deleteCustomSkill(id: id) }
                                 )
                             }
                         }
@@ -136,13 +152,46 @@ struct SkillsView: View {
             }
         }
         .onAppear {
-            // 星域卡片仍依赖后端数据（能力分析），保持原有加载逻辑
             if viewModel.categories.isEmpty && !viewModel.isLoading {
                 viewModel.loadCatalog()
             }
+            // Seed subskills from categories if this is a user who onboarded before the sub-skill update
+            if savedSubSkills.isEmpty && !savedCategories.isEmpty {
+                let catIds = Set(savedCategories.split(separator: ",").map(String.init))
+                let allSubIds = SkillCategoryPresets.all
+                    .filter { catIds.contains($0.id) }
+                    .flatMap { $0.subSkills.map(\.id) }
+                savedSubSkills = allSubIds.joined(separator: ",")
+            }
+            loadCustomSkills()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .customSkillsDidChange)) { _ in
+            loadCustomSkills()
         }
         .sheet(item: $selectedSkill) { skill in
             OnboardingSubSkillDetailSheet(skill: skill)
+        }
+        .sheet(item: $selectedCustomSkill) { skill in
+            CustomSkillDetailSheet(skill: skill)
+        }
+        .sheet(isPresented: $showAddSheet, onDismiss: loadCustomSkills) {
+            SkillAddSheet()
+        }
+    }
+
+    private func loadCustomSkills() {
+        Task {
+            let skills = (try? await NetworkManager.shared.listCustomSkills()) ?? []
+            await MainActor.run { customSkills = skills }
+        }
+    }
+
+    private func deleteCustomSkill(id: String) {
+        Task {
+            try? await NetworkManager.shared.deleteCustomSkill(skillId: id)
+            await MainActor.run {
+                customSkills.removeAll { $0.id == id }
+            }
         }
     }
 }
@@ -151,11 +200,11 @@ struct SkillsView: View {
 
 private struct OnboardingCategorySection: View {
     let category: OnboardingCategory
+    let displaySubSkills: [OnboardingSubSkill]   // only the selected sub-skills to display
     let onSelectSkill: (OnboardingSubSkill) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // 分类标题行
             HStack(spacing: 8) {
                 Text(category.emoji)
                     .font(.system(size: 18))
@@ -163,16 +212,15 @@ private struct OnboardingCategorySection: View {
                     .font(.system(size: 18, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 Spacer()
-                Text("\(category.subSkills.count) skills")
+                Text("\(displaySubSkills.count) skill\(displaySubSkills.count == 1 ? "" : "s")")
                     .font(.system(size: 12, design: .rounded))
                     .foregroundColor(.white.opacity(0.35))
             }
             .padding(.horizontal, 20)
 
-            // 子技能横向卡片
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(category.subSkills) { skill in
+                    ForEach(displaySubSkills) { skill in
                         OnboardingSubSkillCard(
                             skill: skill,
                             accentColor: category.accentColor
@@ -558,15 +606,29 @@ struct OnboardingSubSkillDetailSheet: View {
 
 struct SkillsHeaderView: View {
     @ObservedObject var viewModel: SkillsViewModel
+    var onAddTap: (() -> Void)? = nil
 
     var body: some View {
-        HStack(alignment: .center, spacing: 0) {
+        HStack(alignment: .center, spacing: 10) {
             Text("Skill Library")
                 .font(.system(size: 24, weight: .black, design: .rounded))
                 .foregroundColor(.white)
                 .tracking(0.6)
 
             Spacer()
+
+            // Add skills button
+            Button(action: { onAddTap?() }) {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundColor(.white)
+                    .frame(width: 30, height: 30)
+                    .background(
+                        Circle()
+                            .fill(Color.white.opacity(0.12))
+                    )
+            }
+            .buttonStyle(.plain)
 
             Button(action: {
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
@@ -594,6 +656,200 @@ struct SkillsHeaderView: View {
         }
         .padding(.horizontal, 24)
         .frame(height: 60)
+    }
+}
+
+// MARK: - Custom Skills Section
+
+private struct CustomSkillsSection: View {
+    let skills: [CustomSkill]
+    let onSelectSkill: (CustomSkill) -> Void
+    let onDelete: (String) -> Void
+
+    private let accentColor = Color(hex: "#A78BFA")  // Purple for custom skills
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("✨")
+                    .font(.system(size: 18))
+                Text("Custom Skills")
+                    .font(.system(size: 18, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                Spacer()
+                Text("\(skills.count) skill\(skills.count == 1 ? "" : "s")")
+                    .font(.system(size: 12, design: .rounded))
+                    .foregroundColor(.white.opacity(0.35))
+            }
+            .padding(.horizontal, 20)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 12) {
+                    ForEach(skills) { skill in
+                        CustomSkillCard(
+                            skill: skill,
+                            accentColor: accentColor,
+                            onTap: { onSelectSkill(skill) },
+                            onDelete: { onDelete(skill.id) }
+                        )
+                        .frame(width: (UIScreen.main.bounds.width - 52) / 2)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+    }
+}
+
+private struct CustomSkillCard: View {
+    let skill: CustomSkill
+    let accentColor: Color
+    let onTap: () -> Void
+    let onDelete: () -> Void
+    @State private var showDeleteConfirm = false
+
+    var body: some View {
+        Button(action: onTap) {
+            VStack(alignment: .leading, spacing: 0) {
+                ZStack {
+                    LinearGradient(
+                        colors: [accentColor.opacity(0.85), accentColor.opacity(0.4)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                    VStack(spacing: 4) {
+                        Text("✨")
+                            .font(.system(size: 36))
+                            .opacity(0.7)
+                        Text("Custom")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.white.opacity(0.6))
+                            .tracking(0.8)
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay(alignment: .topTrailing) {
+                    Button(action: { showDeleteConfirm = true }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18))
+                            .foregroundColor(.white.opacity(0.6))
+                            .padding(8)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(skill.name)
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    Text(skill.description ?? "Custom skill guide")
+                        .font(.system(size: 11, weight: .regular, design: .rounded))
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(2)
+                        .lineSpacing(2)
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 10)
+                .padding(.bottom, 12)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color(white: 0.13))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(accentColor.opacity(0.25), lineWidth: 0.8)
+            )
+        }
+        .buttonStyle(.plain)
+        .confirmationDialog("Remove this skill?", isPresented: $showDeleteConfirm, titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { onDelete() }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+}
+
+// MARK: - Custom Skill Detail Sheet
+
+struct CustomSkillDetailSheet: View {
+    let skill: CustomSkill
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Text("✨")
+                                    .font(.system(size: 20))
+                                Text("Custom Skill")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(Color(hex: "#A78BFA"))
+                                    .tracking(0.8)
+                            }
+                            Text(skill.name)
+                                .font(.system(size: 26, weight: .bold))
+                                .foregroundColor(.white)
+                            if let desc = skill.description, !desc.isEmpty {
+                                Text(desc)
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.white.opacity(0.6))
+                                    .lineSpacing(3)
+                            }
+                        }
+                        .padding(.top, 8)
+
+                        if let md = skill.markdown_content, !md.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("SKILL GUIDE")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.35))
+                                    .tracking(1.2)
+                                Text(md)
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .lineSpacing(4)
+                                    .padding(16)
+                                    .background(Color.white.opacity(0.06))
+                                    .cornerRadius(14)
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("PRACTICE")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.35))
+                                .tracking(1.2)
+                            Text("Record a real conversation where this skill is relevant. The AI will use this custom skill guide to analyze your conversation and give personalized feedback.")
+                                .font(.system(size: 14))
+                                .foregroundColor(.white.opacity(0.7))
+                                .lineSpacing(3)
+                        }
+                        .padding(16)
+                        .background(Color.white.opacity(0.06))
+                        .cornerRadius(14)
+
+                        Spacer(minLength: 32)
+                    }
+                    .padding(.horizontal, 20)
+                }
+            }
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                        .foregroundColor(.white.opacity(0.7))
+                }
+            }
+            .toolbarColorScheme(.dark, for: .navigationBar)
+        }
     }
 }
 

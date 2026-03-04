@@ -11,6 +11,7 @@ struct OnboardingView: View {
     @AppStorage("onboarding_completed")  private var onboardingCompleted = false
     @AppStorage("onboarding_identity")   private var savedIdentity = ""
     @AppStorage("onboarding_categories") private var savedCategories = ""
+    @AppStorage("onboarding_subskills")  private var savedSubSkills = ""
 
     @State private var step = 1
     @State private var selectedIdentity: UserIdentity? = nil
@@ -150,6 +151,9 @@ struct OnboardingView: View {
     private func finish() {
         savedIdentity   = selectedIdentity?.rawValue ?? ""
         savedCategories = selectedCategories.map(\.id).joined(separator: ",")
+        // Populate sub-skill selection: all sub-skills of selected categories
+        let allSubSkillIds = selectedCategories.flatMap { $0.subSkills.map(\.id) }
+        savedSubSkills = allSubSkillIds.joined(separator: ",")
         onboardingCompleted = true
     }
 }

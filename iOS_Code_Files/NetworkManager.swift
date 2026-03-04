@@ -1478,9 +1478,110 @@ class NetworkManager {
         print("✅ [NetworkManager] 音频片段提取成功")
         return decoded
     }
+
+    // MARK: - Custom Skills API
+
+    /// 生成自定义技能预览（AI 生成 Markdown，不存储）
+    func generateCustomSkillPreview(scene: String, purpose: String, preference: String) async throws -> CustomSkillPreviewResponse {
+        let token = getAuthToken()
+        let params: [String: Any] = [
+            "scene": scene,
+            "purpose": purpose,
+            "preference": preference
+        ]
+        let dataResponse = await AF.request(
+            "\(baseURLForWrite)/custom-skills/generate-preview",
+            method: .post,
+            parameters: params,
+            encoding: JSONEncoding.default,
+            headers: ["Authorization": "Bearer \(token)", "Content-Type": "application/json"],
+            requestModifier: { $0.timeoutInterval = 60 }
+        ).serializingData().response
+        guard let data = dataResponse.data else {
+            throw NSError(domain: "NetworkManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data"])
+        }
+        return try JSONDecoder().decode(CustomSkillPreviewResponse.self, from: data)
+    }
+
+    /// 确认保存自定义技能
+    func saveCustomSkill(name: String, description: String, markdownContent: String,
+                         sceneInput: String, purposeInput: String, preferenceInput: String) async throws -> CustomSkill {
+        let token = getAuthToken()
+        let params: [String: Any] = [
+            "name": name,
+            "description": description,
+            "markdown_content": markdownContent,
+            "scene_input": sceneInput,
+            "purpose_input": purposeInput,
+            "preference_input": preferenceInput
+        ]
+        let dataResponse = await AF.request(
+            "\(baseURLForWrite)/custom-skills",
+            method: .post,
+            parameters: params,
+            encoding: JSONEncoding.default,
+            headers: ["Authorization": "Bearer \(token)", "Content-Type": "application/json"],
+            requestModifier: { $0.timeoutInterval = 30 }
+        ).serializingData().response
+        guard let data = dataResponse.data else {
+            throw NSError(domain: "NetworkManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data"])
+        }
+        return try JSONDecoder().decode(CustomSkill.self, from: data)
+    }
+
+    /// 获取用户的自定义技能列表
+    func listCustomSkills() async throws -> [CustomSkill] {
+        let token = getAuthToken()
+        let dataResponse = await AF.request(
+            "\(baseURLForWrite)/custom-skills",
+            method: .get,
+            headers: ["Authorization": "Bearer \(token)"],
+            requestModifier: { $0.timeoutInterval = 30 }
+        ).serializingData().response
+        guard let data = dataResponse.data else { return [] }
+        return (try? JSONDecoder().decode([CustomSkill].self, from: data)) ?? []
+    }
+
+    /// 删除自定义技能（软删除）
+    func deleteCustomSkill(skillId: String) async throws {
+        let token = getAuthToken()
+        let dataResponse = await AF.request(
+            "\(baseURLForWrite)/custom-skills/\(skillId)",
+            method: .delete,
+            headers: ["Authorization": "Bearer \(token)"],
+            requestModifier: { $0.timeoutInterval = 30 }
+        ).serializingData().response
+        if let statusCode = dataResponse.response?.statusCode, statusCode >= 400 {
+            throw NSError(domain: "NetworkManager", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Delete failed"])
+        }
+    }
 }
 
 // 空响应类型（用于DELETE等不需要返回数据的请求）
 struct EmptyResponse: Codable {
+}
+
+// MARK: - Custom Skill Models
+
+struct CustomSkill: Codable, Identifiable {
+    let id: String
+    let name: String
+    let description: String?
+    let markdown_content: String?
+    let scene_input: String?
+    let purpose_input: String?
+    let preference_input: String?
+    let is_active: Bool?
+    let created_at: String?
+}
+
+struct CustomSkillPreviewResponse: Codable {
+    let name: String
+    let description: String
+    let markdown_content: String
+}
+
+struct CustomSkillDeleteResponse: Codable {
+    let success: Bool
 }
 
