@@ -106,7 +106,7 @@ struct SkillsView: View {
             VStack(spacing: 0) {
                 SkillsHeaderView(viewModel: viewModel, onAddTap: { showAddSheet = true })
 
-                SkillConstellationView()
+                WeeklyStatsCarouselView()
                     .padding(.top, 8)
                     .padding(.bottom, 4)
 

@@ -1542,6 +1542,22 @@ class NetworkManager {
         return (try? JSONDecoder().decode([CustomSkill].self, from: data)) ?? []
     }
 
+    /// 获取周期统计数据
+    func getWeeklyStats(startDate: String, endDate: String) async throws -> WeeklyStats {
+        let token = getAuthToken()
+        let dataResponse = await AF.request(
+            "\(baseURLForWrite)/weekly-stats",
+            method: .get,
+            parameters: ["start_date": startDate, "end_date": endDate],
+            headers: ["Authorization": "Bearer \(token)"],
+            requestModifier: { $0.timeoutInterval = 30 }
+        ).serializingData().response
+        guard let data = dataResponse.data else {
+            throw NSError(domain: "NetworkManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data"])
+        }
+        return try JSONDecoder().decode(WeeklyStats.self, from: data)
+    }
+
     /// 删除自定义技能（软删除）
     func deleteCustomSkill(skillId: String) async throws {
         let token = getAuthToken()
@@ -1583,5 +1599,56 @@ struct CustomSkillPreviewResponse: Codable {
 
 struct CustomSkillDeleteResponse: Codable {
     let success: Bool
+}
+
+// MARK: - Weekly Stats Models
+
+struct WeeklyStats: Codable {
+    let period: WeeklyPeriod
+    let mood_series: [MoodPoint]
+    let skill_radar: [RadarItem]
+    let social_energy: [SocialEnergyItem]
+    let sessions: [WeeklySession]
+}
+
+struct WeeklyPeriod: Codable {
+    let start: String
+    let end: String
+}
+
+struct MoodPoint: Codable {
+    let date: String
+    let score: Double?
+    let polarity: String?       // "positive" | "negative" | "neutral" | nil
+    let session_id: String?
+    let session_count: Int
+}
+
+struct RadarItem: Codable {
+    let category_id: String     // "work_life" | "family" | ...
+    let score: Double
+    let delta: Double?
+    let session_count: Int
+}
+
+struct SocialEnergyItem: Codable {
+    let category_id: String
+    let duration_min: Double
+    let session_count: Int
+    let pct: Double
+}
+
+struct WeeklySession: Codable, Identifiable {
+    let session_id: String
+    var id: String { session_id }
+    let title: String?
+    let created_at: String?
+    let duration_sec: Int
+    let scene_category: String?
+    let mood_score: Int?
+    let mood_polarity: String?
+    let top_skill_id: String?
+    let top_skill_confidence: Double?
+    let thumbnail_url: String?
 }
 
