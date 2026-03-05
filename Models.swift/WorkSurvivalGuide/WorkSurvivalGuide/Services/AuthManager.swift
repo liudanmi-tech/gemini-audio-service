@@ -50,10 +50,15 @@ class AuthManager: ObservableObject {
         currentUser = userInfo
     }
     
-    // 登出
+    // 登出：清除 Keychain + 所有单例 ViewModel 缓存，防止切换账号后看到旧数据
     func logout() {
         AuthService.shared.logout()
         isLoggedIn = false
         currentUser = nil
+        TaskListViewModel.shared.reset()
+        ProfileViewModel.shared.reset()
+        SkillsViewModel.shared.reset()
+        SkillsRadarViewModel.shared.reset()
+        WeeklyStatsViewModel.shared.stats = nil
     }
 }

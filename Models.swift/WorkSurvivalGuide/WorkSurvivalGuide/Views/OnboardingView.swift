@@ -71,6 +71,9 @@ struct OnboardingView: View {
                             isSelected: selectedIdentity == identity
                         ) {
                             selectedIdentity = identity
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                advance()
+                            }
                         }
                     }
                 }

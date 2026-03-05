@@ -159,4 +159,15 @@ class SkillsViewModel: ObservableObject {
     func refreshSkills() {
         refreshCatalog()
     }
+
+    func reset() {
+        loadingTask?.cancel()
+        syncTask?.cancel()
+        categories = []
+        skills = []
+        selectedSkills = []
+        hasLoaded = false
+        isLoading = false
+        errorMessage = nil
+    }
 }

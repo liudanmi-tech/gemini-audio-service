@@ -163,6 +163,15 @@ struct SkillsView: View {
                     .flatMap { $0.subSkills.map(\.id) }
                 savedSubSkills = allSubIds.joined(separator: ",")
             }
+            // Default: if user skipped onboarding entirely, seed with relationships + family + personal growth
+            if savedSubSkills.isEmpty && savedCategories.isEmpty {
+                let defaultIds: Set<String> = ["relationships", "family", "personal_growth"]
+                let allSubIds = SkillCategoryPresets.all
+                    .filter { defaultIds.contains($0.id) }
+                    .flatMap { $0.subSkills.map(\.id) }
+                savedCategories = defaultIds.joined(separator: ",")
+                savedSubSkills  = allSubIds.joined(separator: ",")
+            }
             loadCustomSkills()
         }
         .onReceive(NotificationCenter.default.publisher(for: .customSkillsDidChange)) { _ in

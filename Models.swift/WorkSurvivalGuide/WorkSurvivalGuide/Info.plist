@@ -2,22 +2,22 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>NSMicrophoneUsageDescription</key>
+	<key>CFBundleGetInfoString</key>
+	<string></string>
+	<key>MicLnk uses the microphone to understand your mood and support your personal growth. This is your private space to express yourself — not a recording of your conversations with others.</key>
 	<string>需要访问麦克风以录制会议音频</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>需要保存策略分析图片到相册</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
 		<dict>
-			<key>47.79.254.213</key>
+			<key>123.57.29.111</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<true/>
 				<key>NSIncludesSubdomains</key>
 				<true/>
 			</dict>
-			<key>123.57.29.111</key>
+			<key>47.79.254.213</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<true/>

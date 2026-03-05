@@ -1558,6 +1558,35 @@ class NetworkManager {
         return try JSONDecoder().decode(WeeklyStats.self, from: data)
     }
 
+    func getSkillsRadar(startDate: String, endDate: String) async throws -> SkillsRadarData {
+        let token = getAuthToken()
+        let dataResponse = await AF.request(
+            "\(baseURLForWrite)/skills-radar",
+            method: .get,
+            parameters: ["start_date": startDate, "end_date": endDate],
+            headers: ["Authorization": "Bearer \(token)"],
+            requestModifier: { $0.timeoutInterval = 20 }
+        ).serializingData().response
+        guard let data = dataResponse.data else {
+            throw NSError(domain: "NetworkManager", code: -1, userInfo: [NSLocalizedDescriptionKey: "No data"])
+        }
+        let resp = try JSONDecoder().decode(SkillsRadarResponse.self, from: data)
+        guard let radarData = resp.data else {
+            throw NSError(domain: "NetworkManager", code: resp.code,
+                          userInfo: [NSLocalizedDescriptionKey: resp.message ?? "Empty response"])
+        }
+        return radarData
+    }
+
+    /// Adds a single skill to the user's skill preferences (fetches current list first, then appends).
+    func addSkillToPreferences(skillId: String) async throws {
+        let current = try await getSkillPreferences()
+        var updated = current.selectedSkills
+        guard !updated.contains(skillId) else { return }
+        updated.append(skillId)
+        try await updateSkillPreferences(selectedSkills: updated, isManualMode: nil)
+    }
+
     /// 删除自定义技能（软删除）
     func deleteCustomSkill(skillId: String) async throws {
         let token = getAuthToken()

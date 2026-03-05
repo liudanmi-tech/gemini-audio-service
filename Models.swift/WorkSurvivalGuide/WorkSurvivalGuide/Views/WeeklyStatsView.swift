@@ -20,6 +20,13 @@ struct WeeklyStatsCarouselView: View {
         var id: Int { rawValue }
     }
 
+    private var dateFormatter: DateFormatter {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }
+
+    private var radarStartDate: String { dateFormatter.string(from: vm.dateRange.0) }
+    private var radarEndDate: String   { dateFormatter.string(from: vm.dateRange.1) }
+
     var body: some View {
         VStack(spacing: 8) {
             TabView(selection: $activeCard) {
@@ -27,16 +34,20 @@ struct WeeklyStatsCarouselView: View {
                     .tag(0)
                     .onTapGesture { detailCard = .mood }
 
-                SkillRadarCard(stats: vm.stats, isLoading: vm.isLoading)
-                    .tag(1)
-                    .onTapGesture { detailCard = .radar }
+                SkillsRadarCardView(
+                    startDate: radarStartDate,
+                    endDate: radarEndDate,
+                    periodLabel: vm.periodLabel
+                )
+                .tag(1)
+                .onTapGesture { detailCard = .radar }
 
                 SocialEnergyCard(stats: vm.stats, isLoading: vm.isLoading)
                     .tag(2)
                     .onTapGesture { detailCard = .social }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 180)
+            .frame(height: 290)
 
             // Page dots
             HStack(spacing: 6) {
@@ -143,7 +154,7 @@ private struct MoodCurveCard: View {
                 MoodSparkline(points: points)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 12)
-                    .frame(height: 90)
+                    .frame(height: 190)
             }
         }
     }
@@ -185,54 +196,47 @@ private struct MoodSparkline: View {
     }
 }
 
-// MARK: - Card 2: Skill Radar
+// MARK: - Skills Radar Sheet (used when opened from other contexts)
 
-private struct SkillRadarCard: View {
-    let stats: WeeklyStats?
-    let isLoading: Bool
+struct SkillsRadarSheet: View {
+    let startDate: String
+    let endDate: String
+    let periodLabel: String
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        let vm = WeeklyStatsViewModel.shared
-        let items = stats?.skill_radar ?? []
-        CardBase(title: "⚡ Skills Radar", subtitle: vm.periodLabel, accentColor: Color(hex: "#45B7D1")) {
-            if isLoading {
-                LoadingCardContent()
-            } else if items.isEmpty {
-                EmptyCardContent(message: "No skill data this period")
-            } else {
-                HStack(alignment: .center, spacing: 12) {
-                    RadarChartMini(items: items)
-                        .frame(width: 90, height: 90)
+        ZStack(alignment: .top) {
+            Color.black.ignoresSafeArea()
+            VStack(spacing: 0) {
+                // Drag handle
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.white.opacity(0.2))
+                    .frame(width: 36, height: 4)
+                    .padding(.top, 10)
+                    .padding(.bottom, 6)
 
-                    // Top items summary
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(items.prefix(3), id: \.category_id) { item in
-                            HStack(spacing: 6) {
-                                Circle()
-                                    .fill(WeeklyStatsViewModel.categoryColor(for: item.category_id))
-                                    .frame(width: 6, height: 6)
-                                Text(WeeklyStatsViewModel.categoryName(for: item.category_id))
-                                    .font(.system(size: 11, design: .rounded))
-                                    .foregroundColor(.white.opacity(0.7))
-                                Spacer()
-                                Text("\(Int(item.score))")
-                                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                                    .foregroundColor(WeeklyStatsViewModel.categoryColor(for: item.category_id))
-                                if let d = item.delta {
-                                    Text(d >= 0 ? "↑" : "↓")
-                                        .font(.system(size: 9))
-                                        .foregroundColor(d >= 0 ? Color(hex: "#34D399") : Color(hex: "#F87171"))
-                                }
-                            }
-                        }
-                    }
-                    .padding(.trailing, 14)
+                // Title bar
+                HStack {
+                    Text("⚡ Skills Radar")
+                        .font(.system(size: 15, weight: .bold, design: .rounded))
+                        .foregroundColor(.white)
+                    Spacer()
+                    Text(periodLabel)
+                        .font(.system(size: 11, design: .rounded))
+                        .foregroundColor(.white.opacity(0.4))
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 12)
-                .frame(height: 90)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 4)
+
+                SkillsRadarDetailPage(
+                    startDate: startDate,
+                    endDate: endDate,
+                    periodLabel: periodLabel
+                )
             }
         }
+        .presentationDetents([.large])
+        .presentationDragIndicator(.hidden)
     }
 }
 
@@ -316,12 +320,21 @@ private struct SocialEnergyCard: View {
             } else if items.isEmpty {
                 EmptyCardContent(message: "No conversations this period")
             } else {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 0) {
                     ForEach(items, id: \.category_id) { item in
-                        HStack(spacing: 8) {
-                            Text(WeeklyStatsViewModel.categoryEmoji(for: item.category_id))
-                                .font(.system(size: 12))
-                                .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(WeeklyStatsViewModel.categoryEmoji(for: item.category_id))
+                                    .font(.system(size: 14))
+                                    .frame(width: 20)
+                                Text(WeeklyStatsViewModel.categoryName(for: item.category_id))
+                                    .font(.system(size: 11, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.6))
+                                Spacer()
+                                Text("\(Int(item.pct * 100))%")
+                                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                    .foregroundColor(.white.opacity(0.6))
+                            }
                             GeometryReader { geo in
                                 ZStack(alignment: .leading) {
                                     Capsule()
@@ -331,17 +344,15 @@ private struct SocialEnergyCard: View {
                                         .frame(width: geo.size.width * CGFloat(item.pct))
                                 }
                             }
-                            .frame(height: 8)
-                            Text("\(Int(item.pct * 100))%")
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundColor(.white.opacity(0.5))
-                                .frame(width: 28, alignment: .trailing)
+                            .frame(height: 10)
                         }
+                        .padding(.bottom, 14)
                     }
                 }
                 .padding(.horizontal, 14)
+                .padding(.top, 4)
                 .padding(.bottom, 12)
-                .frame(height: 90)
+                .frame(height: 190)
             }
         }
     }
@@ -354,6 +365,7 @@ struct WeeklyStatsDetailSheet: View {
     let initialCard: WeeklyStatsCarouselView.CardType
 
     @State private var selectedCard: WeeklyStatsCarouselView.CardType
+    @State private var highlightedSessionId: String? = nil   // 来自图表点击
     @Environment(\.dismiss) private var dismiss
 
     init(vm: WeeklyStatsViewModel, initialCard: WeeklyStatsCarouselView.CardType) {
@@ -361,6 +373,12 @@ struct WeeklyStatsDetailSheet: View {
         self.initialCard = initialCard
         _selectedCard = State(initialValue: initialCard)
     }
+
+    private var dateFormatter: DateFormatter {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f
+    }
+    private var radarStartDate: String { dateFormatter.string(from: vm.dateRange.0) }
+    private var radarEndDate: String   { dateFormatter.string(from: vm.dateRange.1) }
 
     var body: some View {
         NavigationStack {
@@ -381,7 +399,7 @@ struct WeeklyStatsDetailSheet: View {
 
                         Picker("", selection: $selectedCard) {
                             Text("Mood").tag(WeeklyStatsCarouselView.CardType.mood)
-                            Text("Skills").tag(WeeklyStatsCarouselView.CardType.radar)
+                            Text("Radar").tag(WeeklyStatsCarouselView.CardType.radar)
                             Text("Social").tag(WeeklyStatsCarouselView.CardType.social)
                         }
                         .pickerStyle(.segmented)
@@ -390,24 +408,39 @@ struct WeeklyStatsDetailSheet: View {
                     .padding(.top, 4)
                     .padding(.bottom, 12)
 
-                    // Chart area (fixed 180pt)
-                    Group {
-                        switch selectedCard {
-                        case .mood:   MoodDetailChart(vm: vm)
-                        case .radar:  RadarDetailChart(vm: vm)
-                        case .social: SocialDetailChart(vm: vm)
+                    if selectedCard == .radar {
+                        SkillsRadarDetailPage(
+                            startDate: radarStartDate,
+                            endDate: radarEndDate,
+                            periodLabel: vm.periodLabel
+                        )
+                    } else {
+                        // Chart area (fixed 180pt)
+                        Group {
+                            switch selectedCard {
+                            case .mood:
+                                MoodDetailChart(vm: vm, highlightedSessionId: $highlightedSessionId)
+                            case .social:
+                                SocialDetailChart(vm: vm)
+                            case .radar:
+                                EmptyView()
+                            }
                         }
+                        .frame(height: 180)
+                        .padding(.horizontal, 16)
+
+                        Divider().background(Color.white.opacity(0.1)).padding(.top, 8)
+
+                        // Session list with scroll reader
+                        sessionList
                     }
-                    .frame(height: 180)
-                    .padding(.horizontal, 16)
-
-                    Divider().background(Color.white.opacity(0.1)).padding(.top, 8)
-
-                    // Session list
-                    sessionList
                 }
             }
-            .navigationTitle(selectedCard == .mood ? "Mood Details" : selectedCard == .radar ? "Skills Details" : "Social Details")
+            .navigationTitle(
+                selectedCard == .mood   ? "Mood Details"   :
+                selectedCard == .radar  ? "Skills Radar"   :
+                                          "Social Details"
+            )
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(.dark, for: .navigationBar)
             .toolbar {
@@ -416,7 +449,7 @@ struct WeeklyStatsDetailSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents(initialCard == .radar ? [.large] : [.medium, .large])
     }
 
     // MARK: Session list
@@ -425,27 +458,63 @@ struct WeeklyStatsDetailSheet: View {
         guard let sessions = vm.stats?.sessions else { return [] }
         switch selectedCard {
         case .mood:
-            return sessions.sorted { ($0.mood_score ?? 0) > ($1.mood_score ?? 0) }
-        case .radar:
-            return sessions.sorted { ($0.top_skill_confidence ?? 0) > ($1.top_skill_confidence ?? 0) }
+            // 按日期排序（最新在前），与时间轴图表对应
+            return sessions
+                .filter { $0.mood_score != nil }
+                .sorted { lhs, rhs in
+                    (lhs.created_at ?? "") > (rhs.created_at ?? "")
+                }
         case .social:
             return sessions.sorted { $0.duration_sec > $1.duration_sec }
+        case .radar:
+            return []
         }
     }
 
     private var sessionList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                if vm.isLoading {
-                    ProgressView().padding(40)
-                } else if filteredSessions.isEmpty {
-                    Text("No recordings this period")
-                        .font(.system(size: 14)).foregroundColor(.white.opacity(0.4))
-                        .frame(maxWidth: .infinity).padding(40)
-                } else {
-                    ForEach(filteredSessions) { session in
-                        WeeklySessionRow(session: session, cardType: selectedCard)
-                        Divider().background(Color.white.opacity(0.06)).padding(.leading, 72)
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    if vm.isLoading {
+                        ProgressView().padding(40)
+                    } else if filteredSessions.isEmpty {
+                        Text("No recordings this period")
+                            .font(.system(size: 14)).foregroundColor(.white.opacity(0.4))
+                            .frame(maxWidth: .infinity).padding(40)
+                    } else {
+                        ForEach(filteredSessions) { session in
+                            if let task = session.toTaskItem() {
+                                NavigationLink(destination: TaskDetailView(task: task)) {
+                                    WeeklySessionRow(
+                                        session: session,
+                                        cardType: selectedCard,
+                                        isHighlighted: session.session_id == highlightedSessionId
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .id(session.session_id)
+                            } else {
+                                WeeklySessionRow(
+                                    session: session,
+                                    cardType: selectedCard,
+                                    isHighlighted: false
+                                )
+                                .id(session.session_id)
+                            }
+                            Divider().background(Color.white.opacity(0.06)).padding(.leading, 72)
+                        }
+                    }
+                }
+            }
+            .onChange(of: highlightedSessionId) { id in
+                guard let id = id else { return }
+                withAnimation(.easeInOut(duration: 0.5)) {
+                    proxy.scrollTo(id, anchor: .center)
+                }
+                // 2 秒后自动取消高亮
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        highlightedSessionId = nil
                     }
                 }
             }
@@ -457,6 +526,7 @@ struct WeeklyStatsDetailSheet: View {
 
 private struct MoodDetailChart: View {
     @ObservedObject var vm: WeeklyStatsViewModel
+    @Binding var highlightedSessionId: String?
 
     var body: some View {
         let points = vm.stats?.mood_series ?? []
@@ -484,9 +554,10 @@ private struct MoodDetailChart: View {
                             .interpolationMethod(.catmullRom)
                             .lineStyle(StrokeStyle(lineWidth: 2))
 
+                        // 选中状态放大点
                         PointMark(x: .value("Day", i), y: .value("Score", score))
                             .foregroundStyle(WeeklyStatsViewModel.moodColor(for: p.polarity))
-                            .symbolSize(40)
+                            .symbolSize(p.session_id == highlightedSessionId ? 90 : 40)
                     }
                 }
                 RuleMark(y: .value("Neutral", 50))
@@ -499,10 +570,8 @@ private struct MoodDetailChart: View {
             .chartXAxis {
                 AxisMarks(values: .stride(by: 1)) { val in
                     if let i = val.as(Int.self), i < points.count {
-                        let d = points[i].date
-                        let label = String(d.suffix(5).prefix(5))  // MM-dd
                         AxisValueLabel {
-                            Text(shortDay(from: d))
+                            Text(shortDay(from: points[i].date))
                                 .font(.system(size: 9))
                                 .foregroundColor(.white.opacity(0.4))
                         }
@@ -521,6 +590,31 @@ private struct MoodDetailChart: View {
             }
             .chartYScale(domain: 0...100)
             .chartBackground { _ in Color.clear }
+            // 点击图表节点
+            .chartOverlay { proxy in
+                GeometryReader { geo in
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 0)
+                                .onEnded { val in
+                                    let plotOrigin = geo[proxy.plotAreaFrame].origin
+                                    let xInPlot = val.location.x - plotOrigin.x
+                                    guard xInPlot >= 0 else { return }
+                                    guard let rawIndex: Int = proxy.value(atX: xInPlot) else { return }
+                                    // 找最近的有数据节点
+                                    let validPoints = points
+                                        .enumerated()
+                                        .filter { $0.element.score != nil && $0.element.session_id != nil }
+                                    guard let closest = validPoints.min(by: {
+                                        abs($0.offset - rawIndex) < abs($1.offset - rawIndex)
+                                    }) else { return }
+                                    withAnimation(.spring(response: 0.3)) {
+                                        highlightedSessionId = closest.element.session_id
+                                    }
+                                }
+                        )
+                }
+            }
         }
     }
 
@@ -621,20 +715,21 @@ private struct SocialDetailChart: View {
 struct WeeklySessionRow: View {
     let session: WeeklySession
     let cardType: WeeklyStatsCarouselView.CardType
+    var isHighlighted: Bool = false
 
     var body: some View {
         HStack(spacing: 12) {
-            // Thumbnail
+            // 封面图（与 moment 卡片用同一 ImageLoaderView，自动带 JWT auth）
             ZStack {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill(WeeklyStatsViewModel.categoryColor(for: session.scene_category ?? "").opacity(0.25))
-                if let urlStr = session.thumbnail_url, let url = URL(string: urlStr) {
-                    AsyncImage(url: url) { img in
-                        img.resizable().scaledToFill()
-                    } placeholder: {
-                        Text(WeeklyStatsViewModel.categoryEmoji(for: session.scene_category ?? ""))
-                            .font(.system(size: 22))
-                    }
+                if let urlStr = session.thumbnail_url, !urlStr.isEmpty {
+                    ImageLoaderView(
+                        imageUrl: urlStr,
+                        imageBase64: nil,
+                        placeholder: "",
+                        contentMode: .fill
+                    )
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 } else {
                     Text(WeeklyStatsViewModel.categoryEmoji(for: session.scene_category ?? ""))
@@ -642,13 +737,19 @@ struct WeeklySessionRow: View {
                 }
             }
             .frame(width: 56, height: 56)
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(Color(hex: "#FB923C"), lineWidth: isHighlighted ? 2 : 0)
+                    .animation(.easeInOut(duration: 0.3), value: isHighlighted)
+            )
 
-            // Info
+            // 卡片标题 + 日期
             VStack(alignment: .leading, spacing: 4) {
                 Text(session.title ?? "Untitled")
                     .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
+                    .foregroundColor(isHighlighted ? Color(hex: "#FB923C") : .white)
                     .lineLimit(1)
+                    .animation(.easeInOut(duration: 0.3), value: isHighlighted)
 
                 HStack(spacing: 6) {
                     Text(formattedDate)
@@ -664,11 +765,17 @@ struct WeeklySessionRow: View {
 
             Spacer()
 
-            // Card-specific metric
+            // 卡片指标
             cardMetric
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .background(
+            isHighlighted
+                ? Color(hex: "#FB923C").opacity(0.06)
+                : Color.clear
+        )
+        .animation(.easeInOut(duration: 0.3), value: isHighlighted)
     }
 
     @ViewBuilder
@@ -684,21 +791,6 @@ struct WeeklySessionRow: View {
                         .foregroundColor(WeeklyStatsViewModel.moodColor(for: session.mood_polarity))
                 }
             }
-        case .radar:
-            if let conf = session.top_skill_confidence {
-                VStack(spacing: 2) {
-                    Text("\(Int(conf * 100))%")
-                        .font(.system(size: 14, weight: .bold, design: .rounded))
-                        .foregroundColor(confColor(conf))
-                    if let sid = session.top_skill_id {
-                        Text(shortSkillName(sid))
-                            .font(.system(size: 9))
-                            .foregroundColor(.white.opacity(0.4))
-                            .lineLimit(1)
-                            .frame(maxWidth: 60)
-                    }
-                }
-            }
         case .social:
             VStack(spacing: 2) {
                 Text("\(session.duration_sec / 60)")
@@ -708,6 +800,8 @@ struct WeeklySessionRow: View {
                     .font(.system(size: 10))
                     .foregroundColor(.white.opacity(0.35))
             }
+        case .radar:
+            EmptyView()
         }
     }
 
@@ -742,5 +836,37 @@ struct WeeklySessionRow: View {
             .split(separator: " ")
             .map { $0.prefix(1).uppercased() + $0.dropFirst() }
             .joined(separator: " ")
+    }
+}
+
+// MARK: - WeeklySession → TaskItem conversion
+
+private extension WeeklySession {
+    func toTaskItem() -> TaskItem? {
+        let isoFull = ISO8601DateFormatter()
+        isoFull.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoBasic = ISO8601DateFormatter()
+        isoBasic.formatOptions = [.withInternetDateTime]
+
+        guard let dateStr = created_at,
+              let date = isoFull.date(from: dateStr) ?? isoBasic.date(from: dateStr) else {
+            return nil
+        }
+
+        return TaskItem(
+            id: session_id,
+            title: title ?? "Untitled",
+            startTime: date,
+            endTime: nil,
+            duration: duration_sec,
+            tags: [],
+            status: .archived,
+            emotionScore: mood_score,
+            speakerCount: nil,
+            summary: nil,
+            cardTitle: title,
+            coverImageUrl: thumbnail_url,
+            progressDescription: nil
+        )
     }
 }

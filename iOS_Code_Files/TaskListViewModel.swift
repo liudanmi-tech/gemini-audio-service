@@ -94,6 +94,15 @@ class TaskListViewModel: ObservableObject {
         }
     }
     
+    // 登出时清空缓存，防止切换账号后看到旧用户数据
+    func reset() {
+        loadingTask?.cancel()
+        tasks = []
+        hasLoaded = false
+        isLoading = false
+        errorMessage = nil
+    }
+
     // 刷新任务列表（强制刷新）
     func refreshTasks() {
         loadTasks(forceRefresh: true)

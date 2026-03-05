@@ -16,7 +16,7 @@ class WeeklyStatsViewModel: ObservableObject {
     @Published var stats: WeeklyStats? = nil
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
-    @Published var selectedRange: TimeRange = .thisWeek
+    @Published var selectedRange: TimeRange = .month30
 
     enum TimeRange: String, CaseIterable {
         case thisWeek  = "This Week"
