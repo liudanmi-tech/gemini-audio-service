@@ -12,6 +12,8 @@ struct StrategyAnalysisView_Updated: View {
     @State private var highlightsExpanded = false
     @State private var improvementsExpanded = false
     @State private var strategyPopupItem: StrategyItem?
+    @State private var mutableSkillCards: [SkillCard] = []
+    @State private var hasScheduledImageRefresh = false
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -119,7 +121,6 @@ struct StrategyAnalysisView_Updated: View {
                     // 优先使用 skill_cards 多卡片滑动，无则尝试从 applied_skills+visual+strategies 构造兜底卡片
                     let cardsToShow: [SkillCard] = {
                         if let cards = analysis.skillCards, !cards.isEmpty { return cards }
-                        // skill_cards 解码失败时的兜底：从 visual+strategies+appliedSkills 构造
                         if let skills = analysis.appliedSkills, skills.count >= 1,
                            !analysis.visual.isEmpty || !analysis.strategies.isEmpty {
                             let content = SkillCardContent(
@@ -137,15 +138,29 @@ struct StrategyAnalysisView_Updated: View {
                         }
                         return []
                     }()
-                    if !cardsToShow.isEmpty {
-                        // 场景图片轮播（置于技能卡片之上）
+                    let displayCards = mutableSkillCards.isEmpty ? cardsToShow : mutableSkillCards
+                    if !displayCards.isEmpty {
                         let sceneImgs = analysis.sceneImages ?? []
                         SceneRestoreImageCarouselView(sceneImages: sceneImgs, baseURL: baseURL)
                             .padding(.horizontal, 0.69)
                             .padding(.top, 0)
-                        SkillCardsTabView(cards: cardsToShow, baseURL: baseURL)
-                            .padding(.horizontal, 0.69)
-                            .padding(.top, 0)
+                        SkillCardsTabView(
+                            cards: displayCards,
+                            sessionId: sessionId,
+                            baseURL: baseURL,
+                            onCardUpdated: { updatedCard in
+                                if let idx = mutableSkillCards.firstIndex(where: { $0.skillId == updatedCard.skillId }) {
+                                    mutableSkillCards[idx] = updatedCard
+                                }
+                            }
+                        )
+                        .padding(.horizontal, 0.69)
+                        .padding(.top, 0)
+                        .onAppear {
+                            if mutableSkillCards.isEmpty {
+                                mutableSkillCards = displayCards
+                            }
+                        }
                     } else {
                         // 兼容旧数据：场景还原图片 + 情商亮点等
                         VStack(alignment: .leading, spacing: 0) {
@@ -204,15 +219,24 @@ struct StrategyAnalysisView_Updated: View {
         .onAppear {
             // 优先使用缓存
             let cacheManager = DetailCacheManager.shared
-            
+
             if let cachedStrategy = cacheManager.getCachedStrategy(sessionId: sessionId) {
                 print("✅ [StrategyAnalysisView] 使用缓存的策略分析数据: \(sessionId)")
                 strategyAnalysis = cachedStrategy
                 isLoading = false
                 errorMessage = nil
+                // 缓存数据没有场景图片时，5 秒后静默刷新（兜底）
+                if !hasScheduledImageRefresh && (cachedStrategy.sceneImages?.isEmpty ?? true) {
+                    hasScheduledImageRefresh = true
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 5_000_000_000)
+                        DetailCacheManager.shared.clearCache(for: sessionId)
+                        loadStrategyAnalysis()
+                    }
+                }
                 return
             }
-            
+
             loadStrategyAnalysis()
         }
     }
@@ -223,6 +247,7 @@ struct StrategyAnalysisView_Updated: View {
         // 强制重新生成时清除缓存
         if forceRegenerate {
             cacheManager.clearCache(for: sessionId)
+            hasScheduledImageRefresh = false
         }
         
         // 非强制时先检查缓存
@@ -270,7 +295,7 @@ struct StrategyAnalysisView_Updated: View {
                     print("  场景图片数量: \(response.sceneImages?.count ?? -1) (nil=\(response.sceneImages == nil))")
                     
                     cacheManager.cacheStrategy(response, for: sessionId)
-                    
+
                     await MainActor.run {
                         strategyAnalysis = response
                         isLoading = false
@@ -278,6 +303,15 @@ struct StrategyAnalysisView_Updated: View {
                             print("✅ [StrategyAnalysisView] 使用 skill_cards 展示，共 \(cards.count) 张")
                         } else {
                             print("⚠️ [StrategyAnalysisView] skillCards 为空或 nil，回退到旧版 visual+strategies")
+                        }
+                        // 场景图片为空时，12 秒后静默刷新（图片可能仍在后台生成）
+                        if !hasScheduledImageRefresh && (response.sceneImages?.isEmpty ?? true) {
+                            hasScheduledImageRefresh = true
+                            Task {
+                                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                                DetailCacheManager.shared.clearCache(for: sessionId)
+                                loadStrategyAnalysis()
+                            }
                         }
                     }
                     return
@@ -352,7 +386,9 @@ struct StrategyAnalysisView_Updated: View {
 // 技能卡片视图（场景 Tab + 策略图置顶 + 维度手风琴）
 struct SkillCardsTabView: View {
     let cards: [SkillCard]
+    let sessionId: String
     let baseURL: String
+    let onCardUpdated: (SkillCard) -> Void
     @State private var selectedScene: String = ""
     @State private var expandedCardIds: Set<String> = []
     
@@ -392,8 +428,10 @@ struct SkillCardsTabView: View {
                     ForEach(Array(currentSceneCards.enumerated()), id: \.element.id) { index, card in
                         SkillAccordionPanel(
                             card: card,
+                            sessionId: sessionId,
                             isExpanded: expandedCardIds.contains(card.id),
-                            baseURL: baseURL
+                            baseURL: baseURL,
+                            onCardUpdated: onCardUpdated
                         ) {
                             withAnimation(.easeInOut(duration: 0.25)) {
                                 if expandedCardIds.contains(card.id) {
@@ -479,10 +517,15 @@ private struct SceneTabBar: View {
 // 手风琴面板（可折叠的单个技能）
 private struct SkillAccordionPanel: View {
     let card: SkillCard
+    let sessionId: String
     let isExpanded: Bool
     let baseURL: String
+    let onCardUpdated: (SkillCard) -> Void
     let onToggle: () -> Void
-    
+
+    @State private var isAnalyzing = false
+    @State private var analyzeError: String?
+
     private var dimensionIcon: String {
         if let dim = card.dimension, let d = WorkplaceDimension.from(key: dim) {
             return d.icon
@@ -490,10 +533,11 @@ private struct SkillAccordionPanel: View {
         switch card.contentType {
         case "emotion": return "face.smiling"
         case "mental_health": return "heart.text.square"
+        case "pending": return "clock"
         default: return "lightbulb.fill"
         }
     }
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // 面板标题栏（点击展开/折叠）
@@ -501,27 +545,79 @@ private struct SkillAccordionPanel: View {
                 HStack(spacing: 10) {
                     Image(systemName: dimensionIcon)
                         .font(.system(size: 14))
-                        .foregroundColor(Color(hex: "#5E7C8B"))
+                        .foregroundColor(card.contentType == "pending" ? AppColors.headerText.opacity(0.35) : Color(hex: "#5E7C8B"))
                         .frame(width: 20)
-                    
+
                     Text(card.accordionTitle)
                         .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .foregroundColor(AppColors.headerText)
-                    
+                        .foregroundColor(card.contentType == "pending" ? AppColors.headerText.opacity(0.5) : AppColors.headerText)
+
                     Spacer()
-                    
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(AppColors.headerText.opacity(0.4))
+
+                    if card.contentType == "pending" {
+                        Text("Not analyzed")
+                            .font(.system(size: 11, weight: .medium, design: .rounded))
+                            .foregroundColor(AppColors.headerText.opacity(0.35))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.05))
+                            .cornerRadius(6)
+                    } else {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundColor(AppColors.headerText.opacity(0.4))
+                    }
                 }
                 .padding(.vertical, 12)
             }
             .buttonStyle(.plain)
-            
+
             // 展开内容
             if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {
-                    if card.contentType == "emotion", let content = card.content?.emotionContent {
+                    if card.contentType == "pending" {
+                        // Pending 卡片：显示 Analyze 按钮
+                        VStack(alignment: .center, spacing: 12) {
+                            Text("This insight hasn't been analyzed yet.")
+                                .font(.system(size: 13, design: .rounded))
+                                .foregroundColor(AppColors.headerText.opacity(0.55))
+                                .multilineTextAlignment(.center)
+
+                            if let err = analyzeError {
+                                Text(err)
+                                    .font(.system(size: 12, design: .rounded))
+                                    .foregroundColor(.red.opacity(0.8))
+                                    .multilineTextAlignment(.center)
+                            }
+
+                            Button(action: {
+                                Task { await analyzeNow() }
+                            }) {
+                                HStack(spacing: 6) {
+                                    if isAnalyzing {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                            .scaleEffect(0.8)
+                                    } else {
+                                        Image(systemName: "sparkles")
+                                            .font(.system(size: 13))
+                                    }
+                                    Text(isAnalyzing ? "Analyzing..." : "Analyze Now")
+                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                }
+                                .foregroundColor(.white)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 10)
+                                .background(isAnalyzing ? Color.gray : Color(hex: "#5E7C8B"))
+                                .cornerRadius(10)
+                            }
+                            .disabled(isAnalyzing)
+                            .buttonStyle(.plain)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .padding(.horizontal, 4)
+                    } else if card.contentType == "emotion", let content = card.content?.emotionContent {
                         EmotionCardView(content: content)
                     } else if card.contentType == "mental_health", let content = card.content?.mentalHealthContent {
                         MentalHealthCardView(content: content)
@@ -536,6 +632,23 @@ private struct SkillAccordionPanel: View {
                     }
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private func analyzeNow() async {
+        isAnalyzing = true
+        analyzeError = nil
+        do {
+            let updatedCard = try await NetworkManager.shared.executeSkill(sessionId: sessionId, skillId: card.skillId)
+            await MainActor.run {
+                isAnalyzing = false
+                onCardUpdated(updatedCard)
+            }
+        } catch {
+            await MainActor.run {
+                isAnalyzing = false
+                analyzeError = "Analysis failed. Please try again."
             }
         }
     }
@@ -1171,10 +1284,15 @@ struct SceneRestoreImageCarouselView: View {
     private let imageAspectRatio: CGFloat = 4.0 / 3.0
 
     var body: some View {
+        // 过滤掉生成失败的图片（image_url=null 且无 base64）
+        let validImages = sceneImages.filter {
+            ($0.imageUrl != nil && !($0.imageUrl?.isEmpty ?? true))
+            || ($0.imageBase64 != nil && !($0.imageBase64?.isEmpty ?? true))
+        }
         GeometryReader { geo in
             let width = geo.size.width
             let height = width / imageAspectRatio
-            if sceneImages.isEmpty {
+            if validImages.isEmpty {
                 // 无图片时显示灰色占位区，保持布局稳定
                 Color(hex: "#F5F3EF")
                     .frame(width: width, height: height)
@@ -1190,7 +1308,7 @@ struct SceneRestoreImageCarouselView: View {
                     )
             } else {
                 TabView(selection: $currentIndex) {
-                    ForEach(Array(sceneImages.enumerated()), id: \.element.id) { index, sceneImage in
+                    ForEach(Array(validImages.enumerated()), id: \.element.id) { index, sceneImage in
                         SceneRestoreImageView(
                             sceneImage: sceneImage,
                             baseURL: baseURL,
@@ -1203,7 +1321,7 @@ struct SceneRestoreImageCarouselView: View {
                         .tag(index)
                     }
                 }
-                .tabViewStyle(PageTabViewStyle(indexDisplayMode: sceneImages.count > 1 ? .automatic : .never))
+                .tabViewStyle(PageTabViewStyle(indexDisplayMode: validImages.count > 1 ? .automatic : .never))
                 .frame(width: width, height: height)
                 .onAppear {
                     UIPageControl.appearance().currentPageIndicatorTintColor = UIColor(red: 94/255, green: 124/255, blue: 139/255, alpha: 1)
@@ -1213,7 +1331,7 @@ struct SceneRestoreImageCarouselView: View {
         }
         .aspectRatio(imageAspectRatio, contentMode: .fit)
         .fullScreenCover(isPresented: $showFullScreen) {
-            let items = sceneImages.map { (imageUrl: $0.getAccessibleImageURL(baseURL: baseURL), imageBase64: $0.imageBase64) }
+            let items = validImages.map { (imageUrl: $0.getAccessibleImageURL(baseURL: baseURL), imageBase64: $0.imageBase64) }
             FullScreenImageViewer(
                 items: items,
                 initialIndex: fullScreenInitialIndex,

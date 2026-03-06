@@ -157,6 +157,8 @@ struct OnboardingView: View {
         // Populate sub-skill selection: all sub-skills of selected categories
         let allSubSkillIds = selectedCategories.flatMap { $0.subSkills.map(\.id) }
         savedSubSkills = allSubSkillIds.joined(separator: ",")
+        // Sync to server
+        Task { try? await NetworkManager.shared.updateSkillPreferences(selectedSkills: allSubSkillIds) }
         onboardingCompleted = true
     }
 }

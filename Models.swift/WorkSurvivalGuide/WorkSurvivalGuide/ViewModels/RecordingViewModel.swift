@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import UIKit
 
 class RecordingViewModel: ObservableObject {
     @Published var isRecording = false
@@ -544,41 +545,28 @@ class RecordingViewModel: ObservableObject {
                         || status.status == "completed"
                         || (status.status == "archived" && archivedPollCount >= maxArchivedPolls)
                     if shouldStop {
-                        print("✅ [RecordingViewModel] 分析完成！获取详情...")
-                        // 分析完成，获取详情并更新（使用缓存的 token）
+                        print("✅ [RecordingViewModel] 分析完成！等待图片生成完毕...")
+                        // 获取基础详情（title、summary 等），用于进度展示及超时兜底
                         let detail = try await networkManager.getTaskDetail(sessionId: sessionId, authToken: token)
-                        
+
                         print("📋 [RecordingViewModel] 任务详情:")
                         print("   - title: \(detail.title)")
                         print("   - emotionScore: \(detail.emotionScore ?? -1)")
                         print("   - speakerCount: \(detail.speakerCount ?? -1)")
                         print("   - dialogues count: \(detail.dialogues.count)")
                         print("   - risks count: \(detail.risks.count)")
-                        
-                        // 转换为 TaskItem，包含 summary 和 coverImageUrl
-                        // 仅当服务端返回 cover_image_url 时使用，避免请求不存在的图片导致 404
-                        let completedTask = TaskItem(
-                            id: detail.sessionId,
-                            title: detail.title,
-                            startTime: detail.startTime,
-                            endTime: detail.endTime,
-                            duration: detail.duration,
-                            tags: detail.tags,
-                            status: .archived,
-                            emotionScore: detail.emotionScore,
-                            speakerCount: detail.speakerCount,
-                            summary: detail.summary,
-                            coverImageUrl: detail.coverImageUrl
-                        )
-                        
+
+                        // 发进度更新：让卡片显示 "Generating scene images..."
                         await MainActor.run {
-                            print("📢 [RecordingViewModel] 发送 TaskAnalysisCompleted 通知")
                             NotificationCenter.default.post(
-                                name: NSNotification.Name("TaskAnalysisCompleted"),
-                                object: completedTask
+                                name: NSNotification.Name("TaskProgressUpdated"),
+                                object: nil,
+                                userInfo: ["taskId": sessionId, "progressDescription": "Generating scene images..."]
                             )
-                            print("✅ [RecordingViewModel] 轮询完成")
                         }
+
+                        // 等待图片全部生成后再发 TaskAnalysisCompleted（卡片变可点击）
+                        await pollForImages(sessionId: sessionId, authToken: token, baseDetail: detail)
                         break
                     }
                     
@@ -638,6 +626,109 @@ class RecordingViewModel: ObservableObject {
         }
     }
     
+    // 等待场景图片生成完成，完成后预缓存策略+第一张图片，再发 TaskAnalysisCompleted（卡片变可点击）
+    private func pollForImages(sessionId: String, authToken: String, baseDetail: TaskDetailResponse) async {
+        print("🖼️ [RecordingViewModel] 等待图片生成 sessionId=\(sessionId)")
+        let maxWaits = 20  // 最多等 60 秒 (20 × 3s)
+        for i in 0..<maxWaits {
+            do {
+                try await Task.sleep(nanoseconds: 3_000_000_000)
+                let imgStatus = try await networkManager.getImageStatus(sessionId: sessionId, authToken: authToken)
+                print("🖼️ [RecordingViewModel] 图片状态: \(imgStatus.status)，已生成: \(imgStatus.totalScenes) 张 (\(i+1)/\(maxWaits))")
+                guard imgStatus.status == "completed", imgStatus.totalScenes > 0 else { continue }
+
+                // 全部图片就绪 — 拉取最新详情（含 cover_image_url）
+                let freshDetail = (try? await networkManager.getTaskDetail(sessionId: sessionId, authToken: authToken)) ?? baseDetail
+                let completedTask = TaskItem(
+                    id: freshDetail.sessionId,
+                    title: freshDetail.title,
+                    startTime: freshDetail.startTime,
+                    endTime: freshDetail.endTime,
+                    duration: freshDetail.duration,
+                    tags: freshDetail.tags,
+                    status: .archived,
+                    emotionScore: freshDetail.emotionScore,
+                    speakerCount: freshDetail.speakerCount,
+                    summary: freshDetail.summary,
+                    coverImageUrl: freshDetail.coverImageUrl
+                )
+
+                // 预缓存策略分析 + 第一张图片，进详情页时零等待
+                if let strategy = try? await networkManager.getStrategyAnalysis(sessionId: sessionId) {
+                    DetailCacheManager.shared.cacheStrategy(strategy, for: sessionId)
+                    let imageCount = strategy.sceneImages?.count ?? 0
+                    print("✅ [RecordingViewModel] 策略分析已预缓存（含 \(imageCount) 张场景图片）")
+                    if let firstImg = strategy.sceneImages?.first {
+                        let baseURL = networkManager.getBaseURL()
+                        if let proxyURL = firstImg.getAccessibleImageURL(baseURL: baseURL) {
+                            await preCacheImage(urlString: proxyURL, authToken: authToken)
+                        }
+                    }
+                }
+
+                // 图片+策略均就绪，现在发 TaskAnalysisCompleted（卡片变为可点击）
+                await MainActor.run {
+                    print("📢 [RecordingViewModel] 图片就绪，发送 TaskAnalysisCompleted 通知，封面: \(freshDetail.coverImageUrl ?? "nil")")
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("TaskAnalysisCompleted"),
+                        object: completedTask
+                    )
+                }
+                return
+            } catch {
+                print("⚠️ [RecordingViewModel] 图片状态查询失败: \(error.localizedDescription)")
+            }
+        }
+
+        // 超时兜底：以基础详情发送 TaskAnalysisCompleted（无封面），用户进入详情后触发自动刷新
+        print("⏰ [RecordingViewModel] 图片等待超时（\(maxWaits * 3)s），以基础信息兜底发送完成通知")
+        let fallbackTask = TaskItem(
+            id: baseDetail.sessionId,
+            title: baseDetail.title,
+            startTime: baseDetail.startTime,
+            endTime: baseDetail.endTime,
+            duration: baseDetail.duration,
+            tags: baseDetail.tags,
+            status: .archived,
+            emotionScore: baseDetail.emotionScore,
+            speakerCount: baseDetail.speakerCount,
+            summary: baseDetail.summary,
+            coverImageUrl: baseDetail.coverImageUrl
+        )
+        await MainActor.run {
+            print("📢 [RecordingViewModel] 超时兜底，发送 TaskAnalysisCompleted 通知")
+            NotificationCenter.default.post(
+                name: NSNotification.Name("TaskAnalysisCompleted"),
+                object: fallbackTask
+            )
+        }
+    }
+
+    // 预下载图片到 ImageCacheManager（进详情页时直接从缓存读取，零等待）
+    private func preCacheImage(urlString: String, authToken: String) async {
+        guard let url = URL(string: urlString) else { return }
+        // 已在缓存中则跳过
+        if ImageCacheManager.shared.image(for: urlString) != nil {
+            print("🖼️ [RecordingViewModel] 图片已在缓存中，跳过预下载: \(urlString)")
+            return
+        }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 30
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let image = UIImage(data: data) else {
+                print("⚠️ [RecordingViewModel] 预下载图片失败，statusCode 非 200")
+                return
+            }
+            ImageCacheManager.shared.cache(image, for: urlString)
+            print("✅ [RecordingViewModel] 第一张场景图片预缓存完成: \(urlString)")
+        } catch {
+            print("⚠️ [RecordingViewModel] 预下载图片异常: \(error.localizedDescription)")
+        }
+    }
+
     // 根据分析结果计算情绪分数（Mock 模式使用）
     private func calculateEmotionScore(from result: AudioAnalysisResult) -> Int {
         var score = 70

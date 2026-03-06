@@ -688,6 +688,72 @@ class NetworkManager {
         return data
     }
     
+    // 查询场景图片生成状态（Singapore 专属接口）
+    struct ImageStatusResponse: Codable {
+        let status: String
+        let totalScenes: Int
+        let images: [SceneImage]
+        enum CodingKeys: String, CodingKey {
+            case status
+            case totalScenes = "total_scenes"
+            case images
+        }
+    }
+
+    func getImageStatus(sessionId: String, authToken: String) async throws -> ImageStatusResponse {
+        let url = "\(baseURLForWrite)/sessions/\(sessionId)/image-status"
+        let dataResponse = await AF.request(
+            url,
+            method: .get,
+            headers: ["Authorization": "Bearer \(authToken)"],
+            requestModifier: { $0.timeoutInterval = 15 }
+        ).serializingData().response
+
+        guard dataResponse.response?.statusCode == 200, let data = dataResponse.data else {
+            throw NSError(domain: "NetworkError", code: dataResponse.response?.statusCode ?? 0,
+                          userInfo: [NSLocalizedDescriptionKey: "getImageStatus failed"])
+        }
+        let decoded = try JSONDecoder().decode(APIResponse<ImageStatusResponse>.self, from: data)
+        guard let result = decoded.data else {
+            throw NSError(domain: "NetworkError", code: decoded.code,
+                          userInfo: [NSLocalizedDescriptionKey: decoded.message])
+        }
+        return result
+    }
+
+    // 按需执行 pending 技能卡片
+    func executeSkill(sessionId: String, skillId: String) async throws -> SkillCard {
+        let url = "\(baseURLForWrite)/sessions/\(sessionId)/skills/\(skillId)/execute"
+        let dataResponse = await AF.request(
+            url,
+            method: .post,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(getAuthToken())"
+            ],
+            requestModifier: { $0.timeoutInterval = 120 }
+        )
+        .serializingData()
+        .response
+
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        let responseData = dataResponse.data ?? Data()
+
+        guard statusCode == 200 else {
+            let msg = (try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData))?.detail
+                ?? "Skill execution failed (\(statusCode))"
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: msg])
+        }
+
+        let decoded = try JSONDecoder().decode(APIResponse<SkillCard>.self, from: responseData)
+        guard decoded.code == 200, let card = decoded.data else {
+            throw NSError(domain: "NetworkError", code: decoded.code,
+                          userInfo: [NSLocalizedDescriptionKey: decoded.message])
+        }
+        return card
+    }
+
     // 获取心情趋势（跨对话）
     func getEmotionTrend(limit: Int = 30) async throws -> EmotionTrendResponse {
         if config.useMockData {

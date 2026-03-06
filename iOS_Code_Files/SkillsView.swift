@@ -177,6 +177,13 @@ struct SkillsView: View {
         .onReceive(NotificationCenter.default.publisher(for: .customSkillsDidChange)) { _ in
             loadCustomSkills()
         }
+        .onChange(of: savedSubSkills) { newValue in
+            guard !newValue.isEmpty else { return }
+            let skillIds = newValue.split(separator: ",").map(String.init).filter { !$0.isEmpty }
+            Task {
+                try? await NetworkManager.shared.updateSkillPreferences(selectedSkills: skillIds)
+            }
+        }
         .sheet(item: $selectedSkill) { skill in
             OnboardingSubSkillDetailSheet(skill: skill)
         }
