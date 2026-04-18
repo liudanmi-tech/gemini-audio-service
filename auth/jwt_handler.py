@@ -142,6 +142,8 @@ async def get_current_user(
         id=user.id,
         is_active=user.is_active,
         phone=user.phone,
+        email=user.email,
+        apple_user_id=getattr(user, 'apple_user_id', None),
         created_at=user.created_at,
         last_login_at=user.last_login_at,
     )

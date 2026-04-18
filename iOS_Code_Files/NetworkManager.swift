@@ -754,6 +754,58 @@ class NetworkManager {
         return card
     }
 
+    /// 流式执行 pending 技能卡片（SSE）
+    /// onChunk: 每收到一段文字调用（主线程）
+    /// onDone:  收到 [DONE] 后调用（主线程）
+    /// onError: 发生错误时调用（主线程）
+    func executeSkillStream(
+        sessionId: String,
+        skillId: String,
+        onChunk: @escaping @Sendable (String) -> Void,
+        onDone:  @escaping @Sendable () -> Void,
+        onError: @escaping @Sendable (String) -> Void
+    ) {
+        let token = getAuthToken()
+        guard !token.isEmpty else { onError("未登录，请先登录"); return }
+        guard let url = URL(string: "\(baseURLForWrite)/sessions/\(sessionId)/skills/\(skillId)/execute/stream") else {
+            onError("Invalid URL"); return
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 120
+
+        Task {
+            do {
+                let (asyncBytes, response) = try await URLSession.shared.bytes(for: request)
+                guard let http = response as? HTTPURLResponse else {
+                    await MainActor.run { onError("Invalid response") }; return
+                }
+                guard http.statusCode == 200 else {
+                    await MainActor.run { onError("Server error: \(http.statusCode)") }; return
+                }
+                for try await line in asyncBytes.lines {
+                    guard line.hasPrefix("data: ") else { continue }
+                    let data = String(line.dropFirst(6))
+                    if data == "[DONE]" {
+                        await MainActor.run { onDone() }; return
+                    }
+                    if data.hasPrefix("[ERROR]") {
+                        let msg = String(data.dropFirst(7)).trimmingCharacters(in: .whitespaces)
+                        await MainActor.run { onError(msg) }; return
+                    }
+                    // 服务端将换行符转义为 \\n，还原回来
+                    let text = data.replacingOccurrences(of: "\\n", with: "\n")
+                    await MainActor.run { onChunk(text) }
+                }
+                await MainActor.run { onDone() }
+            } catch {
+                await MainActor.run { onError(error.localizedDescription) }
+            }
+        }
+    }
+
     // 获取心情趋势（跨对话）
     func getEmotionTrend(limit: Int = 30) async throws -> EmotionTrendResponse {
         if config.useMockData {

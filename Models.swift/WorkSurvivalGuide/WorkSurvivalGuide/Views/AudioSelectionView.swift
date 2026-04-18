@@ -69,18 +69,18 @@ struct AudioSelectionView: View {
                                                 VStack(alignment: .leading, spacing: 4) {
                                                     Text(task.title)
                                                         .font(.system(size: 16, weight: .medium, design: .rounded))
-                                                        .foregroundColor(AppColors.headerText)
-                                                    
+                                                        .foregroundColor(Color.black)
+
                                                     Text(formatTaskTime(task))
                                                         .font(.system(size: 14, design: .rounded))
-                                                        .foregroundColor(AppColors.secondaryText)
+                                                        .foregroundColor(Color.black.opacity(0.5))
                                                 }
-                                                
+
                                                 Spacer()
-                                                
+
                                                 Image(systemName: "chevron.right")
                                                     .font(.system(size: 14))
-                                                    .foregroundColor(AppColors.secondaryText)
+                                                    .foregroundColor(Color.black.opacity(0.5))
                                             }
                                             .padding()
                                             .background(Color(hex: "#FFFAF5"))
@@ -111,13 +111,13 @@ struct AudioSelectionView: View {
                                                 HStack {
                                                     Text(speaker)
                                                         .font(.system(size: 16, weight: .medium, design: .rounded))
-                                                        .foregroundColor(AppColors.headerText)
-                                                    
+                                                        .foregroundColor(Color.black)
+
                                                     Spacer()
-                                                    
+
                                                     Image(systemName: "chevron.right")
                                                         .font(.system(size: 14))
-                                                        .foregroundColor(AppColors.secondaryText)
+                                                        .foregroundColor(Color.black.opacity(0.5))
                                                 }
                                                 .padding()
                                                 .background(Color(hex: "#FFFAF5"))
@@ -144,19 +144,19 @@ struct AudioSelectionView: View {
                                                 HStack {
                                                     Text(segment.content)
                                                         .font(.system(size: 14, design: .rounded))
-                                                        .foregroundColor(AppColors.headerText)
+                                                        .foregroundColor(Color.black)
                                                         .lineLimit(2)
-                                                    
+
                                                     Spacer()
-                                                    
+
                                                     Text(segment.durationString)
                                                         .font(.system(size: 12, design: .rounded))
-                                                        .foregroundColor(AppColors.secondaryText)
+                                                        .foregroundColor(Color.black.opacity(0.5))
                                                 }
-                                                
+
                                                 Text("\(formatTime(segment.startTime)) - \(formatTime(segment.endTime))")
                                                     .font(.system(size: 12, design: .rounded))
-                                                    .foregroundColor(AppColors.secondaryText)
+                                                    .foregroundColor(Color.black.opacity(0.5))
                                             }
                                             .padding()
                                             .background(Color(hex: "#FFFAF5"))

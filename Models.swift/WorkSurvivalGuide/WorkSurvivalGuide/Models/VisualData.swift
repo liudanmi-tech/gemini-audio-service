@@ -113,13 +113,15 @@ struct SkillCard: Codable, Identifiable {
     var id: String { skillId }
     let skillId: String
     let skillName: String
-    let contentType: String  // "strategy" | "emotion" | "mental_health"
+    let contentType: String  // "strategy" | "emotion" | "mental_health" | "pending"
     let category: String?
     let dimension: String?
     let matchedSubSkill: String?
     let content: SkillCardContent?
-    
-    init(skillId: String, skillName: String, contentType: String, category: String? = nil, dimension: String? = nil, matchedSubSkill: String? = nil, content: SkillCardContent? = nil) {
+    let score: Int?      // 0-100 匹配分数（服务端新增）
+    let isCustom: Bool?  // 是否自定义技能
+
+    init(skillId: String, skillName: String, contentType: String, category: String? = nil, dimension: String? = nil, matchedSubSkill: String? = nil, content: SkillCardContent? = nil, score: Int? = nil, isCustom: Bool? = nil) {
         self.skillId = skillId
         self.skillName = skillName
         self.contentType = contentType
@@ -127,8 +129,10 @@ struct SkillCard: Codable, Identifiable {
         self.dimension = dimension
         self.matchedSubSkill = matchedSubSkill
         self.content = content
+        self.score = score
+        self.isCustom = isCustom
     }
-    
+
     enum CodingKeys: String, CodingKey {
         case skillId = "skill_id"
         case skillName = "skill_name"
@@ -137,23 +141,31 @@ struct SkillCard: Codable, Identifiable {
         case dimension
         case matchedSubSkill = "matched_sub_skill"
         case content
+        case score
+        case isCustom = "is_custom"
     }
-    
+
     /// 用于手风琴面板标题：优先显示 matchedSubSkill（与技能库名称一致），其次 skillName
     var accordionTitle: String {
-        if let sub = matchedSubSkill, !sub.isEmpty {
-            return sub
-        }
+        if let sub = matchedSubSkill, !sub.isEmpty { return sub }
         return skillName
     }
-    
+
     /// 归属的顶级场景（用于 Tab 分组）
+    /// 返回空字符串表示 always_run 类卡片（emotion/mental_health），由 SkillCardsTabView 注入第一 Tab
     var sceneCategory: String {
         switch category ?? "" {
-        case "workplace": return "职场"
-        case "family": return "家庭"
-        case "emotion", "personal": return "个人"
-        default: return "职场"
+        // 新 iOS 6 类
+        case "work_life":       return "Work Life"
+        case "campus_life":     return "Campus"
+        case "relationships":   return "Social"
+        case "family":          return "Family"
+        case "personal_growth": return "Growth"
+        case "life_skills":     return "Life"
+        // 旧服务端类（兼容旧数据）
+        case "workplace":       return "Work Life"
+        // always_run / emotion / 未知 → 由调用方注入第一 Tab
+        default:                return ""
         }
     }
 }
@@ -415,20 +427,26 @@ extension VisualData {
     }
 }
 
-// 顶级场景分类
+// 顶级场景分类（新 iOS 6 类）
 enum SceneCategory: String, CaseIterable {
-    case workplace = "职场"
-    case family = "家庭"
-    case personal = "个人"
-    
+    case workLife       = "Work Life"
+    case campusLife     = "Campus"
+    case relationships  = "Social"
+    case family         = "Family"
+    case personalGrowth = "Growth"
+    case lifeSkills     = "Life"
+
     var icon: String {
         switch self {
-        case .workplace: return "briefcase.fill"
-        case .family: return "house.fill"
-        case .personal: return "person.fill"
+        case .workLife:       return "briefcase.fill"
+        case .campusLife:     return "graduationcap.fill"
+        case .relationships:  return "person.2.fill"
+        case .family:         return "house.fill"
+        case .personalGrowth: return "chart.line.uptrend.xyaxis"
+        case .lifeSkills:     return "sparkles"
         }
     }
-    
+
     static func from(displayName: String) -> SceneCategory? {
         return allCases.first { $0.rawValue == displayName }
     }

@@ -1,0 +1,17 @@
+# 直接按文件夹排除 (这些是占位大头)
+scripts/
+docs/
+systemd/
+.vscode/
+.git/
+
+# 排除所有非代码文本
+*.txt
+*.log
+*.sh
+*.md
+!v0.8 技能分类与识别匹配方案.md
+
+# 排除 Python 缓存
+**/__pycache__/
+*.pyc

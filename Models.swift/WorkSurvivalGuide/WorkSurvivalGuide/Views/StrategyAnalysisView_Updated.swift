@@ -14,6 +14,15 @@ struct StrategyAnalysisView_Updated: View {
     @State private var strategyPopupItem: StrategyItem?
     @State private var mutableSkillCards: [SkillCard] = []
     @State private var hasScheduledImageRefresh = false
+
+    // 跨 View 生命周期的图片刷新标记（UserDefaults 持久化，避免每次进入都重复触发）
+    private func imageRefreshKey() -> String { "imgRefreshed_\(sessionId)" }
+    private var hasGloballyRefreshed: Bool {
+        UserDefaults.standard.bool(forKey: imageRefreshKey())
+    }
+    private func markGloballyRefreshed() {
+        UserDefaults.standard.set(true, forKey: imageRefreshKey())
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -226,7 +235,9 @@ struct StrategyAnalysisView_Updated: View {
                 isLoading = false
                 errorMessage = nil
                 // 缓存数据没有场景图片时，5 秒后静默刷新（兜底）
-                if !hasScheduledImageRefresh && (cachedStrategy.sceneImages?.isEmpty ?? true) {
+                // 用 UserDefaults 持久化，防止每次进入 View 都重复触发（@State 在 View 重建时会重置）
+                if !hasGloballyRefreshed && (cachedStrategy.sceneImages?.isEmpty ?? true) {
+                    markGloballyRefreshed()
                     hasScheduledImageRefresh = true
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -304,8 +315,10 @@ struct StrategyAnalysisView_Updated: View {
                         } else {
                             print("⚠️ [StrategyAnalysisView] skillCards 为空或 nil，回退到旧版 visual+strategies")
                         }
-                        // 场景图片为空时，12 秒后静默刷新（图片可能仍在后台生成）
-                        if !hasScheduledImageRefresh && (response.sceneImages?.isEmpty ?? true) {
+                        // 场景图片为空时，5 秒后静默刷新（图片可能仍在后台生成）
+                        // 用 UserDefaults 持久化，防止每次进入 View 都重复触发（@State 在 View 重建时会重置）
+                        if !hasGloballyRefreshed && (response.sceneImages?.isEmpty ?? true) {
+                            markGloballyRefreshed()
                             hasScheduledImageRefresh = true
                             Task {
                                 try? await Task.sleep(nanoseconds: 5_000_000_000)
@@ -391,9 +404,16 @@ struct SkillCardsTabView: View {
     let onCardUpdated: (SkillCard) -> Void
     @State private var selectedScene: String = ""
     @State private var expandedCardIds: Set<String> = []
-    
-    private var sceneOrder: [String] { ["职场", "家庭", "个人"] }
-    
+
+    // 新 iOS 6 类展示顺序
+    private var sceneOrder: [String] { ["Work Life", "Campus", "Social", "Family", "Growth", "Life"] }
+
+    // always_run 类卡片（emotion / mental_health），sceneCategory == ""
+    private var alwaysCards: [SkillCard] {
+        cards.filter { $0.sceneCategory.isEmpty }
+    }
+
+    // 实际出现的 scene tab（只包含有卡片的）
     private var scenes: [String] {
         var seen = Set<String>()
         var result: [String] = []
@@ -403,11 +423,21 @@ struct SkillCardsTabView: View {
                 result.append(s)
             }
         }
+        // 若只有 alwaysCards 而无分类卡，保留一个默认 tab
+        if result.isEmpty && !alwaysCards.isEmpty {
+            result.append("Work Life")
+        }
         return result
     }
-    
+
+    // 第一 Tab 前置 alwaysCards（emotion/mental_health 排最前）
     private var currentSceneCards: [SkillCard] {
-        cards.filter { $0.sceneCategory == selectedScene }
+        var result: [SkillCard] = []
+        if selectedScene == scenes.first {
+            result = alwaysCards
+        }
+        result += cards.filter { $0.sceneCategory == selectedScene }
+        return result
     }
     
     var body: some View {
@@ -418,7 +448,7 @@ struct SkillCardsTabView: View {
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
-                // 顶部：场景分类 Tab（职场/家庭/个人），始终显示命中的类目
+                // 顶部：场景分类 Tab（Work Life/Campus/Social/Family/Growth/Life），始终显示命中的类目
                 if !scenes.isEmpty {
                     SceneTabBar(scenes: scenes, selectedScene: $selectedScene)
                 }
@@ -475,13 +505,16 @@ struct SkillCardsTabView: View {
 private struct SceneTabBar: View {
     let scenes: [String]
     @Binding var selectedScene: String
-    
+
     private func iconFor(_ scene: String) -> String {
         switch scene {
-        case "职场": return "briefcase.fill"
-        case "家庭": return "house.fill"
-        case "个人": return "person.fill"
-        default: return "circle.fill"
+        case "Work Life": return "briefcase.fill"
+        case "Campus":    return "graduationcap.fill"
+        case "Social":    return "person.2.fill"
+        case "Family":    return "house.fill"
+        case "Growth":    return "chart.line.uptrend.xyaxis"
+        case "Life":      return "sparkles"
+        default:          return "circle.fill"
         }
     }
     
@@ -525,6 +558,8 @@ private struct SkillAccordionPanel: View {
 
     @State private var isAnalyzing = false
     @State private var analyzeError: String?
+    @State private var streamedText: String = ""
+    @State private var streamDone: Bool = false
 
     private var dimensionIcon: String {
         if let dim = card.dimension, let d = WorkplaceDimension.from(key: dim) {
@@ -576,43 +611,61 @@ private struct SkillAccordionPanel: View {
             if isExpanded {
                 VStack(alignment: .leading, spacing: 0) {
                     if card.contentType == "pending" {
-                        // Pending 卡片：显示 Analyze 按钮
-                        VStack(alignment: .center, spacing: 12) {
-                            Text("This insight hasn't been analyzed yet.")
-                                .font(.system(size: 13, design: .rounded))
-                                .foregroundColor(AppColors.headerText.opacity(0.55))
-                                .multilineTextAlignment(.center)
-
-                            if let err = analyzeError {
-                                Text(err)
-                                    .font(.system(size: 12, design: .rounded))
-                                    .foregroundColor(.red.opacity(0.8))
+                        // Pending 卡片：SSE 流式分析
+                        VStack(alignment: .leading, spacing: 12) {
+                            if streamedText.isEmpty && !isAnalyzing {
+                                // 初始状态：显示 Analyze Now 按钮
+                                Text("This insight hasn't been analyzed yet.")
+                                    .font(.system(size: 13, design: .rounded))
+                                    .foregroundColor(AppColors.headerText.opacity(0.55))
                                     .multilineTextAlignment(.center)
-                            }
+                                    .frame(maxWidth: .infinity)
 
-                            Button(action: {
-                                Task { await analyzeNow() }
-                            }) {
-                                HStack(spacing: 6) {
-                                    if isAnalyzing {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            .scaleEffect(0.8)
-                                    } else {
-                                        Image(systemName: "sparkles")
-                                            .font(.system(size: 13))
-                                    }
-                                    Text(isAnalyzing ? "Analyzing..." : "Analyze Now")
-                                        .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                if let err = analyzeError {
+                                    Text(err)
+                                        .font(.system(size: 12, design: .rounded))
+                                        .foregroundColor(.red.opacity(0.8))
+                                        .multilineTextAlignment(.center)
                                 }
-                                .foregroundColor(.white)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 10)
-                                .background(isAnalyzing ? Color.gray : Color(hex: "#5E7C8B"))
-                                .cornerRadius(10)
+
+                                Button(action: { startStream() }) {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "sparkles").font(.system(size: 13))
+                                        Text("Analyze Now")
+                                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                                    }
+                                    .foregroundColor(.white)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(Color(hex: "#5E7C8B"))
+                                    .cornerRadius(10)
+                                }
+                                .buttonStyle(.plain)
+                            } else {
+                                // 流式输出中 / 已完成
+                                if !streamedText.isEmpty {
+                                    Text(streamedText)
+                                        .font(.system(size: 14, design: .rounded))
+                                        .foregroundColor(AppColors.headerText)
+                                        .lineSpacing(4)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if isAnalyzing {
+                                    HStack(spacing: 6) {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle())
+                                            .scaleEffect(0.7)
+                                        Text("Analyzing...")
+                                            .font(.system(size: 12, design: .rounded))
+                                            .foregroundColor(AppColors.headerText.opacity(0.5))
+                                    }
+                                }
+                                if let err = analyzeError {
+                                    Text(err)
+                                        .font(.system(size: 12, design: .rounded))
+                                        .foregroundColor(.red.opacity(0.8))
+                                }
                             }
-                            .disabled(isAnalyzing)
-                            .buttonStyle(.plain)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
@@ -636,21 +689,27 @@ private struct SkillAccordionPanel: View {
         }
     }
 
-    private func analyzeNow() async {
+    private func startStream() {
+        guard !isAnalyzing else { return }
         isAnalyzing = true
+        streamedText = ""
+        streamDone = false
         analyzeError = nil
-        do {
-            let updatedCard = try await NetworkManager.shared.executeSkill(sessionId: sessionId, skillId: card.skillId)
-            await MainActor.run {
+        NetworkManager.shared.executeSkillStream(
+            sessionId: sessionId,
+            skillId: card.skillId,
+            onChunk: { chunk in
+                streamedText += chunk
+            },
+            onDone: {
                 isAnalyzing = false
-                onCardUpdated(updatedCard)
-            }
-        } catch {
-            await MainActor.run {
+                streamDone = true
+            },
+            onError: { err in
                 isAnalyzing = false
-                analyzeError = "Analysis failed. Please try again."
+                analyzeError = err.isEmpty ? "Analysis failed. Please try again." : err
             }
-        }
+        )
     }
 }
 
