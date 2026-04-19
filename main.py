@@ -290,10 +290,104 @@ try:
     
     genai.configure(**config_params)
     logger.info("Gemini API 配置完成（使用 REST 传输模式）")
-    
+
 except Exception as e:
     logger.error(f"配置 Gemini API 时出错: {e}")
     raise
+
+# ── Monkey-patch FileServiceClient.create_file 绕过 Discovery API ─────────────
+# 根本原因：SDK 在上传文件前必须调用 $discovery/rest 获取 API schema，
+# 但该端点不接受 AI Studio API key（AQ.xxx 格式），导致 400 API_KEY_INVALID。
+# 修复：直接 HTTP 上传到 /upload/v1beta/files，绕过 Discovery，再用 gRPC get_file 取元数据。
+def _patch_gemini_file_upload():
+    try:
+        import mimetypes
+        import pathlib
+        from io import IOBase
+        import httpx
+        import google.generativeai.client as _genai_client
+
+        original_create_file = _genai_client.FileServiceClient.create_file
+
+        def _patched_create_file(self, path, *, mime_type=None, name=None, display_name=None, resumable=True, metadata=()):
+            api_key = getattr(self._client_options, "api_key", None)
+            if not api_key:
+                logger.warning("[直传] 无 api_key，回退到原始 create_file")
+                return original_create_file(self, path=path, mime_type=mime_type, name=name,
+                                            display_name=display_name, resumable=resumable, metadata=metadata)
+
+            # 读取文件内容
+            if isinstance(path, IOBase):
+                file_data = path.read()
+            else:
+                path = pathlib.Path(path)
+                with open(path, "rb") as f:
+                    file_data = f.read()
+                if display_name is None:
+                    display_name = path.name
+                if mime_type is None:
+                    mime_type, _ = mimetypes.guess_type(str(path))
+            if mime_type is None:
+                mime_type = "application/octet-stream"
+
+            file_size = len(file_data)
+            base_url = "https://generativelanguage.googleapis.com"
+            file_meta = {}
+            if name:
+                file_meta["name"] = name
+            if display_name:
+                file_meta["displayName"] = display_name
+
+            logger.info(f"[直传] 开始上传文件: {display_name} ({file_size / 1024 / 1024:.2f} MB) 绕过 Discovery API")
+
+            with httpx.Client(timeout=300) as client:
+                # Step 1: 初始化 resumable 上传
+                init_resp = client.post(
+                    f"{base_url}/upload/v1beta/files?key={api_key}&uploadType=resumable",
+                    headers={
+                        "X-Goog-Upload-Protocol": "resumable",
+                        "X-Goog-Upload-Command": "start",
+                        "X-Goog-Upload-Header-Content-Length": str(file_size),
+                        "X-Goog-Upload-Header-Content-Type": mime_type,
+                        "Content-Type": "application/json",
+                    },
+                    json={"file": file_meta},
+                )
+                if init_resp.status_code not in (200, 201):
+                    raise Exception(f"[直传] 初始化上传失败: {init_resp.status_code}: {init_resp.text[:300]}")
+
+                upload_url = init_resp.headers.get("X-Goog-Upload-URL")
+                if not upload_url:
+                    raise Exception(f"[直传] 未获取到 upload URL，响应: {init_resp.text[:200]}")
+
+                # Step 2: 上传文件内容
+                upload_resp = client.post(
+                    upload_url,
+                    headers={
+                        "Content-Length": str(file_size),
+                        "X-Goog-Upload-Offset": "0",
+                        "X-Goog-Upload-Command": "upload, finalize",
+                    },
+                    content=file_data,
+                )
+                if upload_resp.status_code not in (200, 201):
+                    raise Exception(f"[直传] 文件上传失败: {upload_resp.status_code}: {upload_resp.text[:300]}")
+
+                file_info = upload_resp.json().get("file", {})
+                file_name = file_info.get("name", "")
+                if not file_name:
+                    raise Exception(f"[直传] 上传成功但未返回 file name: {upload_resp.text[:200]}")
+
+            logger.info(f"[直传] ✅ 文件上传成功，name={file_name}，通过 gRPC 获取元数据")
+            # Step 3: 通过 gRPC 获取 File 对象（不需要 Discovery API）
+            return self.get_file({"name": file_name})
+
+        _genai_client.FileServiceClient.create_file = _patched_create_file
+        logger.info("✅ [直传] 已 patch FileServiceClient.create_file，绕过 $discovery/rest")
+    except Exception as _pe:
+        logger.warning(f"⚠️ [直传] patch 失败，将使用原始上传（可能遇到 Discovery API 问题）: {_pe}")
+
+_patch_gemini_file_upload()
 
 # 配置阿里云 OSS
 OSS_ACCESS_KEY_ID = os.getenv("OSS_ACCESS_KEY_ID")
