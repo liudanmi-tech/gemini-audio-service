@@ -730,14 +730,16 @@ def generate_image_from_prompt(
         prompt_body = re.sub(r"^宫崎骏[^。]*。?", "", prompt_body).strip()
 
     # 构建人物参考图说明
+    # 固定位置规则：左侧始终为用户，右侧始终为对方，图片生成必须遵守动作主体
+    position_rule = "【重要】画面中左侧人物固定为用户，右侧人物固定为对方。必须严格按照场景描述中的动作主体来绘制：谁做动作就画谁在做，不能颠倒角色。\n\n"
     if reference_images and len(reference_images) >= 1:
         ref_desc = "第一张图为左侧人物（用户）的参考照片"
         if len(reference_images) >= 2:
             ref_desc += "，第二张图为右侧人物（对方）的参考照片"
         ref_desc += "。请保持人物面部与气质与参考图一致。\n\n"
-        full_prompt = style_prefix + ref_desc + prompt_body
+        full_prompt = style_prefix + position_rule + ref_desc + prompt_body
     else:
-        full_prompt = style_prefix + prompt_body
+        full_prompt = style_prefix + position_rule + prompt_body
 
     # 构建 contents_list：风格参考图 + 档案参考图 + 文本 prompt
     contents_list = []
