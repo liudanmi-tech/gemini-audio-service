@@ -1,290 +1,45 @@
 """
-场景路由器
-实现场景识别和技能匹配功能
+场景路由器 v2
+- 场景分类输出 iOS 6 大分类（work_life / campus_life / relationships / family / personal_growth / life_skills）
+- 手动模式：跳过场景分类，直接使用全部用户勾选技能
+- 自动模式：LLM 单次调用完成场景分类 + 相关度打分，每场景取 top-5（高分优先）
+- emotion_recognition 始终执行
 """
 import os
 import json
+import copy
 import logging
-from typing import List, Dict, Optional
+import uuid as _uuid_module
+from typing import List, Dict, Optional, Tuple
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import google.generativeai as genai
 
-from .registry import list_skills
-from database.models import Skill
+from database.models import UserSkillPreference, CustomSkill
+from .ios_skill_registry import (
+    SYSTEM_SKILLS,
+    CATEGORY_SCENE_DESCRIPTIONS,
+    get_all_system_skill_ids,
+    get_skills_by_category,
+    get_skill_config,
+)
 
 logger = logging.getLogger(__name__)
 
-# 场景/策略模型名，可通过环境变量 GEMINI_FLASH_MODEL 覆盖
 GEMINI_FLASH_MODEL = os.getenv("GEMINI_FLASH_MODEL", "gemini-3-flash-preview")
 
+# ────────────────────────────────────────────────────────
+# 内部常量
+# ────────────────────────────────────────────────────────
+_ALWAYS_RUN_SKILL = "emotion_recognition"          # 始终运行，不参与用户选择
+_DEPRESSION_SKILL = "depression_prevention"         # 条件触发，不在 iOS 技能库
 
-def classify_scene(transcript: list, model=None) -> Dict:
-    """
-    场景分类 + 职场维度识别，调用 Gemini Router Agent（单次 LLM 调用）
-    
-    Returns:
-        dict: {
-            "scenes": [{"category": "workplace", "confidence": 0.95, "reasoning": "..."}],
-            "primary_scene": "workplace",
-            "workplace_dimensions": [
-                {"dimension": "role_position", "sub_skill": "managing_up", "sub_skill_name": "向上管理", "confidence": 0.9, "reasoning": "..."}
-            ]
-        }
-    """
-    if model is None:
-        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
-    
-    router_prompt = """你是一个场景分类专家。请分析以下对话转录，完成两项任务：
+_IOS_CATEGORIES = list(CATEGORY_SCENE_DESCRIPTIONS.keys())   # 排序固定
 
-## 任务一：顶级场景分类
-
-场景类型包括：
-1. workplace (职场场景): 工作相关、上下级关系、同事协作、项目讨论、客户沟通。若对话人涉及同事、领导、老板、上级、下属、经理、总监、主管、客户等，必须包含 workplace。
-2. family (家庭场景): 夫妻关系、亲子关系、家庭决策、孩子教育、学习辅导。若对话参与者是家人（爸爸、妈妈、老婆、老公、孩子等），必须包含 family。
-3. other (其他场景): 无法归为职场或家庭的场景。
-
-规则：
-- 一个对话可同时命中多个场景
-- 若对话涉及职场角色，即使主场景是 other，也应加入 workplace（confidence >= 0.6）
-- 若对话涉及家人，应加入 family（confidence >= 0.6）
-
-## 任务二：职场维度识别（仅当 workplace 命中时）
-
-如果对话命中 workplace，请进一步判断命中了以下哪些维度和子技能（可命中多个，选择最相关的 2-4 个）：
-
-### 维度 1: role_position (角色方位)
-- managing_up (向上管理): 与老板/领导/上级的互动，汇报、请示、争取资源
-- managing_down (向下管理): 与下属/团队的互动，指导、委派、考核、反馈
-- peer_collaboration (横向协作): 与同事/平级的互动，跨部门协调、合作
-- external_communication (对外沟通): 与客户/合作方/外部人员的互动
-
-### 维度 2: scenario (场景情境)
-- conflict_resolution (冲突化解): 争吵、不满、矛盾、对峙
-- negotiation (谈判博弈): 薪资谈判、资源争夺、条件交换
-- presentation (汇报展示): 工作汇报、方案展示、述职演讲
-- small_talk (闲聊社交): 职场闲聊、团建、饭局、破冰
-- crisis_management (危机公关): 事故处理、追责、道歉、声誉修复
-
-### 维度 3: psychology (心理风格)
-- defensive (防御型): 用户在保护边界、被动退让、忍耐
-- offensive (进攻型): 用户在主动出击、挑战、施压
-- constructive (建设型): 双方在寻求合作、双赢、解决问题
-- healing (治愈型): 安慰、支持、倾听、共情
-
-### 维度 4: career_stage (职业阶段)
-- rookie (新人小白): 用户表现为新人，在学习、请教、融入
-- core_manager (骨干中层): 用户在执行、协调、管理、带队
-- executive (高管领袖): 用户在做战略决策、全局布局
-
-### 维度 5: capability (能力维度)
-- logical_thinking (逻辑思维): 对话涉及结构化表达、论证、分析
-- eq (情商): 对话涉及情绪管理、察言观色、委婉表达
-- influence (影响力): 对话涉及说服、推动、号召、激励
-
-请返回JSON格式：
-{
-  "scenes": [
-    {"category": "workplace", "confidence": 0.95, "reasoning": "对话涉及项目汇报"},
-    {"category": "family", "confidence": 0.3, "reasoning": "提到了家庭安排"}
-  ],
-  "primary_scene": "workplace",
-  "workplace_dimensions": [
-    {"dimension": "role_position", "sub_skill": "managing_up", "sub_skill_name": "向上管理", "confidence": 0.9, "reasoning": "对话是向领导汇报工作"},
-    {"dimension": "scenario", "sub_skill": "presentation", "sub_skill_name": "汇报展示", "confidence": 0.85, "reasoning": "正在做工作汇报"},
-    {"dimension": "psychology", "sub_skill": "defensive", "sub_skill_name": "防御型", "confidence": 0.7, "reasoning": "用户处于防御姿态"}
-  ]
-}
-
-注意：
-- workplace_dimensions 仅在 workplace 命中时填写，否则为空数组
-- 选择 2-4 个最相关的维度，不要全部选择
-- 每个维度最多选择 1 个子技能
-
-对话转录:
-{transcript_json}"""
-    
-    try:
-        transcript_json = json.dumps(transcript, ensure_ascii=False, indent=2)
-        prompt = router_prompt.replace("{transcript_json}", transcript_json)
-        
-        logger.info("========== 开始场景识别 ==========")
-        logger.debug(f"场景识别 Prompt 长度: {len(prompt)} 字符")
-        
-        response = model.generate_content(prompt)
-        
-        logger.info(f"场景识别响应长度: {len(response.text)} 字符")
-        logger.debug(f"场景识别响应内容: {response.text[:500]}...")
-        
-        try:
-            import re
-            response_text = response.text.strip()
-            logger.info(f"场景识别原始响应(前300字): {response_text[:300]}")
-            
-            # 尝试多种方式提取 JSON
-            parsed = None
-            # 方式1: 直接解析
-            try:
-                parsed = json.loads(response_text)
-            except json.JSONDecodeError:
-                pass
-            
-            # 方式2: 去除 markdown 代码块
-            if parsed is None:
-                json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', response_text, re.DOTALL)
-                if json_match:
-                    try:
-                        parsed = json.loads(json_match.group(1).strip())
-                    except json.JSONDecodeError:
-                        pass
-            
-            # 方式3: 提取第一个 { ... } 块
-            if parsed is None:
-                brace_match = re.search(r'\{.*\}', response_text, re.DOTALL)
-                if brace_match:
-                    try:
-                        parsed = json.loads(brace_match.group(0))
-                    except json.JSONDecodeError:
-                        pass
-            
-            if parsed is None:
-                logger.error(f"所有JSON解析方式均失败, 原始响应: {response_text[:500]}")
-                raise ValueError(f"无法解析JSON: {response_text[:100]}")
-            
-            scene_result = parsed
-            
-            if "scenes" not in scene_result:
-                raise ValueError("场景识别结果缺少 'scenes' 字段")
-            if "primary_scene" not in scene_result:
-                if scene_result["scenes"]:
-                    primary_scene = max(scene_result["scenes"], key=lambda x: x.get("confidence", 0))
-                    scene_result["primary_scene"] = primary_scene["category"]
-                else:
-                    scene_result["primary_scene"] = "other"
-            
-            if "workplace_dimensions" not in scene_result:
-                scene_result["workplace_dimensions"] = []
-            
-            logger.info(f"场景识别成功: primary_scene={scene_result['primary_scene']}")
-            for scene in scene_result["scenes"]:
-                logger.info(f"  - {scene['category']}: {scene.get('confidence', 0):.2f} ({scene.get('reasoning', '')})")
-            for dim in scene_result.get("workplace_dimensions", []):
-                logger.info(f"  - 职场维度: {dim.get('dimension','?')}/{dim.get('sub_skill','?')} ({dim.get('sub_skill_name', '?')}) confidence={dim.get('confidence', 0):.2f}")
-            
-            return scene_result
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"解析场景识别结果失败: {e}")
-            logger.error(f"响应内容: {response.text[:500]}")
-            return {
-                "scenes": [{"category": "other", "confidence": 0.5, "reasoning": "解析失败"}],
-                "primary_scene": "other",
-                "workplace_dimensions": []
-            }
-    except Exception as e:
-        logger.error(f"场景识别失败: {e}")
-        import traceback
-        logger.error(f"异常详情: {traceback.format_exc()}")
-        return {
-            "scenes": [{"category": "other", "confidence": 0.5, "reasoning": f"识别失败: {str(e)}"}],
-            "primary_scene": "other",
-            "workplace_dimensions": []
-        }
-
-
-# 对话人关键词 -> 场景补充匹配（LLM 漏判时的兜底）
-WORKPLACE_KEYWORDS = ("同事", "领导", "老板", "上级", "下属", "经理", "总监", "主管", "科长", "处长", "局长")
-FAMILY_KEYWORDS = ("爸爸", "妈妈", "老婆", "老公", "孩子", "儿子", "女儿", "家人", "父亲", "母亲", "爹", "妈", "爸")
-
-
-# 档案关系类型 -> 强制场景映射
-_WORKPLACE_RELATIONSHIP_TYPES = {
-    "领导", "上级", "老板", "直属领导", "总监", "经理", "主管", "科长", "处长", "局长",
-    "同事", "平级", "同级", "合作方", "客户", "甲方", "下属", "团队成员",
-}
-_FAMILY_RELATIONSHIP_TYPES = {
-    "老婆", "妻子", "老公", "丈夫", "爸爸", "父亲", "妈妈", "母亲",
-    "儿子", "女儿", "孩子", "兄弟", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",
-    "爷爷", "奶奶", "外公", "外婆", "祖父", "祖母", "家人",
-}
-
-
-def _force_scene_by_profiles(profiles: List[Dict], scene_result: Dict) -> Dict:
-    """
-    根据对话档案的 relationship_type 强制覆盖顶级场景。
-
-    规则：
-    - 若任一档案的 relationship_type 属于职场关系 → 强制 primary_scene = workplace，
-      并在 scenes 中把 workplace 置顶（confidence=1.0），同时保留其他场景
-    - 若任一档案的 relationship_type 属于家庭关系 → 强制 primary_scene = family，
-      并在 scenes 中把 family 置顶（confidence=1.0）
-    - 若同时命中两者，以出现顺序（档案列表顺序）优先最先命中的类型
-    - 若未命中，原样返回
-    """
-    if not profiles:
-        return scene_result
-
-    forced_scene = None
-    for p in profiles:
-        rel = (p.get("relationship_type") or "").strip()
-        if rel in _WORKPLACE_RELATIONSHIP_TYPES and forced_scene is None:
-            forced_scene = "workplace"
-        elif rel in _FAMILY_RELATIONSHIP_TYPES and forced_scene is None:
-            forced_scene = "family"
-
-    if forced_scene is None:
-        return scene_result
-
-    # 深拷贝避免修改原 dict
-    import copy
-    result = copy.deepcopy(scene_result)
-    scenes = result.get("scenes", [])
-
-    # 检查目标场景是否已存在，若存在则提升 confidence，否则插入
-    existing = next((s for s in scenes if s.get("category") == forced_scene), None)
-    if existing:
-        existing["confidence"] = 1.0
-        existing["reasoning"] = existing.get("reasoning", "") + "（档案关系强制命中）"
-    else:
-        scenes.insert(0, {
-            "category": forced_scene,
-            "confidence": 1.0,
-            "reasoning": "档案关系类型强制命中",
-        })
-
-    result["scenes"] = scenes
-    result["primary_scene"] = forced_scene
-
-    logger.info(f"[档案场景强制] profiles 中发现 {forced_scene} 关系，强制 primary_scene={forced_scene}")
-    return result
-
-
-def _supplement_scenes_by_participants(transcript: list, scenes: list) -> list:
-    """
-    根据对话转录中的人称/角色关键词，补充 workplace/family 场景（用于 LLM 漏判时兜底）。
-    """
-    if not transcript:
-        return scenes
-    text_parts = []
-    for item in transcript:
-        t = item.get("text") or item.get("content") or item.get("speaker") or ""
-        if isinstance(t, str):
-            text_parts.append(t)
-    full_text = " ".join(text_parts)
-    existing_categories = {s.get("category") for s in scenes}
-    supplements = []
-    if any(kw in full_text for kw in WORKPLACE_KEYWORDS) and "workplace" not in existing_categories:
-        supplements.append({"category": "workplace", "confidence": 0.6, "reasoning": "对话涉及同事/领导等职场角色（关键词补充）"})
-    if any(kw in full_text for kw in FAMILY_KEYWORDS) and "family" not in existing_categories:
-        supplements.append({"category": "family", "confidence": 0.6, "reasoning": "对话参与者或称呼为家人（关键词补充）"})
-    if supplements:
-        logger.info(f"参与者关键词补充场景: {[s['category'] for s in supplements]}")
-        return scenes + supplements
-    return scenes
-
-
-# 防抑郁监控触发关键词（源于认知三联征 + 语言指纹）
-_DEPRESSION_CRISIS_KEYWORDS = ["不想活", "想活了", "活不下去", "死了算了", "想死", "自杀"]
-_DEPRESSION_GENERAL_KEYWORDS = [
+# 防抑郁触发词
+_DEPRESSION_CRISIS_KW = ["不想活", "想活了", "活不下去", "死了算了", "想死", "自杀"]
+_DEPRESSION_GENERAL_KW = [
     "搞砸", "没用", "失败", "我不配", "废物", "不行", "很差",
     "针对", "没意思", "不公平", "没办法", "讨厌", "都怪我",
     "完蛋", "没希望", "没救了", "不会好了",
@@ -292,175 +47,647 @@ _DEPRESSION_GENERAL_KEYWORDS = [
     "累", "烦", "焦虑", "抑郁", "崩溃", "压力大", "撑不住",
 ]
 
+# 档案关系 → 强制 iOS 分类
+_WORKPLACE_REL_TYPES = {
+    "领导", "上级", "老板", "直属领导", "总监", "经理", "主管", "科长", "处长", "局长",
+    "同事", "平级", "同级", "合作方", "客户", "甲方", "下属", "团队成员",
+}
+_FAMILY_REL_TYPES = {
+    "老婆", "妻子", "老公", "丈夫", "爸爸", "父亲", "妈妈", "母亲",
+    "儿子", "女儿", "孩子", "兄弟", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",
+    "爷爷", "奶奶", "外公", "外婆", "祖父", "祖母", "家人",
+}
+_PROFILE_CATEGORY_MAP = {
+    "work_life": _WORKPLACE_REL_TYPES,
+    "family":    _FAMILY_REL_TYPES,
+}
 
-def _should_trigger_depression_prevention(transcript: list) -> bool:
-    """仅当用户话术命中关键词时触发防抑郁监控"""
-    user_lines = []
-    for item in transcript:
-        if item.get("is_me") is True:
-            text = item.get("text", item.get("content", ""))
-            if text:
-                user_lines.append(text)
-    user_text = "".join(user_lines)
+# ────────────────────────────────────────────────────────
+# 方案A：无档案时的关键词兜底推断（按命中数投票）
+# ────────────────────────────────────────────────────────
+_KW_WORK_LIFE = [
+    # 职称/称谓（高特异性）
+    "老板", "领导", "上司", "总监", "经理", "主管", "老总", "总裁", "CEO",
+    "同事", "下属", "同僚", "部门", "团队", "甲方", "乙方", "客户",
+    "面试官", "HR", "猎头",
+    # 职场场景词
+    "开会", "汇报", "述职", "绩效", "KPI", "晋升", "加薪", "薪资", "工资",
+    "项目", "需求", "排期", "deadline", "加班", "离职", "辞职", "裁员",
+    "年终", "奖金", "职位", "岗位", "入职", "试用期",
+]
+
+_KW_FAMILY = [
+    "老婆", "老公", "妻子", "丈夫", "媳妇", "爱人",
+    "爸爸", "妈妈", "父亲", "母亲", "公公", "婆婆", "岳父", "岳母", "丈母娘",
+    "儿子", "女儿", "孩子", "宝宝", "子女",
+    "兄弟", "姐妹", "哥哥", "弟弟", "姐姐", "妹妹",
+    "爷爷", "奶奶", "外公", "外婆",
+]
+
+_KW_CAMPUS = [
+    "教授", "导师", "辅导员", "班主任",
+    "室友", "舍友", "学长", "学姐", "学弟", "学妹",
+    "宿舍", "寝室", "课题", "论文", "答辩", "毕业",
+    "社团", "考研", "保研", "GPA", "挂科", "实习",
+]
+
+_KW_RELATIONSHIPS = [
+    "男朋友", "女朋友", "男友", "女友", "对象", "相亲", "暗恋", "表白",
+    "分手", "复合", "出轨", "劈腿", "约会", "恋爱",
+    "闺蜜", "死党", "发小",
+]
+
+_KW_LIFE_SKILLS = [
+    "房东", "房租", "物业", "邻居", "装修",
+    "医生", "护士", "诊断", "就医", "挂号", "保险",
+    "银行", "贷款", "理财", "还款", "信用卡",
+    "客服", "投诉", "退款", "售后", "快递",
+]
+
+_KW_PERSONAL_GROWTH = [
+    "自信", "自卑", "内耗", "边界感", "情绪管理",
+    "拖延", "内向", "社恐", "迷茫", "方向感",
+]
+
+# (category, keywords, min_hits) — min_hits 防止低特异词误触发
+_KW_CATEGORY_MAP = [
+    ("work_life",       _KW_WORK_LIFE,       1),
+    ("family",          _KW_FAMILY,          1),
+    ("campus_life",     _KW_CAMPUS,          1),
+    ("relationships",   _KW_RELATIONSHIPS,   1),
+    ("life_skills",     _KW_LIFE_SKILLS,     1),
+    ("personal_growth", _KW_PERSONAL_GROWTH, 2),  # 需 2+ 词命中，避免滥触发
+]
+
+
+# ────────────────────────────────────────────────────────
+# 辅助：防抑郁触发检测
+# ────────────────────────────────────────────────────────
+def _should_trigger_depression(transcript: list) -> bool:
+    user_text = "".join(
+        item.get("text", item.get("content", ""))
+        for item in transcript if item.get("is_me") is True
+    )
     char_count = len(user_text.replace(" ", "").replace("\n", ""))
-    # 强制触发：命中危机词
-    for kw in _DEPRESSION_CRISIS_KEYWORDS:
+    for kw in _DEPRESSION_CRISIS_KW:
         if kw in user_text:
-            logger.info(f"防抑郁监控触发(危机词): 命中「{kw}」")
+            logger.info(f"[抑郁监控] 危机词命中: 「{kw}」")
             return True
-    # 一般触发：字数>=50 且命中任一一般词
     if char_count >= 50:
-        for kw in _DEPRESSION_GENERAL_KEYWORDS:
+        for kw in _DEPRESSION_GENERAL_KW:
             if kw in user_text:
-                logger.info(f"防抑郁监控触发: 字数={char_count} 命中「{kw}」")
+                logger.info(f"[抑郁监控] 一般词命中: 「{kw}」 chars={char_count}")
                 return True
     return False
 
 
-# 维度 skill_id 与 dimension 字段的映射
-_DIMENSION_TO_SKILL = {
-    "role_position": "workplace_role",
-    "scenario": "workplace_scenario",
-    "psychology": "workplace_psychology",
-    "career_stage": "workplace_career",
-    "capability": "workplace_capability",
-}
-
-
-async def match_skills(scene_result: Dict, db: AsyncSession, transcript: list = None, profiles: Optional[List[Dict]] = None) -> List[Dict]:
+# ────────────────────────────────────────────────────────
+# 辅助：从用户偏好读取已选技能
+# ────────────────────────────────────────────────────────
+async def _get_user_selected_skills(user_id: str, db: AsyncSession) -> Tuple[bool, list[str]]:
     """
-    根据场景分类结果匹配技能（支持职场多维度匹配）
-    
-    职场场景使用维度级匹配：根据 workplace_dimensions 匹配对应的维度技能，
-    并将 matched_sub_skill 信息传入技能上下文。
-    其他场景（family 等）保持按 category 匹配。
-    情绪技能（emotion）始终追加。
-    
+    返回 (is_manual_mode, selected_skill_ids)
+    selected_skill_ids 包含系统子技能 ID 和 custom_uuid
+    """
+    try:
+        uid = _uuid_module.UUID(user_id)
+    except (ValueError, AttributeError):
+        logger.warning(f"[用户偏好] 无效 user_id: {user_id}")
+        return False, []
+
+    rows = await db.execute(
+        select(UserSkillPreference.skill_id, UserSkillPreference.selected).where(
+            UserSkillPreference.user_id == uid,
+        )
+    )
+    all_prefs = {r[0]: r[1] for r in rows.fetchall()}
+
+    is_manual = all_prefs.get("__manual_mode__", False)
+    selected_ids = [
+        k for k, v in all_prefs.items()
+        if v is True and k != "__manual_mode__"
+    ]
+    logger.info(f"[用户偏好] user={user_id} manual={is_manual} selected={len(selected_ids)} skills")
+    return is_manual, selected_ids
+
+
+# ────────────────────────────────────────────────────────
+# 辅助：档案关系强制覆盖 iOS 分类
+# ────────────────────────────────────────────────────────
+def _forced_category_from_profiles(profiles: list[dict]) -> str | None:
+    for p in profiles or []:
+        rel = (p.get("relationship_type") or "").strip()
+        for cat, rel_set in _PROFILE_CATEGORY_MAP.items():
+            if rel in rel_set:
+                logger.info(f"[档案强制] relationship_type={rel} → category={cat}")
+                return cat
+    return None
+
+
+# ────────────────────────────────────────────────────────
+# 方案A：无档案时从对话文本关键词推断 primary_category
+# ────────────────────────────────────────────────────────
+def _guess_category_from_transcript(transcript: list) -> str | None:
+    """
+    扫描全部对话文本，按关键词命中数投票推断 primary_category。
+    命中数最多且满足最低门槛的分类获胜，未命中返回 None（交由 LLM 判断）。
+    优先级：档案强制 > 关键词推断 > LLM 分类
+    """
+    all_text = "".join(
+        item.get("text", item.get("content", ""))
+        for item in transcript
+    )
+    if not all_text.strip():
+        return None
+
+    hit_counts: dict[str, int] = {}
+    for category, keywords, min_hits in _KW_CATEGORY_MAP:
+        count = sum(1 for kw in keywords if kw in all_text)
+        if count >= min_hits:
+            hit_counts[category] = count
+            logger.debug(f"[关键词] {category}: {count} 词命中")
+
+    if not hit_counts:
+        logger.info("[关键词预处理] 无分类命中，交由 LLM 判断")
+        return None
+
+    best = max(hit_counts, key=hit_counts.get)
+    logger.info(f"[关键词预处理] 命中分类={best} ({hit_counts[best]} 词)，完整计数={hit_counts}")
+    return best
+
+
+# ────────────────────────────────────────────────────────
+# 核心：LLM 场景分类 + 相关度打分（自动模式，单次调用）
+# ────────────────────────────────────────────────────────
+def classify_and_score(
+    transcript: list,
+    selected_skill_ids: list[str],
+    model=None,
+) -> dict:
+    """
+    单次 LLM 调用完成：
+      1. 场景分类 → iOS 6 大分类
+      2. 对 selected_skill_ids 中每个技能打相关度分 0-100
+
     Returns:
-        List[dict]: 匹配的技能列表，每项包含 skill_id, name, category, priority,
-                    confidence, scene_reasoning, 以及可选的 dimension, matched_sub_skill,
-                    matched_sub_skill_id 字段
+        {
+            "primary_category": "work_life",
+            "scene_description": "...",
+            "skill_scores": {"salary_negotiation": 91, ...}
+        }
     """
-    matched_skills = []
+    if model is None:
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
 
-    all_skills = await list_skills(enabled=True, db=db)
-
-    # 档案关系强制场景（优先于 LLM 分类结果）
-    if profiles:
-        scene_result = _force_scene_by_profiles(profiles, scene_result)
-
-    scenes = scene_result.get("scenes", [])
-    primary_scene = scene_result.get("primary_scene", "other")
-    workplace_dimensions = scene_result.get("workplace_dimensions", [])
-    
-    scenes = _supplement_scenes_by_participants(transcript or [], scenes)
-    
-    valid_scenes = sorted(
-        [s for s in scenes if s.get("confidence", 0) > 0.3],
-        key=lambda x: x.get("confidence", 0),
-        reverse=True
-    )[:3]
-    
-    if not valid_scenes:
-        valid_scenes = [{"category": primary_scene, "confidence": 0.5}]
-    
-    workplace_matched = any(s.get("category") == "workplace" for s in valid_scenes)
-    
-    for scene in valid_scenes:
-        category = scene.get("category", "other")
-        confidence = scene.get("confidence", 0.5)
-        
-        logger.debug(f"匹配场景类别: {category}, 置信度: {confidence:.2f}")
-        
-        if category == "workplace":
-            # 职场场景：按维度匹配
-            if workplace_dimensions:
-                for dim in workplace_dimensions:
-                    dim_name = dim.get("dimension", "")
-                    target_skill_id = _DIMENSION_TO_SKILL.get(dim_name)
-                    if not target_skill_id:
-                        logger.warning(f"未知维度: {dim_name}")
-                        continue
-                    
-                    skill_info = next((s for s in all_skills if s["skill_id"] == target_skill_id), None)
-                    if not skill_info:
-                        logger.warning(f"维度技能未注册: {target_skill_id}")
-                        continue
-                    
-                    matched_skills.append({
-                        "skill_id": skill_info["skill_id"],
-                        "name": skill_info["name"],
-                        "category": "workplace",
-                        "priority": skill_info["priority"],
-                        "confidence": dim.get("confidence", confidence),
-                        "scene_reasoning": dim.get("reasoning", ""),
-                        "dimension": dim_name,
-                        "matched_sub_skill": dim.get("sub_skill_name", ""),
-                        "matched_sub_skill_id": dim.get("sub_skill", ""),
-                    })
-                    logger.debug(f"  ✅ 维度匹配: {target_skill_id} ({dim.get('sub_skill_name', '')})")
-            else:
-                # workplace_dimensions 为空时的兜底：匹配所有 workplace 维度技能
-                for skill in all_skills:
-                    if skill["category"] == "workplace":
-                        matched_skills.append({
-                            "skill_id": skill["skill_id"],
-                            "name": skill["name"],
-                            "category": "workplace",
-                            "priority": skill["priority"],
-                            "confidence": confidence,
-                            "scene_reasoning": scene.get("reasoning", ""),
-                            "dimension": skill.get("metadata", {}).get("dimension", ""),
-                            "matched_sub_skill": "",
-                            "matched_sub_skill_id": "",
-                        })
+    # 构建技能描述列表（给 LLM 看的）
+    skill_desc_lines = []
+    for sid in selected_skill_ids:
+        cfg = get_skill_config(sid)
+        if cfg:
+            name = cfg["name"]
+            focus = cfg.get("exec_context", {}).get("focus", "")
+            skill_desc_lines.append(f'  "{sid}": "{name} — {focus}"')
         else:
-            # 非职场场景（family 等）：按 category 匹配
-            for skill in all_skills:
-                if skill["category"] == category:
-                    matched_skills.append({
-                        "skill_id": skill["skill_id"],
-                        "name": skill["name"],
-                        "category": skill["category"],
-                        "priority": skill["priority"],
-                        "confidence": confidence,
-                        "scene_reasoning": scene.get("reasoning", ""),
-                    })
-                    logger.debug(f"  ✅ 匹配到技能: {skill['skill_id']} ({skill.get('name', 'N/A')})")
-    
-    # 情绪识别技能：所有对话都运行（personal 类中 emotion_recognition / depression_prevention 不参与场景匹配）
-    _EMOTION_SKILL_IDS = {"emotion_recognition", "depression_prevention"}
-    matched_ids = {s["skill_id"] for s in matched_skills}
-    for skill in all_skills:
-        if skill["skill_id"] not in _EMOTION_SKILL_IDS or skill["skill_id"] in matched_ids:
+            skill_desc_lines.append(f'  "{sid}": "{sid}"')
+    skill_desc_block = "\n".join(skill_desc_lines)
+
+    category_desc_lines = "\n".join(
+        f'  "{k}": "{v}"' for k, v in CATEGORY_SCENE_DESCRIPTIONS.items()
+    )
+
+    prompt = f"""You are an expert conversation analyst specializing in interpersonal dynamics.
+Analyze the transcript carefully using the three steps below.
+
+---
+## Step 0: Identify the Other Person
+Who is Speaker B (the person the user is talking WITH)?
+Pick ONE that best fits:
+- boss_or_superior (manager, director, CEO, client with authority over user)
+- coworker_or_peer (colleague at same level, teammate, business partner)
+- subordinate (someone user manages or mentors)
+- romantic_partner (boyfriend, girlfriend, spouse, ex)
+- parent_or_inlaw (mom, dad, mother-in-law, father-in-law)
+- child_or_teen (user's child, teenage child)
+- other_family (sibling, grandparent, extended family)
+- professor_or_teacher (professor, advisor, teacher, school supervisor)
+- classmate_or_roommate (fellow student, dormmate, study group member)
+- close_friend (best friend, old friend, confidant)
+- stranger_or_service (customer service, doctor, landlord, neighbor, bank)
+- self_reflection (user is talking to themselves / journaling / no clear other person)
+- unknown
+
+---
+## Step 1: Scene Classification
+Based on who Speaker B is, select the PRIMARY category:
+
+- "work_life": Speaker B is a boss, coworker, client, HR, or job interviewer. Topics: salary, performance, deadlines, workplace politics, job search, promotions.
+  → Use this even if topic feels personal but the other person has a professional role.
+
+- "campus_life": Speaker B is a professor, advisor, classmate, or roommate. Topics: grades, thesis, group projects, dorm life, internship offers, campus social.
+
+- "relationships": Speaker B is a romantic partner, ex, or close friend. Topics: dating, breakups, friendship conflicts, coming out, emotional support between friends.
+  → Do NOT use for family members — use "family" instead.
+
+- "family": Speaker B is a parent, spouse, child, sibling, or extended family. Topics: parenting, family decisions, money within family, generational conflict, co-parenting.
+  → Use this even if the relationship feels tense or hostile.
+
+- "personal_growth": No clear Speaker B, or user is reflecting inward. Topics: anxiety, self-doubt, procrastination, anger management, assertiveness, inner critic.
+  → Only use if conversation is primarily about user's internal state, NOT an interpersonal conflict with a specific person.
+
+- "life_skills": Speaker B is a landlord, doctor, customer service rep, neighbor, or bank. Topics: healthcare navigation, contracts, housing disputes, consumer complaints, financial decisions.
+
+Disambiguation rules (apply in order):
+1. If Speaker B has a job title or workplace authority → "work_life" (even if topic sounds personal)
+2. If Speaker B is a spouse, parent, or child → "family" (not "relationships")
+3. If user vents about work/family TO a friend → "relationships"
+4. Ambiguous between work_life and personal_growth → prefer "work_life"
+5. Ambiguous between family and relationships → prefer "family"
+
+---
+## Step 2: Skill Relevance Scoring
+Score each skill's relevance to THIS specific conversation (0–100):
+
+{{{skill_desc_block}}}
+
+Scoring guide:
+- 80–100: Highly relevant — directly addresses what's happening, user would benefit immediately
+- 50–79:  Somewhat relevant — useful context but not the core issue
+- 0–49:   Tangential or not helpful for this conversation
+
+Score each skill independently. Spread scores out — avoid clustering everything at 50.
+Include ALL skill IDs in your response.
+
+---
+Return ONLY valid JSON, no extra text:
+{{
+  "other_person_type": "<one of the Step 0 options>",
+  "primary_category": "<one of the 6 category keys>",
+  "scene_description": "<1-2 sentences: what is happening and what does the user need help with>",
+  "skill_scores": {{
+    "<skill_id>": <0-100>,
+    ...
+  }}
+}}
+
+Conversation transcript:
+{json.dumps(transcript, ensure_ascii=False, indent=2)}"""
+
+    try:
+        logger.info("[场景分类+打分] 开始 LLM 调用")
+        response = model.generate_content(prompt)
+        raw = response.text.strip()
+        logger.info(f"[场景分类+打分] 响应长度={len(raw)}")
+
+        import re
+        parsed = None
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw, re.DOTALL)
+            if m:
+                try:
+                    parsed = json.loads(m.group(1).strip())
+                except json.JSONDecodeError:
+                    pass
+        if parsed is None:
+            m2 = re.search(r'\{.*\}', raw, re.DOTALL)
+            if m2:
+                try:
+                    parsed = json.loads(m2.group(0))
+                except json.JSONDecodeError:
+                    pass
+
+        if not parsed:
+            raise ValueError(f"无法解析 JSON: {raw[:200]}")
+
+        primary = parsed.get("primary_category", "work_life")
+        if primary not in _IOS_CATEGORIES:
+            primary = "work_life"
+            logger.warning(f"[场景分类] 非法 primary_category，兜底 work_life")
+
+        scores = parsed.get("skill_scores", {})
+        # 确保所有技能都有分数，缺失的补 50
+        for sid in selected_skill_ids:
+            if sid not in scores:
+                scores[sid] = 50
+
+        other_person_type = parsed.get("other_person_type", "unknown")
+        result = {
+            "primary_category": primary,
+            "scene_description": parsed.get("scene_description", ""),
+            "skill_scores": scores,
+            "other_person_type": other_person_type,
+        }
+        logger.info(f"[场景分类] primary_category={primary} other_person={other_person_type}")
+        logger.info(f"[场景分类] scene_description={result['scene_description'][:100]}")
+        return result
+
+    except Exception as e:
+        logger.error(f"[场景分类+打分] 失败: {e}", exc_info=True)
+        # 兜底：primary 用第一个 selected skill 的 category，全部给 50 分
+        fallback_cat = "work_life"
+        if selected_skill_ids:
+            cfg = get_skill_config(selected_skill_ids[0])
+            if cfg:
+                fallback_cat = cfg.get("category", "work_life")
+        return {
+            "primary_category": fallback_cat,
+            "scene_description": "",
+            "skill_scores": {sid: 50 for sid in selected_skill_ids},
+        }
+
+
+# ────────────────────────────────────────────────────────
+# 核心：构建 skill_card 列表（不执行内容，只决定哪些技能上场）
+# ────────────────────────────────────────────────────────
+async def match_skills_v2(
+    transcript: list,
+    profiles: list[dict] | None,
+    user_id: str | None,
+    db: AsyncSession,
+    model=None,
+) -> list[dict]:
+    """
+    返回 skill_card stub 列表（content=None），供 main.py 决定执行顺序。
+
+    每个 stub 结构：
+    {
+        "skill_id":      "salary_negotiation",   # 统一 iOS ID / custom_uuid
+        "skill_name":    "Salary Negotiation",
+        "category":      "work_life",             # iOS 分类
+        "score":         91,                      # 相关度，手动模式 None
+        "is_custom":     False,
+        "exec_template": "_exec_work_life",
+        "exec_context":  {...},
+        "execute_now":   True/False,              # True = 立即执行
+        "content_type":  "pending",
+        "content":       None,
+    }
+    emotion_recognition 单独以 always_run=True 标记。
+    """
+    # 1. 读用户偏好
+    is_manual, selected_ids = (False, []) if not user_id else \
+        await _get_user_selected_skills(user_id, db)
+
+    # 如果没有任何偏好：用全部 43 个系统技能（新用户兜底）
+    if not selected_ids:
+        selected_ids = get_all_system_skill_ids()
+        logger.info("[技能匹配] 无用户偏好，使用全部 43 个系统技能")
+
+    # 档案关系强制覆盖分类
+    forced_cat = _forced_category_from_profiles(profiles or [])
+
+    # 方案A：无档案时，关键词兜底推断分类（优先级：档案 > 关键词 > LLM）
+    if forced_cat is None:
+        forced_cat = _guess_category_from_transcript(transcript)
+
+    # ── 手动模式 ─────────────────────────────────────────
+    if is_manual:
+        logger.info(f"[技能匹配] 手动模式：直接使用 {len(selected_ids)} 个用户选中技能")
+        stubs = _build_stubs_manual(selected_ids)
+        stubs = _append_always_run(stubs, transcript)
+        return stubs
+
+    # ── 自动模式 ─────────────────────────────────────────
+    logger.info(
+        f"[技能匹配] 自动模式：场景分类 + 打分，selected={len(selected_ids)}，"
+        f"forced_cat={forced_cat}（档案/关键词）"
+    )
+    scene_result = classify_and_score(transcript, selected_ids, model=model)
+
+    primary_cat = forced_cat or scene_result["primary_category"]
+    scores      = scene_result["skill_scores"]
+    logger.info(
+        f"[技能匹配] primary_cat={primary_cat}"
+        f"（来源={'forced' if forced_cat else 'LLM'}），"
+        f"LLM分类={scene_result['primary_category']}，"
+        f"对方身份={scene_result.get('other_person_type', 'unknown')}"
+    )
+
+    stubs = _build_stubs_auto(selected_ids, scores, primary_cat)
+    stubs = _append_always_run(stubs, transcript)
+    return stubs
+
+
+# ────────────────────────────────────────────────────────
+# 手动模式：所有选中技能按分类分组，每组第一个 execute_now=True
+# ────────────────────────────────────────────────────────
+def _build_stubs_manual(selected_ids: list[str]) -> list[dict]:
+    # 按 iOS 分类分组
+    groups: dict[str, list[str]] = {cat: [] for cat in _IOS_CATEGORIES}
+    groups["custom"] = []
+
+    for sid in selected_ids:
+        cfg = get_skill_config(sid)
+        cat = cfg["category"] if cfg else "custom"
+        groups.setdefault(cat, []).append(sid)
+
+    stubs = []
+    for cat in _IOS_CATEGORIES + ["custom"]:
+        cat_skills = groups.get(cat, [])
+        for idx, sid in enumerate(cat_skills):
+            cfg = get_skill_config(sid) or {}
+            stubs.append({
+                "skill_id":      sid,
+                "skill_name":    cfg.get("name", sid),
+                "category":      cat,
+                "score":         None,           # 手动模式无分数
+                "is_custom":     sid.startswith("custom_"),
+                "exec_template": cfg.get("exec_template", "_exec_work_life"),
+                "exec_context":  cfg.get("exec_context", {}),
+                "execute_now":   (idx == 0),     # 每组第一个立即执行
+                "content_type":  "pending",
+                "content":       None,
+            })
+    logger.info(f"[手动模式] 构建 {len(stubs)} 个 stub")
+    return stubs
+
+
+# ────────────────────────────────────────────────────────
+# 自动模式：按分数降序，每个命中场景取 top-5
+# ────────────────────────────────────────────────────────
+def _build_stubs_auto(
+    selected_ids: list[str],
+    scores: dict[str, int | float],
+    primary_category: str,
+) -> list[dict]:
+    """
+    自动模式 stub 构建（含场景过滤 + 子技能阈值）：
+      - 场景过滤：每个场景的代表分（该场景下最高子技能分）占所有场景总分的比例 < 5% → 剔除
+      - 场景上限：最多保留 3 个场景，primary_category 强制保留并置顶
+      - 子技能阈值：分数 < 90 的子技能不展示
+      - 子技能上限：每个场景最多展示 3 条子技能
+      - 兜底：若 primary_category 内无 90+ 技能，降级展示该场景最高分 1 条
+    """
+    _SCENE_PCT_THRESHOLD  = 0.05   # 场景占比门槛（5%）
+    _MAX_SCENES           = 3      # 最多场景数
+    _SKILL_SCORE_MIN      = 90     # 子技能最低展示分
+    _MAX_SKILLS_PER_SCENE = 3      # 每场景最多子技能数
+
+    # ── Step 1: 按 iOS 分类分组 ──────────────────────────────
+    groups: dict[str, list[tuple]] = {}  # cat → [(score, sid)]
+    for sid in selected_ids:
+        cfg = get_skill_config(sid)
+        cat = cfg["category"] if cfg else "custom"
+        score = float(scores.get(sid, 0))
+        groups.setdefault(cat, []).append((score, sid))
+
+    # ── Step 2: 计算每个场景的代表分（该场景下最高子技能分）────
+    cat_rep: dict[str, float] = {
+        cat: max((s for s, _ in slist), default=0.0)
+        for cat, slist in groups.items()
+        if slist
+    }
+
+    # ── Step 3: 场景过滤：占比 < 5% 的场景剔除 ──────────────
+    total_rep = sum(cat_rep.values()) or 1.0
+    valid_cats: dict[str, float] = {
+        cat: rep
+        for cat, rep in cat_rep.items()
+        if rep / total_rep >= _SCENE_PCT_THRESHOLD
+    }
+
+    # primary_category 强制保留（档案/关键词命中的场景不因低分被丢弃）
+    if primary_category not in valid_cats and primary_category in cat_rep:
+        valid_cats[primary_category] = cat_rep[primary_category]
+        logger.info(
+            f"[场景过滤] {primary_category} 占比="
+            f"{cat_rep[primary_category]/total_rep:.1%} < 5%，但为 primary，强制保留"
+        )
+
+    # ── Step 4: 按代表分降序，primary_category 置顶，最多 3 个场景 ──
+    sorted_cats = sorted(
+        valid_cats.keys(),
+        key=lambda c: (c != primary_category, -valid_cats[c])
+    )[:_MAX_SCENES]
+
+    logger.info(
+        f"[场景过滤] 原始场景={list(cat_rep.keys())}，"
+        f"过滤后保留={sorted_cats}（占比门槛={_SCENE_PCT_THRESHOLD:.0%}）"
+    )
+
+    # ── Step 5: 构建 stubs ──────────────────────────────────
+    stubs = []
+    for cat in sorted_cats:
+        raw_skills = groups.get(cat, [])
+
+        # 只取分数 >= 90 的子技能，按分数降序，最多 3 条
+        qualified = sorted(
+            [(s, sid) for s, sid in raw_skills if s >= _SKILL_SCORE_MIN],
+            key=lambda x: x[0], reverse=True
+        )[:_MAX_SKILLS_PER_SCENE]
+
+        # 兜底：primary_category 无 90+ 技能时，展示最高分 1 条（保证有内容）
+        if not qualified and cat == primary_category:
+            fallback = sorted(raw_skills, key=lambda x: x[0], reverse=True)[:1]
+            qualified = fallback
+            if qualified:
+                logger.info(
+                    f"[场景过滤] {cat} 无 {_SKILL_SCORE_MIN}+ 技能，"
+                    f"兜底展示最高分技能 score={int(qualified[0][0])}"
+                )
+
+        if not qualified:
+            logger.info(f"[场景过滤] {cat} 无满足条件的子技能，跳过")
             continue
-        if skill["skill_id"] == "depression_prevention":
-            if not _should_trigger_depression_prevention(transcript or []):
-                logger.debug(f"  ⏭️ 跳过 depression_prevention: 未命中触发关键词")
-                continue
-        matched_skills.append({
-            "skill_id": skill["skill_id"],
-            "name": skill["name"],
-            "category": skill["category"],
-            "priority": skill["priority"],
-            "confidence": 0.9,
-            "scene_reasoning": "情绪识别适用于所有对话",
-        })
-        logger.debug(f"  ✅ 追加情绪技能: {skill['skill_id']}")
-    
-    # 去重
-    seen = set()
-    unique_skills = []
-    for skill in matched_skills:
-        if skill["skill_id"] not in seen:
-            seen.add(skill["skill_id"])
-            unique_skills.append(skill)
-    
-    unique_skills.sort(key=lambda x: (x["priority"], x["confidence"]), reverse=True)
-    
-    logger.info(f"技能匹配完成: 匹配到 {len(unique_skills)} 个技能")
-    for skill in unique_skills:
-        dim_info = f", dimension={skill.get('dimension', '')}/{skill.get('matched_sub_skill', '')}" if skill.get("dimension") else ""
-        logger.info(f"  ✅ {skill['skill_id']} (名称: {skill.get('name', 'N/A')}, priority={skill['priority']}, confidence={skill['confidence']:.2f}{dim_info})")
-    
-    return unique_skills
+
+        for idx, (score, sid) in enumerate(qualified):
+            cfg = get_skill_config(sid) or {}
+            stubs.append({
+                "skill_id":      sid,
+                "skill_name":    cfg.get("name", sid),
+                "category":      cat,
+                "score":         int(score),
+                "is_custom":     sid.startswith("custom_"),
+                "exec_template": cfg.get("exec_template", "_exec_work_life"),
+                "exec_context":  cfg.get("exec_context", {}),
+                "execute_now":   (idx == 0),   # 每场景第一个立即执行
+                "content_type":  "pending",
+                "content":       None,
+            })
+
+    logger.info(
+        f"[自动模式] 构建 {len(stubs)} 个 stub（"
+        f"primary={primary_category}，场景数={len(sorted_cats)}，"
+        f"子技能门槛={_SKILL_SCORE_MIN}分）"
+    )
+    for s in stubs:
+        logger.info(f"  {s['category']}  {s['skill_id']}  score={s['score']}  exec_now={s['execute_now']}")
+    return stubs
+
+
+# ────────────────────────────────────────────────────────
+# 追加始终运行技能（情绪识别 + 条件性抑郁监控）
+# ────────────────────────────────────────────────────────
+def _append_always_run(stubs: list[dict], transcript: list) -> list[dict]:
+    # emotion_recognition 置顶（排在列表最前面）
+    emotion_stub = {
+        "skill_id":      _ALWAYS_RUN_SKILL,
+        "skill_name":    "Emotion Check",
+        "category":      "always",
+        "score":         None,
+        "is_custom":     False,
+        "exec_template": "_exec_emotion",
+        "exec_context":  {},
+        "execute_now":   True,
+        "content_type":  "emotion",
+        "content":       None,
+        "always_run":    True,
+    }
+
+    result = [emotion_stub] + stubs
+
+    # depression_prevention（条件触发，追加到末尾）
+    if _should_trigger_depression(transcript):
+        dep_stub = {
+            "skill_id":      _DEPRESSION_SKILL,
+            "skill_name":    "Mental Health Check",
+            "category":      "always",
+            "score":         None,
+            "is_custom":     False,
+            "exec_template": "_exec_depression",
+            "exec_context":  {},
+            "execute_now":   True,
+            "content_type":  "mental_health",
+            "content":       None,
+            "always_run":    True,
+        }
+        result.append(dep_stub)
+
+    return result
+
+
+# ────────────────────────────────────────────────────────
+# 向后兼容：保留旧版 classify_scene / match_skills 函数签名
+# 供 main.py 旧路径调用（过渡期，逐步迁移）
+# ────────────────────────────────────────────────────────
+def classify_scene(transcript: list, model=None) -> dict:
+    """旧接口兼容层：只做场景分类，不打分"""
+    # 无需打分时直接走 LLM 分类
+    if model is None:
+        model = genai.GenerativeModel(GEMINI_FLASH_MODEL)
+    result = classify_and_score(transcript, [], model=model)
+    return {
+        "primary_scene": result["primary_category"],
+        "scenes": [{"category": result["primary_category"], "confidence": 0.9}],
+        "workplace_dimensions": [],
+        "_ios_scene": result,
+    }
+
+
+async def match_skills(
+    scene_result: dict,
+    db: AsyncSession,
+    transcript: list = None,
+    profiles: list[dict] | None = None,
+    user_id: str | None = None,
+    model=None,
+) -> list[dict]:
+    """旧接口兼容层：转发到 match_skills_v2"""
+    return await match_skills_v2(
+        transcript=transcript or [],
+        profiles=profiles,
+        user_id=user_id,
+        db=db,
+        model=model,
+    )

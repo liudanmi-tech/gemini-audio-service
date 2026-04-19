@@ -339,6 +339,7 @@ struct TaskDetailResponse: Codable {
     let dialogues: [DialogueItem]
     let risks: [String]
     let summary: String?
+    let cardTitle: String?   // Moments 封面底部短标题（≤30字）
     let coverImageUrl: String?
     let audioUrl: String?  // 原始录音播放 URL
     let createdAt: String
@@ -357,6 +358,7 @@ struct TaskDetailResponse: Codable {
         case dialogues
         case risks
         case summary
+        case cardTitle = "card_title"
         case coverImageUrl = "cover_image_url"
         case audioUrl = "audio_url"
         case createdAt = "created_at"
@@ -388,6 +390,7 @@ struct TaskDetailResponse: Codable {
         dialogues = try container.decode([DialogueItem].self, forKey: .dialogues)
         risks = try container.decode([String].self, forKey: .risks)
         summary = try? container.decode(String.self, forKey: .summary)
+        cardTitle = try? container.decode(String.self, forKey: .cardTitle)
         coverImageUrl = try? container.decode(String.self, forKey: .coverImageUrl)
         audioUrl = try? container.decode(String.self, forKey: .audioUrl)
         createdAt = try container.decode(String.self, forKey: .createdAt)
@@ -408,6 +411,7 @@ struct TaskDetailResponse: Codable {
         dialogues: [DialogueItem],
         risks: [String],
         summary: String?,
+        cardTitle: String? = nil,
         coverImageUrl: String? = nil,
         audioUrl: String? = nil,
         createdAt: String,
@@ -425,6 +429,7 @@ struct TaskDetailResponse: Codable {
         self.dialogues = dialogues
         self.risks = risks
         self.summary = summary
+        self.cardTitle = cardTitle
         self.coverImageUrl = coverImageUrl
         self.audioUrl = audioUrl
         self.createdAt = createdAt

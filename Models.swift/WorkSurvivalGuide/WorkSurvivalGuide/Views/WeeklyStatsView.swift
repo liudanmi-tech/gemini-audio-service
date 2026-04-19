@@ -449,7 +449,7 @@ struct WeeklyStatsDetailSheet: View {
                 }
             }
         }
-        .presentationDetents(initialCard == .radar ? [.large] : [.medium, .large])
+        .presentationDetents([.large])
     }
 
     // MARK: Session list
@@ -530,7 +530,30 @@ private struct MoodDetailChart: View {
 
     var body: some View {
         let points = vm.stats?.mood_series ?? []
-        if #available(iOS 16.0, *) {
+        let hasData = points.contains { $0.score != nil }
+
+        if vm.isLoading {
+            HStack {
+                Spacer()
+                ProgressView().progressViewStyle(.circular).tint(.white.opacity(0.4))
+                Spacer()
+            }
+            .frame(height: 180)
+        } else if !hasData {
+            VStack(spacing: 8) {
+                Image(systemName: "chart.line.uptrend.xyaxis")
+                    .font(.system(size: 32))
+                    .foregroundColor(.white.opacity(0.15))
+                Text("No mood data for this period")
+                    .font(.system(size: 13, design: .rounded))
+                    .foregroundColor(.white.opacity(0.3))
+                Text("Start recording to track your mood trends")
+                    .font(.system(size: 11, design: .rounded))
+                    .foregroundColor(.white.opacity(0.2))
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 180)
+        } else if #available(iOS 16.0, *) {
             Chart {
                 ForEach(Array(points.enumerated()), id: \.offset) { i, p in
                     if let score = p.score {

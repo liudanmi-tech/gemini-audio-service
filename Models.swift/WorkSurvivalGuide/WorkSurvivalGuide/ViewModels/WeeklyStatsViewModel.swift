@@ -16,7 +16,10 @@ class WeeklyStatsViewModel: ObservableObject {
     @Published var stats: WeeklyStats? = nil
     @Published var isLoading = false
     @Published var errorMessage: String? = nil
-    @Published var selectedRange: TimeRange = .month30
+    @Published var selectedRange: TimeRange = .thisWeek
+
+    private var loadedRange: TimeRange? = nil   // 已加载数据对应的时间段
+    private var lastLoadTime: Date? = nil        // 最近一次加载时间（5分钟内复用）
 
     enum TimeRange: String, CaseIterable {
         case thisWeek  = "This Week"
@@ -68,8 +71,15 @@ class WeeklyStatsViewModel: ObservableObject {
 
     // MARK: - Load
 
-    func load() {
+    func load(forceRefresh: Bool = false) {
         guard !isLoading else { return }
+        // 缓存复用：同一时间段且5分钟内已加载，跳过请求
+        if !forceRefresh,
+           let loaded = loadedRange, loaded == selectedRange,
+           let lastTime = lastLoadTime, Date().timeIntervalSince(lastTime) < 300,
+           stats != nil {
+            return
+        }
         let (start, end) = dateRange
         let startStr = dateFormatter.string(from: start)
         let endStr   = dateFormatter.string(from: end)
@@ -84,6 +94,8 @@ class WeeklyStatsViewModel: ObservableObject {
                     endDate: endStr
                 )
                 self.stats = result
+                self.loadedRange = self.selectedRange
+                self.lastLoadTime = Date()
             } catch {
                 self.errorMessage = "Failed to load stats"
             }
@@ -95,6 +107,7 @@ class WeeklyStatsViewModel: ObservableObject {
         guard range != selectedRange else { return }
         selectedRange = range
         stats = nil
+        loadedRange = nil
         load()
     }
 

@@ -650,6 +650,7 @@ class RecordingViewModel: ObservableObject {
                     emotionScore: freshDetail.emotionScore,
                     speakerCount: freshDetail.speakerCount,
                     summary: freshDetail.summary,
+                    cardTitle: freshDetail.cardTitle,
                     coverImageUrl: freshDetail.coverImageUrl
                 )
 
@@ -693,6 +694,7 @@ class RecordingViewModel: ObservableObject {
             emotionScore: baseDetail.emotionScore,
             speakerCount: baseDetail.speakerCount,
             summary: baseDetail.summary,
+            cardTitle: baseDetail.cardTitle,
             coverImageUrl: baseDetail.coverImageUrl
         )
         await MainActor.run {

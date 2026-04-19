@@ -241,8 +241,12 @@ struct StrategyAnalysisView_Updated: View {
                     hasScheduledImageRefresh = true
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 5_000_000_000)
-                        DetailCacheManager.shared.clearCache(for: sessionId)
-                        loadStrategyAnalysis()
+                        // 只刷新场景图片，不清除技能卡片缓存，避免二次进入重走完整 API 链路
+                        if let fresh = try? await NetworkManager.shared.getStrategyAnalysis(sessionId: sessionId),
+                           let images = fresh.sceneImages, !images.isEmpty {
+                            DetailCacheManager.shared.cacheStrategy(fresh, for: sessionId)
+                            strategyAnalysis = fresh
+                        }
                     }
                 }
                 return
@@ -322,8 +326,14 @@ struct StrategyAnalysisView_Updated: View {
                             hasScheduledImageRefresh = true
                             Task {
                                 try? await Task.sleep(nanoseconds: 5_000_000_000)
-                                DetailCacheManager.shared.clearCache(for: sessionId)
-                                loadStrategyAnalysis()
+                                // 只刷新场景图片，不清除技能卡片缓存，避免二次进入重走完整 API 链路
+                                if let fresh = try? await NetworkManager.shared.getStrategyAnalysis(sessionId: sessionId),
+                                   let images = fresh.sceneImages, !images.isEmpty {
+                                    await MainActor.run {
+                                        DetailCacheManager.shared.cacheStrategy(fresh, for: sessionId)
+                                        strategyAnalysis = fresh
+                                    }
+                                }
                             }
                         }
                     }
