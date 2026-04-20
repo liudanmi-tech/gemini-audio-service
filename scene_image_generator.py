@@ -155,7 +155,14 @@ async def generate_scene_images(
             consistency_header = ""
             if not profile_refs:
                 logger.info(f"[场景生图] 无档案参考图，启动人物档案分析...")
-                char_profiles = await _analyze_character_profiles(transcript, gemini_flash_model)
+                try:
+                    char_profiles = await asyncio.wait_for(
+                        _analyze_character_profiles(transcript, gemini_flash_model),
+                        timeout=30.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(f"[场景生图] 人物档案分析超时(30s)，跳过，直接生成")
+                    char_profiles = {"consistency_header": ""}
                 consistency_header = char_profiles.get("consistency_header", "")
                 if consistency_header:
                     logger.info(f"[场景生图] 人物一致性头部已就绪，将注入所有场景 prompt")
@@ -173,12 +180,20 @@ async def generate_scene_images(
                     scene_with_profile = scene
 
                 # generate_image_fn is sync (old SDK), call via asyncio.to_thread
-                return await asyncio.to_thread(
-                    generate_image_fn,
-                    scene_with_profile,
-                    user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
-                    profile_refs if profile_refs else None, 3, style_key
-                )
+                # 每张图最多等 120 秒，超时返回 None（视为失败）
+                try:
+                    return await asyncio.wait_for(
+                        asyncio.to_thread(
+                            generate_image_fn,
+                            scene_with_profile,
+                            user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
+                            profile_refs if profile_refs else None, 3, style_key
+                        ),
+                        timeout=120.0,
+                    )
+                except asyncio.TimeoutError:
+                    logger.error(f"[场景生图] 图{i} 生成超时(120s)，跳过")
+                    return None
 
             results = await asyncio.gather(
                 *[gen_one(i, scene) for i, scene in enumerate(scenes)],
