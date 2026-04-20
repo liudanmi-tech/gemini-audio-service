@@ -2677,6 +2677,20 @@ async def _generate_strategies_core(
         # 2.2 技能匹配（若此处报 PG type 114，可能是 skills 表 meta_data 列为 json）
         logger.info("[策略流程] 步骤2.2: 技能匹配(match_skills/查 skills 表)...")
         matched_skills = await match_skills(scene_result, db, transcript=transcript, profiles=_participant_profiles or None)
+
+        # ── 兼容 router v2 stub 格式：补齐旧字段 (priority/confidence/name) ──────
+        # router v2 返回 score（0-100），旧代码期望 priority 和 confidence，此处统一补齐
+        def _norm_stub(s: dict) -> dict:
+            if "priority" not in s:
+                s["priority"] = int(s["score"]) if s.get("score") is not None else 0
+            if "confidence" not in s:
+                raw_score = s.get("score") or 50
+                s["confidence"] = min(1.0, float(raw_score) / 100.0)
+            if "name" not in s:
+                s["name"] = s.get("skill_name") or s.get("skill_id", "")
+            return s
+        matched_skills = [_norm_stub(s) for s in matched_skills]
+
         logger.info(f"[策略流程] 步骤2.2: 完成 匹配到 {len(matched_skills)} 个技能")
 
         # 2.2c 手动模式过滤：若用户开启手动编排，仅保留用户勾选的技能
@@ -2711,10 +2725,11 @@ async def _generate_strategies_core(
             if default_skill:
                 matched_skills = [{
                     "skill_id": "workplace_role",
-                    "name": default_skill["name"],
-                    "category": default_skill["category"],
-                    "priority": default_skill["priority"],
+                    "name": default_skill.get("name", "workplace_role"),
+                    "category": default_skill.get("category", "work_life"),
+                    "priority": default_skill.get("priority", 0),
                     "confidence": 0.5,
+                    "score": default_skill.get("priority", 0),
                     "dimension": "role_position",
                     "matched_sub_skill": "",
                     "matched_sub_skill_id": "",
@@ -3163,7 +3178,7 @@ async def classify_scene_endpoint(
 
         # 技能匹配（传入 transcript 用于参与者关键词补充）
         matched_skills = await match_skills(scene_result, db, transcript=transcript, profiles=_reclassify_profiles or None)
-        
+
         return APIResponse(
             code=200,
             message="success",
@@ -3173,8 +3188,8 @@ async def classify_scene_endpoint(
                 "matched_skills": [
                     {
                         "skill_id": skill["skill_id"],
-                        "name": skill["name"],
-                        "priority": skill["priority"]
+                        "name": skill.get("name") or skill.get("skill_name", skill["skill_id"]),
+                        "priority": skill.get("priority") or skill.get("score", 0)
                     }
                     for skill in matched_skills
                 ]
