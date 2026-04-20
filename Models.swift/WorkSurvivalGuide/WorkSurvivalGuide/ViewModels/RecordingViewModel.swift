@@ -629,7 +629,7 @@ class RecordingViewModel: ObservableObject {
     // 等待场景图片生成完成，完成后预缓存策略+第一张图片，再发 TaskAnalysisCompleted（卡片变可点击）
     private func pollForImages(sessionId: String, authToken: String, baseDetail: TaskDetailResponse) async {
         print("🖼️ [RecordingViewModel] 等待图片生成 sessionId=\(sessionId)")
-        let maxWaits = 20  // 最多等 60 秒 (20 × 3s)
+        let maxWaits = 60  // 最多等 180 秒 (60 × 3s)，并行5张图最慢可达 120s
         for i in 0..<maxWaits {
             do {
                 try await Task.sleep(nanoseconds: 3_000_000_000)
