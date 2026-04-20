@@ -673,48 +673,91 @@ def _fetch_profile_image_from_oss(user_id: str, profile_id: str) -> Optional[Tup
 
 async def _get_profile_reference_images(session_id: str, user_id: str, db: AsyncSession) -> List[Tuple[bytes, str]]:
     """
-    根据 speaker_mapping 获取左右人物（用户/对方）的档案照片，用于图片生成参考。
-    优先从 OSS 直接读取（路径 images/{user_id}/profile_{id}/0.png），避免 API 需 JWT。
+    获取左右人物（用户/对方）的档案照片，用于图片生成参考。
+
+    策略（按优先级）：
+    1. 从 speaker_mapping 获取声纹匹配到的档案照片
+    2. 若 left_pid 未找到：直接查用户"自己"关系档案作为左侧参考
+    3. 若 right_pid 未找到：查本次会话关联的非"自己"档案（audio_session_id==session_id）作为右侧参考
+
     返回 [(left_bytes, mime), (right_bytes, mime), ...]，顺序为左侧（用户）、右侧（对方）。
     """
     result = []
     try:
+        left_pid, right_pid = None, None
+        profiles: dict = {}
+
+        # Step 1: 从 speaker_mapping 获取声纹匹配档案
         ar_q = await db.execute(
             select(AnalysisResult).where(AnalysisResult.session_id == uuid.UUID(session_id))
         )
         ar = ar_q.scalar_one_or_none()
-        if not ar or not isinstance(getattr(ar, "speaker_mapping", None), dict):
-            logger.info(f"[档案照片] session_id={session_id} 无 speaker_mapping，无法获取参考图")
-            return result
-        speaker_mapping = ar.speaker_mapping
-        profile_ids = [str(pid) for pid in speaker_mapping.values()]
-        if not profile_ids:
-            logger.info(f"[档案照片] session_id={session_id} speaker_mapping 为空")
-            return result
-        logger.info(f"[档案照片] speaker_mapping={speaker_mapping} profile_ids={profile_ids}")
-        
-        prof_q = await db.execute(
-            select(Profile).where(
-                Profile.user_id == uuid.UUID(user_id),
-                Profile.id.in_([uuid.UUID(pid) for pid in profile_ids])
+        speaker_mapping = {}
+        if ar and isinstance(getattr(ar, "speaker_mapping", None), dict):
+            speaker_mapping = ar.speaker_mapping
+
+        profile_ids_in_mapping = [str(pid) for pid in speaker_mapping.values()]
+        if profile_ids_in_mapping:
+            prof_q = await db.execute(
+                select(Profile).where(
+                    Profile.user_id == uuid.UUID(user_id),
+                    Profile.id.in_([uuid.UUID(pid) for pid in profile_ids_in_mapping])
+                )
             )
-        )
-        profiles = {str(p.id): p for p in prof_q.scalars().all()}
-        left_pid, right_pid = None, None
-        for sp, pid in speaker_mapping.items():
-            pid_str = str(pid)
-            if pid_str not in profiles:
-                continue
-            rel = getattr(profiles[pid_str], "relationship_type", "") or ""
-            if rel == "自己":
-                left_pid = pid_str
-            else:
-                right_pid = pid_str
-        if not left_pid and profile_ids:
-            left_pid = next((p for p in profile_ids if p in profiles), None)
-        if not right_pid and len(profiles) >= 2 and left_pid:
-            right_pid = next((p for p in profile_ids if p in profiles and p != left_pid), None)
-        
+            for p in prof_q.scalars().all():
+                profiles[str(p.id)] = p
+            for sp, pid in speaker_mapping.items():
+                pid_str = str(pid)
+                if pid_str not in profiles:
+                    continue
+                rel = getattr(profiles[pid_str], "relationship_type", "") or ""
+                if rel == "自己":
+                    left_pid = pid_str
+                else:
+                    right_pid = pid_str
+            # 兜底：speaker_mapping 中无"自己"时，取第一个有效档案作为左侧
+            if not left_pid and profile_ids_in_mapping:
+                left_pid = next((p for p in profile_ids_in_mapping if p in profiles), None)
+            if not right_pid and len(profiles) >= 2 and left_pid:
+                right_pid = next((p for p in profile_ids_in_mapping if p in profiles and p != left_pid), None)
+
+        # Step 2: left_pid 仍为空 → 直接查"自己"关系档案（有头像的优先）
+        if not left_pid:
+            self_q = await db.execute(
+                select(Profile).where(
+                    Profile.user_id == uuid.UUID(user_id),
+                    Profile.relationship_type == "自己",
+                    Profile.photo_url.isnot(None),
+                ).limit(1)
+            )
+            self_prof = self_q.scalar_one_or_none()
+            if self_prof:
+                left_pid = str(self_prof.id)
+                profiles[left_pid] = self_prof
+                logger.info(f"[档案照片] 兜底：从'自己'档案获取左侧参考图 profile_id={left_pid}")
+
+        # Step 3: right_pid 仍为空 → 查本次会话关联的非"自己"档案
+        if not right_pid:
+            try:
+                sess_q = await db.execute(
+                    select(Profile).where(
+                        Profile.user_id == uuid.UUID(user_id),
+                        Profile.audio_session_id == uuid.UUID(session_id),
+                        Profile.relationship_type != "自己",
+                        Profile.photo_url.isnot(None),
+                    ).limit(1)
+                )
+                sess_prof = sess_q.scalar_one_or_none()
+                if sess_prof:
+                    right_pid = str(sess_prof.id)
+                    profiles[right_pid] = sess_prof
+                    logger.info(f"[档案照片] 兜底：从会话关联档案获取右侧参考图 profile_id={right_pid} name={sess_prof.name}")
+            except Exception as _e:
+                logger.debug(f"[档案照片] 查会话关联档案失败: {_e}")
+
+        logger.info(f"[档案照片] session_id={session_id} left_pid={left_pid} right_pid={right_pid} speaker_mapping={speaker_mapping}")
+
+        # 加载照片
         for pid in [left_pid, right_pid]:
             if not pid:
                 continue
@@ -723,7 +766,7 @@ async def _get_profile_reference_images(session_id: str, user_id: str, db: Async
                 continue
             photo_url = getattr(p, "photo_url", None)
             fetched = None
-            # 优先从 OSS 直接读取（不依赖 JWT，且档案上传后 OSS 必有文件）
+            # 优先从 OSS 直接读取（不依赖 JWT）
             if USE_OSS and oss_bucket:
                 fetched = _fetch_profile_image_from_oss(user_id, pid)
             if not fetched and photo_url and photo_url.startswith(("http://", "https://")):
