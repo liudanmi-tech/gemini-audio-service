@@ -711,7 +711,7 @@ async def _get_profile_reference_images(session_id: str, user_id: str, db: Async
                 if pid_str not in profiles:
                     continue
                 rel = getattr(profiles[pid_str], "relationship_type", "") or ""
-                if rel == "自己":
+                if rel in ("自己", "Self", "self"):
                     left_pid = pid_str
                 else:
                     right_pid = pid_str
@@ -726,7 +726,7 @@ async def _get_profile_reference_images(session_id: str, user_id: str, db: Async
             self_q = await db.execute(
                 select(Profile).where(
                     Profile.user_id == uuid.UUID(user_id),
-                    Profile.relationship_type == "自己",
+                    Profile.relationship_type.in_(["自己", "Self", "self"]),
                     Profile.photo_url.isnot(None),
                 ).limit(1)
             )
@@ -743,7 +743,7 @@ async def _get_profile_reference_images(session_id: str, user_id: str, db: Async
                     select(Profile).where(
                         Profile.user_id == uuid.UUID(user_id),
                         Profile.audio_session_id == uuid.UUID(session_id),
-                        Profile.relationship_type != "自己",
+                        Profile.relationship_type.notin_(["自己", "Self", "self"]),
                         Profile.photo_url.isnot(None),
                     ).limit(1)
                 )
@@ -1869,7 +1869,7 @@ async def analyze_audio_async(session_id: str, temp_file_path: str, file_filenam
                         self_profile_id = None
                         for row in _rows:
                             rel = row[1] if len(row) > 1 else None
-                            if rel == "自己":
+                            if rel in ("自己", "Self", "self"):
                                 self_profile_id = str(row[0])
                                 break
                         logger.info(f"[声纹] session_id={session_id} 当前用户档案数 profile_count={len(profile_ids)} self_profile_id={self_profile_id}")
@@ -2213,7 +2213,7 @@ async def get_task_detail(
             )
             for row in profile_rows.all():
                 rel = getattr(row, "relationship_type", None) or (row[2] if len(row) > 2 else None)
-                if rel == "自己":
+                if rel in ("自己", "Self", "self"):
                     self_profile_id = str(getattr(row, "id", row[0]))
                     name = getattr(row, "name", None) or (row[1] if len(row) > 1 else None) or "未知"
                     self_display = f"{name}（自己）"
@@ -2711,7 +2711,7 @@ async def _generate_strategies_core(
                     _participant_profiles = [
                         {"relationship_type": p.relationship_type, "name": p.name}
                         for p in _profiles
-                        if p.relationship_type and p.relationship_type != "自己"
+                        if p.relationship_type and p.relationship_type not in ("自己", "Self", "self")
                     ]
                     logger.info(f"[策略流程] 档案关系: {[(p['name'], p['relationship_type']) for p in _participant_profiles]}")
         except Exception as _pe:
@@ -3214,7 +3214,7 @@ async def classify_scene_endpoint(
                     _reclassify_profiles = [
                         {"relationship_type": p.relationship_type, "name": p.name}
                         for p in _rp_q.scalars().all()
-                        if p.relationship_type and p.relationship_type != "自己"
+                        if p.relationship_type and p.relationship_type not in ("自己", "Self", "self")
                     ]
         except Exception:
             pass
