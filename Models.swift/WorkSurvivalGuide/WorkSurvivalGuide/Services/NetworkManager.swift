@@ -706,7 +706,7 @@ class NetworkManager {
             url,
             method: .get,
             headers: ["Authorization": "Bearer \(authToken)"],
-            requestModifier: { $0.timeoutInterval = 15 }
+            requestModifier: { $0.timeoutInterval = 30 }
         ).serializingData().response
 
         guard dataResponse.response?.statusCode == 200, let data = dataResponse.data else {
