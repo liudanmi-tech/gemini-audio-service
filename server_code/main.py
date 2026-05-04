@@ -4197,6 +4197,155 @@ async def _check_badges(user_uuid, abilities: list, db: AsyncSession) -> list:
 
     return new_badges
 
+# ────────────────────────────────────────────────────────────────────────────
+# 文字输入创建任务
+# ────────────────────────────────────────────────────────────────────────────
+
+class CreateFromTextRequest(BaseModel):
+    text: str
+    title: Optional[str] = None
+
+
+@app.post("/api/v1/tasks/create-from-text", response_model=APIResponse)
+async def create_from_text_api(
+    body: CreateFromTextRequest,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    通过文字输入创建任务，跳过音频转录，直接进行技能分析与图片生成。
+
+    生图逻辑：
+    - 用户即 Speaker_0（is_me=True），speaker_mapping 指向档案中 relationship="自己" 的 profile
+    - 文字中提到的人名通过 _extract_mentioned_people 匹配档案，用档案照片作生图参考
+    - 技能分析与音频路径完全一致
+    """
+    from datetime import datetime
+
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="文字内容不能为空")
+
+    title = body.title or f"文字记录 {datetime.now().strftime('%H:%M')}"
+    session_id = str(uuid.uuid4())
+    start_time = datetime.now()
+
+    # 创建 Session 记录
+    db_session = Session(
+        id=uuid.UUID(session_id),
+        user_id=uuid.UUID(user_id),
+        title=title,
+        start_time=start_time,
+        duration=0,
+        status="analyzing",
+        analysis_stage="text_input",
+        speaker_count=1,
+        tags=[],
+    )
+    db.add(db_session)
+    await db.commit()
+
+    logger.info(f"[文字输入] 创建任务 session_id={session_id} user_id={user_id[:8]}...")
+
+    # 后台异步分析
+    asyncio.create_task(analyze_text_async(session_id, text, user_id))
+
+    return APIResponse(
+        code=200,
+        message="提交成功",
+        data={
+            "session_id": session_id,
+            "user_id": user_id,
+            "audio_id": session_id,   # 复用字段，iOS 端兼容
+            "title": title,
+            "status": "analyzing",
+            "estimated_duration": 60,
+            "created_at": start_time.isoformat(),
+        },
+        timestamp=datetime.now().isoformat(),
+    )
+
+
+async def analyze_text_async(session_id: str, text: str, user_id: str):
+    """
+    文字输入的后台分析流程：
+    1. 查找用户自己的档案，构建 speaker_mapping
+    2. 创建 AnalysisResult（transcript 只有用户一人，is_me=True）
+    3. 调用 _generate_strategies_core（与音频路径完全相同）
+    """
+    from datetime import datetime
+
+    async with AsyncSessionLocal() as db:
+        try:
+            # 1. 查找用户自己的档案（relationship="自己"/"Self"）
+            self_profile_id = None
+            pq = await db.execute(
+                select(Profile).where(
+                    Profile.user_id == uuid.UUID(user_id),
+                    Profile.relationship_type.in_(["自己", "Self", "self"]),
+                ).limit(1)
+            )
+            self_profile = pq.scalar_one_or_none()
+            if self_profile:
+                self_profile_id = str(self_profile.id)
+                logger.info(f"[文字输入] 找到用户自己档案: {self_profile_id}")
+
+            # 2. 构建 transcript（单说话人，is_me=True）
+            transcript = [
+                {
+                    "speaker": "Speaker_0",
+                    "text": text,
+                    "is_me": True,
+                    "emotion": "neutral",
+                    "timestamp": "00:00",
+                }
+            ]
+
+            # 3. speaker_mapping：Speaker_0 → 用户自己的档案（触发 scene_image_generator 场景2逻辑）
+            speaker_mapping = {"Speaker_0": self_profile_id} if self_profile_id else {}
+
+            # 4. 创建 AnalysisResult
+            ar = AnalysisResult(
+                session_id=uuid.UUID(session_id),
+                dialogues=transcript,
+                risks=[],
+                summary=text[:300],
+                mood_score=None,
+                transcript=json.dumps(transcript, ensure_ascii=False),
+                speaker_mapping=speaker_mapping if speaker_mapping else None,
+                card_title=text[:30].rstrip("，。！？,.!?"),
+                conversation_summary="用户的文字记录",
+            )
+            db.add(ar)
+
+            # 5. 更新 session 状态
+            sq = await db.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+            sess = sq.scalar_one_or_none()
+            if sess:
+                sess.analysis_stage = "text_ready"
+                sess.speaker_count = 1
+
+            await db.commit()
+            logger.info(f"[文字输入] AnalysisResult 已创建，开始策略分析 session_id={session_id}")
+
+            # 6. 策略分析 + 图片生成（与音频路径完全一致）
+            await _generate_strategies_core(session_id, user_id, transcript, db)
+
+        except Exception as e:
+            logger.error(f"[文字输入] 异常: {e}", exc_info=True)
+            try:
+                async with AsyncSessionLocal() as db_err:
+                    sq2 = await db_err.execute(select(Session).where(Session.id == uuid.UUID(session_id)))
+                    s = sq2.scalar_one_or_none()
+                    if s:
+                        s.status = "failed"
+                        s.analysis_stage = "failed"
+                        s.error_message = str(e)[:500]
+                        await db_err.commit()
+            except Exception:
+                pass
+
+
 if __name__ == "__main__":
     import uvicorn
     # 与 Nginx proxy_pass 一致：服务器上 Nginx 代理 80 -> 8000，此处必须监听 8000

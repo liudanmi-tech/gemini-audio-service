@@ -440,6 +440,45 @@ class NetworkManager {
         }
     }
     
+    // 文字输入创建任务
+    func createFromText(text: String, title: String? = nil) async throws -> UploadResponse {
+        let token = getAuthToken()
+        guard !token.isEmpty else {
+            throw NSError(domain: "NetworkError", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录，请先登录"])
+        }
+
+        var body: [String: String] = ["text": text]
+        if let title = title { body["title"] = title }
+        let bodyData = try JSONEncoder().encode(body)
+
+        let dataResponse = await AF.request(
+            "\(baseURLForWrite)/tasks/create-from-text",
+            method: .post,
+            headers: [
+                "Content-Type": "application/json",
+                "Authorization": "Bearer \(token)"
+            ],
+            requestModifier: { req in
+                req.httpBody = bodyData
+                req.timeoutInterval = 60
+            }
+        )
+        .serializingData()
+        .response
+
+        guard let responseData = dataResponse.data else {
+            throw NSError(domain: "NetworkError", code: -1, userInfo: [NSLocalizedDescriptionKey: "服务端返回空响应"])
+        }
+
+        let response = try JSONDecoder().decode(APIResponse<UploadResponse>.self, from: responseData)
+        guard response.code == 200, let data = response.data else {
+            throw NSError(domain: "NetworkError", code: response.code,
+                          userInfo: [NSLocalizedDescriptionKey: response.message])
+        }
+        print("✅ [NetworkManager] 文字输入提交成功: \(data.sessionId)")
+        return data
+    }
+
     // 获取任务详情
     func getTaskDetail(sessionId: String, authToken: String? = nil) async throws -> TaskDetailResponse {
         // 如果使用 Mock 数据
@@ -1441,7 +1480,7 @@ class NetworkManager {
             headers: [
                 "Authorization": "Bearer \(getAuthToken())"
             ],
-            requestModifier: { $0.timeoutInterval = 60 } // 图片上传到OSS需要更长时间，增加到60秒
+            requestModifier: { $0.timeoutInterval = 120 } // 图片上传到OSS需要更长时间，增加到120秒
         )
         
         // 监听上传进度

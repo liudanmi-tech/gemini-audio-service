@@ -10,9 +10,27 @@ import SwiftUI
 struct RecordingButtonView: View {
     @ObservedObject var viewModel: RecordingViewModel
     var onUploadTap: () -> Void = {}
-    
+    var onTextInputTap: () -> Void = {}
+
     var body: some View {
         HStack(spacing: 16) {
+            // 文字输入按钮 - 毛玻璃效果
+            Button(action: onTextInputTap) {
+                ZStack {
+                    Circle()
+                        .fill(.regularMaterial)
+                        .frame(width: 48, height: 48)
+                        .overlay(
+                            Circle()
+                                .stroke(edgeBrighteningGradient, lineWidth: 2)
+                        )
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white)
+                }
+            }
+            .disabled(viewModel.isRecording || viewModel.isUploading)
+
             // 本地上传按钮 - 毛玻璃效果 + 边缘部分亮变
             Button(action: onUploadTap) {
                 ZStack {

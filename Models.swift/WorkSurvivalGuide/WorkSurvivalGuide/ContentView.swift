@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var selectedTab: TabItem = .fragments
     @StateObject private var recordingViewModel = RecordingViewModel()
     @State private var showFilePicker = false
+    @State private var showTextInput = false
     @AppStorage("onboarding_completed") private var onboardingCompleted = false
 
     var body: some View {
@@ -51,7 +52,8 @@ struct ContentView: View {
                                             Spacer()
                                             RecordingButtonView(
                                                 viewModel: recordingViewModel,
-                                                onUploadTap: { showFilePicker = true }
+                                                onUploadTap: { showFilePicker = true },
+                                                onTextInputTap: { showTextInput = true }
                                             )
                                             .padding(.trailing, 0)
                                             .padding(.bottom, 100) // 位于底部导航栏上方
@@ -95,6 +97,9 @@ struct ContentView: View {
             case .failure(let error):
                 print("❌ [ContentView] 选择文件失败: \(error)")
             }
+        }
+        .sheet(isPresented: $showTextInput) {
+            TextInputView()
         }
     }
 }
