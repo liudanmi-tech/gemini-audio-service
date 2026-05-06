@@ -947,11 +947,14 @@ def generate_image_from_prompt(
     # 固定位置规则：左侧始终为用户，右侧始终为对方，图片生成必须遵守动作主体
     position_rule = "【重要】画面中左侧人物固定为用户，右侧人物固定为对方。必须严格按照场景描述中的动作主体来绘制：谁做动作就画谁在做，不能颠倒角色。\n\n"
     if reference_images and len(reference_images) >= 1:
-        ref_desc = "第一张图为左侧人物（用户）的参考照片"
+        ref_desc = "【人物一致性要求】以下参考照片是真实人物，绘制时必须严格还原其外貌特征：\n"
+        ref_desc += "- 第一张参考图：左侧人物（用户）的真实照片，必须保留其脸型、五官比例、发型、肤色、气质。\n"
         if len(reference_images) >= 2:
-            ref_desc += "，第二张图为右侧人物（对方）的参考照片"
-        ref_desc += "。请保持人物面部与气质与参考图一致。\n\n"
+            ref_desc += "- 第二张参考图：右侧人物（对方）的真实照片，同样必须保留其脸型、五官、发型、气质。\n"
+        ref_desc += "重要：即使是插画/动画风格，人物脸部特征也必须与参考照片高度一致，让认识他们的人能一眼认出。不得随意更改人物外貌。\n\n"
         full_prompt = style_prefix + position_rule + ref_desc + prompt_body
+        # 末尾再次强调一致性（模型更易遵循靠后的指令）
+        full_prompt += "\n\n【再次强调】所有人物外貌必须与提供的参考照片保持高度一致，这是最高优先级要求。"
     else:
         full_prompt = style_prefix + position_rule + prompt_body
 
