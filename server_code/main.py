@@ -711,15 +711,24 @@ def _compress_profile_image(data: bytes, mime: str, max_size_kb: int = 300) -> T
         return (data, mime)
 
 
-def _fetch_profile_image_from_oss(user_id: str, profile_id: str) -> Optional[Tuple[bytes, str]]:
+def _fetch_profile_image_from_oss(user_id: str, profile_id: str, photo_url: Optional[str] = None) -> Optional[Tuple[bytes, str]]:
     """
     从 OSS 直接读取档案照片，用于图片生成参考（避免 API 需 JWT 的问题）。
-    路径: images/{user_id}/profile_{profile_id}/0.png
+    photo_url 不为空时，从 URL 中提取真实的 OSS session_id（上传时用随机 UUID 命名），
+    否则回退到 profile_{profile_id} 路径。
     """
     if not USE_OSS or oss_bucket is None:
         return None
     try:
-        oss_key = f"images/{user_id}/profile_{profile_id}/0.png"
+        # 从 photo_url 提取真实 OSS session_id（上传路径含随机 UUID，如 profile_f264cb3d...）
+        oss_session_id = None
+        if photo_url:
+            m = re.search(r"/images/(profile_[^/]+)/", photo_url)
+            if m:
+                oss_session_id = m.group(1)
+        if not oss_session_id:
+            oss_session_id = f"profile_{profile_id}"
+        oss_key = f"images/{user_id}/{oss_session_id}/0.png"
         obj = oss_bucket.get_object(oss_key)
         data = obj.read()
         if len(data) > 7 * 1024 * 1024:
