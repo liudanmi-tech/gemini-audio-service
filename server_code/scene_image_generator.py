@@ -281,7 +281,8 @@ async def generate_scene_images(
                     photo = None
                     if profile and fetch_profile_image_fn:
                         photo = await asyncio.to_thread(
-                            fetch_profile_image_fn, user_id, str(profile.id)
+                            fetch_profile_image_fn, user_id, str(profile.id),
+                            getattr(profile, "photo_url", None)
                         )
 
                     if photo:
@@ -299,8 +300,12 @@ async def generate_scene_images(
                 if speakers and speaker_mapping and fetch_profile_image_fn:
                     self_pid = speaker_mapping.get(speakers[0])
                     if self_pid:
+                        # 先查询档案以获取 photo_url，用于正确解析 OSS 路径
+                        _pq = await db.execute(select(Profile).where(Profile.id == _uuid.UUID(str(self_pid))))
+                        _self_prof = _pq.scalar_one_or_none()
+                        _self_photo_url = getattr(_self_prof, "photo_url", None) if _self_prof else None
                         user_photo = await asyncio.to_thread(
-                            fetch_profile_image_fn, user_id, str(self_pid)
+                            fetch_profile_image_fn, user_id, str(self_pid), _self_photo_url
                         )
                         if user_photo:
                             logger.info(f"[场景2] 已加载用户自己的档案照片")
@@ -374,10 +379,10 @@ async def generate_scene_images(
                             user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
                             ref, 3, style_key
                         ),
-                        timeout=360.0,
+                        timeout=180.0,  # 并行模式：单张超时 180s，总体最坏 180s（原串行 ~400s）
                     )
                 except asyncio.TimeoutError:
-                    logger.error(f"[场景生图] 图{i} 生成超时(360s)，跳过")
+                    logger.error(f"[场景生图] 图{i} 生成超时(180s)，跳过")
                     return None
 
             results = await asyncio.gather(

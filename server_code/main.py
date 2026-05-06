@@ -906,8 +906,8 @@ def generate_image_from_prompt(
     """
     from google.generativeai.types import HarmCategory, HarmBlockThreshold
 
-    # ── 图片生成模型：gemini-2.5-flash-image（支持多模态：风格参考图 + 档案参考图）──
-    IMAGE_GEN_MODEL = "gemini-3.1-flash-image-preview"  # Nano Banana 2
+    # ── 图片生成模型：gemini-2.5-flash-preview-image（多模态参考图 + 人物一致性）──
+    IMAGE_GEN_MODEL = "gemini-2.5-flash-preview-image-generation"
 
     model = genai.GenerativeModel(IMAGE_GEN_MODEL)
 
@@ -964,8 +964,8 @@ def generate_image_from_prompt(
         for img_bytes, mime_type in reference_images[:2]:
             contents_list.append({"mime_type": mime_type, "data": img_bytes})
         logger.info(f"[图片生成] 使用 {len(reference_images)} 张档案照片作为人物参考图")
-    # 追加 Instagram 4:5 竖版尺寸要求（放在末尾让模型最后读到，优先级最高）
-    full_prompt += "\n\n【输出尺寸】请生成 4:5 竖版比例的图片（宽:高 = 4:5，即 1080×1350px），适合 Instagram 竖版发布。"
+    # 追加 4:5 竖版尺寸要求（使用 768×960 较小尺寸，在保持比例的同时加快生成速度）
+    full_prompt += "\n\n【输出尺寸】请生成 4:5 竖版比例的图片（768×960px），适合竖版展示。"
     contents_list.append(full_prompt)
 
     for attempt in range(max_retries):
