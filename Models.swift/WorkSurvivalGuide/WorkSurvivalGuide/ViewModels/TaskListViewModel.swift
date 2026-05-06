@@ -153,13 +153,17 @@ class TaskListViewModel: ObservableObject {
         print("🔄 [TaskListViewModel] 任务ID: \(updatedTask.id)")
         print("🔄 [TaskListViewModel] 任务标题: \(updatedTask.title)")
         print("🔄 [TaskListViewModel] 任务状态: \(updatedTask.status)")
-        
+        print("🔄 [TaskListViewModel] 当前列表中的任务IDs: \(tasks.map { $0.id })")
+
         if let index = tasks.firstIndex(where: { $0.id == updatedTask.id }) {
             print("✅ [TaskListViewModel] 找到任务，索引: \(index)")
             tasks[index] = updatedTask
             print("✅ [TaskListViewModel] 任务已更新")
         } else {
-            print("⚠️ [TaskListViewModel] 未找到要更新的任务")
+            print("⚠️ [TaskListViewModel] 未找到要更新的任务，直接插入到列表顶部作为兜底")
+            // 兜底：如果任务不在列表中（可能被意外清除），直接插入到顶部确保卡片可点击
+            tasks.insert(updatedTask, at: 0)
+            print("✅ [TaskListViewModel] 任务已插入到列表顶部")
         }
     }
     

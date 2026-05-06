@@ -170,7 +170,10 @@ struct TaskListView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TaskAnalysisCompleted"))) { notification in
             if let task = notification.object as? TaskItem {
+                print("📢 [TaskListView] 收到 TaskAnalysisCompleted: id=\(task.id), status=\(task.status)")
                 viewModel.updateTask(task)
+            } else {
+                print("⚠️ [TaskListView] TaskAnalysisCompleted 类型转换失败，object=\(String(describing: notification.object))")
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("TaskStatusUpdated"))) { notification in
@@ -208,19 +211,16 @@ struct TaskListView: View {
 // 任务卡片行（用于简化复杂表达式）
 struct TaskCardRow: View {
     let task: TaskItem
-    
+
     var body: some View {
-        // 只有在已完成状态才能进入详情页
-        if task.status == .archived {
-            NavigationLink(destination: TaskDetailView(task: task)) {
-                TaskCardView(task: task)
-            }
-            .buttonStyle(PlainButtonStyle())
-        } else {
-            // 录制中或分析中状态，不能点击进入详情页
+        // 始终使用 NavigationLink 保持视图结构稳定，避免 status 变化时 SwiftUI 重建视图树
+        // archived 时启用跳转；recording/analyzing 时禁用（不可点击）
+        NavigationLink(destination: TaskDetailView(task: task)) {
             TaskCardView(task: task)
-                .opacity(0.9) // 稍微降低透明度表示不可点击
+                .opacity(task.status == .archived ? 1.0 : 0.9)
         }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(task.status != .archived)
     }
 }
 

@@ -1,0 +1,50 @@
+{
+  "identifier" : "MicLnkSubscriptions",
+  "nonRenewingSubscriptions" : [],
+  "products" : [],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_storeKitErrorEnabled" : false,
+    "_timeRate" : "MONTHLY_RENEWAL_EVERY_THIRTY_SECONDS"
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "0A3ADE0F-9A0F-46FA-807A-8D58C7F72D75",
+      "localizations" : [
+        {
+          "description" : "Unlock all Pro features",
+          "displayName" : "Pro",
+          "locale" : "en_US"
+        }
+      ],
+      "name" : "Pro",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [],
+          "codeOffers" : [],
+          "displayPrice" : "8.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "A55C17C1-DAD2-415A-847B-D066F9CE0698",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Full access to all Pro features",
+              "displayName" : "Pro Monthly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "com.miclnk.pro.monthly",
+          "referenceName" : "Pro Monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "subscriptionGroupID" : "0A3ADE0F-9A0F-46FA-807A-8D58C7F72D75",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 2,
+    "minor" : 0
+  }
+}

@@ -15,6 +15,7 @@ class RecordingViewModel: ObservableObject {
     @Published var isUploading = false
     @Published var uploadProgress: Double = 0  // 0~1，1.0 表示已发送完毕，等待服务器响应
     @Published var uploadPhaseDescription: String = "Uploading"  // "Uploading" | "Processing, please wait..."
+    @Published var showPaywall: Bool = false
     
     private let audioRecorder = AudioRecorderService.shared
     private let networkManager = NetworkManager.shared
@@ -287,13 +288,24 @@ class RecordingViewModel: ObservableObject {
                 await MainActor.run {
                     self.isUploading = false
                     self.uploadProgress = 0
-                    print("❌ [RecordingViewModel] ========== 上传/分析失败 ==========")
-                    print("❌ [RecordingViewModel] 错误类型: \(type(of: error))")
-                    print("❌ [RecordingViewModel] 错误信息: \(error.localizedDescription)")
-                    if let nsError = error as NSError? {
+                    let nsError = error as NSError
+                    if nsError.code == 429 {
+                        // 录音次数已达上限，弹出升级引导
+                        print("⚠️ [RecordingViewModel] 录音次数已达上限，显示订阅页面")
+                        self.showPaywall = true
+                        // 删除本地占位卡片
+                        if let taskId = self.currentRecordingTaskId {
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("TaskDeleted"),
+                                object: taskId
+                            )
+                        }
+                    } else {
+                        print("❌ [RecordingViewModel] ========== 上传/分析失败 ==========")
+                        print("❌ [RecordingViewModel] 错误类型: \(type(of: error))")
+                        print("❌ [RecordingViewModel] 错误信息: \(error.localizedDescription)")
                         print("❌ [RecordingViewModel] 错误域: \(nsError.domain)")
                         print("❌ [RecordingViewModel] 错误码: \(nsError.code)")
-                        print("❌ [RecordingViewModel] 用户信息: \(nsError.userInfo)")
                     }
                 }
             }
@@ -439,17 +451,25 @@ class RecordingViewModel: ObservableObject {
                 }
             } catch {
                 print("❌ [RecordingViewModel] 本地上传失败: \(error)")
-                await MainActor.run {
-                    NotificationCenter.default.post(
-                        name: NSNotification.Name("TaskAnalysisFailed"),
-                        object: taskId,
-                        userInfo: ["message": (error as NSError).localizedDescription]
-                    )
+                let nsError = error as NSError
+                if nsError.domain == "NetworkError" && nsError.code == 429 {
+                    await MainActor.run {
+                        self.showPaywall = true
+                        NotificationCenter.default.post(name: NSNotification.Name("TaskDeleted"), object: taskId)
+                    }
+                } else {
+                    await MainActor.run {
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("TaskAnalysisFailed"),
+                            object: taskId,
+                            userInfo: ["message": nsError.localizedDescription]
+                        )
+                    }
                 }
             }
         }
     }
-    
+
     // 获取文件大小（辅助方法）
     private func getFileSize(url: URL) -> Int64 {
         if let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -629,7 +649,7 @@ class RecordingViewModel: ObservableObject {
     // 等待场景图片生成完成，完成后预缓存策略+第一张图片，再发 TaskAnalysisCompleted（卡片变可点击）
     private func pollForImages(sessionId: String, authToken: String, baseDetail: TaskDetailResponse) async {
         print("🖼️ [RecordingViewModel] 等待图片生成 sessionId=\(sessionId)")
-        let maxWaits = 60  // 最多等 180 秒 (60 × 3s)，并行5张图最慢可达 120s
+        let maxWaits = 160  // 最多等 480 秒 (160 × 3s)，Gemini 生图通过代理约 240s/张
         for i in 0..<maxWaits {
             do {
                 try await Task.sleep(nanoseconds: 3_000_000_000)

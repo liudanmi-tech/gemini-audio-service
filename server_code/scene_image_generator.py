@@ -214,19 +214,19 @@ async def generate_scene_images(
 
             # ── 4. Gemini 提取场景列表 ──────────────────────────────────────
             if is_narration_mode:
-                scene_prompt = f"""分析以下用户的事后口述，识别1-5个最有画面感的场景。
+                scene_prompt = f"""分析以下用户的事后口述，识别1-3个最有画面感的场景。
 
 口述内容：
 {transcript_str}
 
 规则：
-- 场景数量1-5个，不要重复
+- 场景数量1-3个，不要重复，选最有代表性的
 - 明确描述「用户」和涉及的具体人物（保留原称呼，如张经理）在做什么
 - 描述示例："用户向张经理汇报预算情况，表情紧张"、"用户与李总监商量解决方案"
 - 若场景仅涉及用户自身，可只描述用户
 - 只返回JSON：{{"scene_count": 2, "scenes": ["场景1", "场景2"]}}"""
             else:
-                scene_prompt = f"""分析以下录音对话，识别1-5个最有画面感的场景。
+                scene_prompt = f"""分析以下录音对话，识别1-3个最有画面感的场景。
 
 对话角色说明：
 - [我] = 用户，画面中固定在左侧
@@ -236,7 +236,7 @@ async def generate_scene_images(
 {transcript_str}
 
 规则：
-- 场景数量1-5个（对话越长可提取越多，但不要重复相似场景）
+- 场景数量1-3个，选最有代表性的，不要重复相似场景
 - 每个场景必须明确说明【谁】在做【什么动作】，使用"用户"和"对方"指代（不要用Speaker_0/1）
 - 必须符合对话实际逻辑：如果是用户在向对方汇报，就写"用户正在向对方汇报"，不能颠倒
 - 描述格式示例："用户正在向对方汇报工作进展，表情认真"、"对方向用户提出质疑，用户在解释"
@@ -247,7 +247,7 @@ async def generate_scene_images(
             text = response.text.strip()
             json_match = re.search(r'\{.*\}', text, re.DOTALL)
             scenes_data = json.loads(json_match.group()) if json_match else {}
-            scenes = scenes_data.get("scenes", [])[:5]
+            scenes = scenes_data.get("scenes", [])[:3]
 
             if not scenes:
                 logger.warning(f"[场景生图] 未提取到场景, session={session_id}")
@@ -374,10 +374,10 @@ async def generate_scene_images(
                             user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
                             ref, 3, style_key
                         ),
-                        timeout=120.0,
+                        timeout=360.0,
                     )
                 except asyncio.TimeoutError:
-                    logger.error(f"[场景生图] 图{i} 生成超时(120s)，跳过")
+                    logger.error(f"[场景生图] 图{i} 生成超时(360s)，跳过")
                     return None
 
             results = await asyncio.gather(

@@ -101,6 +101,9 @@ struct ContentView: View {
         .sheet(isPresented: $showTextInput) {
             TextInputView()
         }
+        .sheet(isPresented: $recordingViewModel.showPaywall) {
+            SubscriptionView()
+        }
     }
 }
 

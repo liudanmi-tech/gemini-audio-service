@@ -964,6 +964,8 @@ def generate_image_from_prompt(
         for img_bytes, mime_type in reference_images[:2]:
             contents_list.append({"mime_type": mime_type, "data": img_bytes})
         logger.info(f"[图片生成] 使用 {len(reference_images)} 张档案照片作为人物参考图")
+    # 追加 Instagram 4:5 竖版尺寸要求（放在末尾让模型最后读到，优先级最高）
+    full_prompt += "\n\n【输出尺寸】请生成 4:5 竖版比例的图片（宽:高 = 4:5，即 1080×1350px），适合 Instagram 竖版发布。"
     contents_list.append(full_prompt)
 
     for attempt in range(max_retries):
@@ -975,7 +977,7 @@ def generate_image_from_prompt(
 
             logger.info(f"提示词长度: {len(full_prompt)} 字符 参考图数={len(contents_list)-1}")
             logger.debug(f"提示词内容: {full_prompt[:200]}...")
-            logger.info(f"调用模型: {IMAGE_GEN_MODEL} (4:3) 风格={key}")
+            logger.info(f"调用模型: {IMAGE_GEN_MODEL} (4:5竖版 Instagram) 风格={key}")
 
             start_time = time.time()
             response = model.generate_content(contents_list)
@@ -2592,7 +2594,13 @@ async def generate_strategies_async(session_id: str, user_id: str):
             if not transcript:
                 logger.error(f"对话转录数据不存在: {session_id}")
                 return
-            
+
+            # 从 AnalysisResult 读取 speaker_mapping（用于场景生图判断场景类型）
+            speaker_mapping = {}
+            if analysis_result_db and isinstance(getattr(analysis_result_db, "speaker_mapping", None), dict):
+                speaker_mapping = analysis_result_db.speaker_mapping
+            logger.info(f"[策略流程] speaker_mapping={speaker_mapping}")
+
             # 读取用户图片风格偏好（自动生成时使用），无则默认 ghibli
             from utils.user_preferences import get_user_image_style
             image_style = get_user_image_style(user_id)

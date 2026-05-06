@@ -340,13 +340,23 @@ class NetworkManager {
                 )
             }
             
+            // 如果是 429，录音次数达到上限
+            if statusCode == 429 {
+                print("⚠️ [NetworkManager] 🔴 检测到 429 状态码，录音次数已达上限")
+                throw NSError(
+                    domain: "NetworkError",
+                    code: 429,
+                    userInfo: [NSLocalizedDescriptionKey: "录音次数已达上限，请升级订阅"]
+                )
+            }
+
             // 如果是 401，立即清除登录状态
             if statusCode == 401 {
                 print("🔐 [NetworkManager] 🔴 检测到 401 状态码，立即清除登录状态")
                 Task { @MainActor in
                     AuthManager.shared.logout()
                 }
-                
+
                 // 尝试解析 FastAPI 错误格式
                 if let responseData = dataResponse.data,
                    let errorResponse = try? JSONDecoder().decode(FastAPIErrorResponse.self, from: responseData) {
@@ -1757,10 +1767,76 @@ class NetworkManager {
             throw NSError(domain: "NetworkManager", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "Delete failed"])
         }
     }
+
+    // MARK: - Subscription
+
+    func getSubscriptionStatus() async throws -> SubscriptionStatusResponse {
+        guard hasValidToken() else {
+            throw NSError(domain: "NetworkError", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        let token = getAuthToken()
+        let url = "\(baseURLForRead)/subscription/status"
+
+        let dataResponse = await AF.request(
+            url,
+            headers: ["Authorization": "Bearer \(token)"],
+            requestModifier: { $0.timeoutInterval = 15 }
+        ).serializingData().response
+
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        guard statusCode == 200, let data = dataResponse.data else {
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "HTTP \(statusCode)"])
+        }
+        return try JSONDecoder().decode(SubscriptionStatusResponse.self, from: data)
+    }
+
+    func verifyAppleTransaction(originalTransactionId: String, productId: String = "") async throws {
+        guard hasValidToken() else {
+            throw NSError(domain: "NetworkError", code: 401, userInfo: [NSLocalizedDescriptionKey: "未登录"])
+        }
+        let token = getAuthToken()
+        let url = "\(baseURLForWrite)/subscription/verify"
+        var body: [String: Any] = ["original_transaction_id": originalTransactionId]
+        if !productId.isEmpty { body["product_id"] = productId }
+
+        let dataResponse = await AF.request(
+            url,
+            method: .post,
+            parameters: body,
+            encoding: JSONEncoding.default,
+            headers: ["Authorization": "Bearer \(token)"],
+            requestModifier: { $0.timeoutInterval = 20 }
+        ).serializingData().response
+
+        let statusCode = dataResponse.response?.statusCode ?? 0
+        guard statusCode == 200 else {
+            throw NSError(domain: "NetworkError", code: statusCode,
+                          userInfo: [NSLocalizedDescriptionKey: "Verify failed HTTP \(statusCode)"])
+        }
+    }
 }
 
 // 空响应类型（用于DELETE等不需要返回数据的请求）
 struct EmptyResponse: Codable {
+}
+
+// MARK: - Subscription Models
+
+struct SubscriptionStatusResponse: Codable {
+    let tier: String
+    let expiresAt: String?
+    let monthlyRecordingCount: Int
+    let monthlyLimit: Int
+    let imagesPerRecording: Int
+
+    enum CodingKeys: String, CodingKey {
+        case tier
+        case expiresAt = "expires_at"
+        case monthlyRecordingCount = "monthly_recording_count"
+        case monthlyLimit = "monthly_limit"
+        case imagesPerRecording = "images_per_recording"
+    }
 }
 
 // MARK: - Custom Skill Models
