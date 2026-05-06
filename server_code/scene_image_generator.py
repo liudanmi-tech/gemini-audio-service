@@ -377,7 +377,7 @@ async def generate_scene_images(
                             generate_image_fn,
                             scene_with_profile,
                             user_id, session_id, 1000 + i,  # index 1000+ 避免与技能图片冲突
-                            ref, 3, style_key
+                            ref, 1, style_key  # 并行模式：不重试，失败直接跳过
                         ),
                         timeout=180.0,  # 并行模式：单张超时 180s，总体最坏 180s（原串行 ~400s）
                     )
