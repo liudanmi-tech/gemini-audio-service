@@ -916,8 +916,8 @@ def generate_image_from_prompt(
     from google.generativeai.types import HarmCategory, HarmBlockThreshold
     from google.api_core.exceptions import ClientError
 
-    # ── 图片生成模型：gemini-2.5-flash-preview-image（多模态参考图 + 人物一致性）──
-    IMAGE_GEN_MODEL = "gemini-2.5-flash-preview-image-generation"
+    # ── 图片生成模型：gemini-2.5-flash-image（代理支持，多模态参考图）──
+    IMAGE_GEN_MODEL = "gemini-2.5-flash-image"
 
     model = genai.GenerativeModel(IMAGE_GEN_MODEL)
 
