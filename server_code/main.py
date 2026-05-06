@@ -914,6 +914,7 @@ def generate_image_from_prompt(
         图片 URL 或 Base64，失败返回 None
     """
     from google.generativeai.types import HarmCategory, HarmBlockThreshold
+    from google.api_core.exceptions import ClientError
 
     # ── 图片生成模型：gemini-2.5-flash-preview-image（多模态参考图 + 人物一致性）──
     IMAGE_GEN_MODEL = "gemini-2.5-flash-preview-image-generation"
