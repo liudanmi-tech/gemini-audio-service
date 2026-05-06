@@ -1005,7 +1005,33 @@ def generate_image_from_prompt(
             if not image_bytes:
                 logger.warning("⚠️ 响应中没有找到图片数据")
                 return None
-            
+
+            # ── 强制裁剪为 4:5 竖版（模型输出比例不稳定，post-process 保证一致）──
+            try:
+                from PIL import Image as _PIL
+                import io as _io
+                _img = _PIL.open(_io.BytesIO(image_bytes))
+                _w, _h = _img.size
+                _target_ratio = 4 / 5          # 宽:高 = 4:5
+                _cur_ratio = _w / _h
+                if abs(_cur_ratio - _target_ratio) > 0.02:  # 偏差超过 2% 才裁剪
+                    if _cur_ratio > _target_ratio:          # 太宽 → 裁两侧
+                        _new_w = int(_h * _target_ratio)
+                        _left = (_w - _new_w) // 2
+                        _img = _img.crop((_left, 0, _left + _new_w, _h))
+                    else:                                    # 太高 → 裁上下
+                        _new_h = int(_w / _target_ratio)
+                        _top = (_h - _new_h) // 2
+                        _img = _img.crop((0, _top, _w, _top + _new_h))
+                    buf = _io.BytesIO()
+                    _img.save(buf, format="PNG")
+                    image_bytes = buf.getvalue()
+                    logger.info(f"✅ 裁剪为4:5竖版: {_w}x{_h} → {_img.size[0]}x{_img.size[1]}")
+                else:
+                    logger.info(f"✅ 比例已符合4:5，无需裁剪: {_w}x{_h}")
+            except Exception as _crop_e:
+                logger.warning(f"⚠️ 图片裁剪失败，使用原图: {_crop_e}")
+
             # 尝试上传到 OSS
             if USE_OSS and oss_bucket is not None:
                 logger.info(f"尝试上传图片到 OSS...")
