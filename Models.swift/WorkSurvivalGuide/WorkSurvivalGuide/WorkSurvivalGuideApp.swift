@@ -9,25 +9,27 @@ import SwiftUI
 
 @main
 struct WorkSurvivalGuideApp: App {
+    init() {
+        _ = SubscriptionManager.shared
+    }
+
     var body: some Scene {
         WindowGroup {
             SplashCoordinator()
-                .task {
-                    // 首帧渲染后再初始化，避免阻塞启动
-                    _ = SubscriptionManager.shared
-                }
         }
     }
 }
 
+/// ZStack 叠加：ContentView 立即在后台初始化，开屏图覆盖其上
 struct SplashCoordinator: View {
-    @State private var splashDone = false
+    @State private var showSplash = true
 
     var body: some View {
-        if splashDone {
+        ZStack {
             ContentView()
-        } else {
-            SplashScreenView(onFinish: { splashDone = true })
+            if showSplash {
+                SplashScreenView(onFinish: { showSplash = false })
+            }
         }
     }
 }
@@ -56,9 +58,7 @@ struct SplashScreenView: View {
         .ignoresSafeArea()
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                withAnimation(.easeOut(duration: 0.4)) {
-                    onFinish()
-                }
+                onFinish()  // 直接消失，无动画
             }
         }
     }
