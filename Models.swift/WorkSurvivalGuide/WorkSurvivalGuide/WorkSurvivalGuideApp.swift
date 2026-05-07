@@ -20,7 +20,6 @@ struct WorkSurvivalGuideApp: App {
     }
 }
 
-/// 启动协调器：先展示开屏图，完成后切换到 ContentView
 struct SplashCoordinator: View {
     @State private var splashDone = false
 
@@ -36,13 +35,39 @@ struct SplashCoordinator: View {
 struct SplashScreenView: View {
     let onFinish: () -> Void
 
+    private var splashImage: UIImage? {
+        if let img = UIImage(named: "LaunchImage") { return img }
+        if let img = UIImage(named: "kaiping2") { return img }
+        if let img = UIImage(named: "kaiping2.png") { return img }
+        if let path = Bundle.main.path(forResource: "kaiping2", ofType: "png"),
+           let img = UIImage(contentsOfFile: path) { return img }
+        return nil
+    }
+
     var body: some View {
-        Color.red
-            .ignoresSafeArea()
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                    onFinish()
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let img = splashImage {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .ignoresSafeArea()
+            } else {
+                // 调试：显示 bundle 内所有 PNG 文件名
+                VStack(spacing: 8) {
+                    Text("图片未找到").foregroundColor(.white).font(.headline)
+                    let pngs = Bundle.main.urls(forResourcesWithExtension: "png", subdirectory: nil) ?? []
+                    ForEach(pngs, id: \.self) { url in
+                        Text(url.lastPathComponent).foregroundColor(.yellow).font(.caption)
+                    }
                 }
             }
+        }
+        .ignoresSafeArea()
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
+                onFinish()
+            }
+        }
     }
 }
