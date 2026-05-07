@@ -38,9 +38,27 @@ struct WorkSurvivalGuideApp: App {
 
 struct SplashView: View {
     var body: some View {
-        Image(uiImage: UIImage(named: "kaiping2.png") ?? UIImage())
-            .resizable()
-            .scaledToFill()
-            .ignoresSafeArea()
+        ZStack {
+            Color.black.ignoresSafeArea()
+            if let img = UIImage(named: "kaiping2.png")
+                ?? UIImage(named: "kaiping2")
+                ?? UIImage(named: "LaunchImage") {
+                Image(uiImage: img)
+                    .resizable()
+                    .scaledToFill()
+                    .ignoresSafeArea()
+            }
+        }
+        .onAppear {
+            let names = ["kaiping2.png", "kaiping2", "LaunchImage"]
+            for n in names {
+                print("[Splash] UIImage(named:\"\(n)\") = \(UIImage(named: n) != nil ? "✅" : "❌")")
+            }
+            if let path = Bundle.main.path(forResource: "kaiping2", ofType: "png") {
+                print("[Splash] Bundle path ✅: \(path)")
+            } else {
+                print("[Splash] Bundle path ❌ not found")
+            }
+        }
     }
 }
