@@ -37,29 +37,12 @@ struct SplashScreenView: View {
     let onFinish: () -> Void
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-            if let img = loadSplashImage() {
-                Image(uiImage: img)
-                    .resizable()
-                    .scaledToFill()
-                    .ignoresSafeArea()
+        Color.red
+            .ignoresSafeArea()
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    onFinish()
+                }
             }
-        }
-        .ignoresSafeArea()
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                onFinish()
-            }
-        }
-    }
-
-    private func loadSplashImage() -> UIImage? {
-        if let img = UIImage(named: "kaiping2.png") { return img }
-        if let img = UIImage(named: "kaiping2") { return img }
-        if let img = UIImage(named: "LaunchImage") { return img }
-        if let path = Bundle.main.path(forResource: "kaiping2", ofType: "png"),
-           let img = UIImage(contentsOfFile: path) { return img }
-        return nil
     }
 }
