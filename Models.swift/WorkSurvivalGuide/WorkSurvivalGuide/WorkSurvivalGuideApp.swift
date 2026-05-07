@@ -9,13 +9,13 @@ import SwiftUI
 
 @main
 struct WorkSurvivalGuideApp: App {
-    init() {
-        _ = SubscriptionManager.shared
-    }
-
     var body: some Scene {
         WindowGroup {
             SplashCoordinator()
+                .task {
+                    // 首帧渲染后再初始化，避免阻塞启动
+                    _ = SubscriptionManager.shared
+                }
         }
     }
 }
