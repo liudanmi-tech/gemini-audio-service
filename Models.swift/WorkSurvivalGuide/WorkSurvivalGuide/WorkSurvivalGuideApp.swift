@@ -38,7 +38,6 @@ struct SplashScreenView: View {
     private var splashImage: UIImage? {
         if let img = UIImage(named: "LaunchImage") { return img }
         if let img = UIImage(named: "kaiping2") { return img }
-        if let img = UIImage(named: "kaiping2.png") { return img }
         if let path = Bundle.main.path(forResource: "kaiping2", ofType: "png"),
            let img = UIImage(contentsOfFile: path) { return img }
         return nil
@@ -52,21 +51,14 @@ struct SplashScreenView: View {
                     .resizable()
                     .scaledToFill()
                     .ignoresSafeArea()
-            } else {
-                // 调试：显示 bundle 内所有 PNG 文件名
-                VStack(spacing: 8) {
-                    Text("图片未找到").foregroundColor(.white).font(.headline)
-                    let pngs = Bundle.main.urls(forResourcesWithExtension: "png", subdirectory: nil) ?? []
-                    ForEach(pngs, id: \.self) { url in
-                        Text(url.lastPathComponent).foregroundColor(.yellow).font(.caption)
-                    }
-                }
             }
         }
         .ignoresSafeArea()
         .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) {
-                onFinish()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                withAnimation(.easeOut(duration: 0.4)) {
+                    onFinish()
+                }
             }
         }
     }
