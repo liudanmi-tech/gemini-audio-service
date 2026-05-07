@@ -11,6 +11,7 @@ import SwiftUI
 struct WorkSurvivalGuideApp: App {
     init() {
         _ = SubscriptionManager.shared
+        Task { await ImageStyleRepository.shared.fetchIfNeeded() }
     }
 
     var body: some Scene {

@@ -859,15 +859,41 @@ async def _get_profile_reference_images(session_id: str, user_id: str, db: Async
     return result
 
 
-# 图片风格映射：客户端传入 style_key，用于策略图片生成（扩充版，提高风格辨识度）
-IMAGE_STYLE_MAP = {
+# ── 图片风格热更新：从 styles.json 加载，支持运行时 reload ────────────────────
+_STYLES_JSON_PATH = Path(__file__).parent / "styles.json"
+
+# 内存中的风格列表（完整对象，供 API 端点返回给客户端）
+_STYLES_LIST: list = []
+
+# 图片风格映射：style_key -> prompt_keywords，供图片生成函数使用
+IMAGE_STYLE_MAP: dict = {}
+
+
+def _load_styles_from_file() -> bool:
+    """从 styles.json 加载风格数据到内存，返回是否成功。"""
+    global _STYLES_LIST, IMAGE_STYLE_MAP
+    try:
+        with open(_STYLES_JSON_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        styles = [s for s in data.get("styles", []) if s.get("enabled", True)]
+        styles.sort(key=lambda s: s.get("sort_order", 999))
+        _STYLES_LIST = styles
+        IMAGE_STYLE_MAP = {s["id"]: s["prompt_keywords"] for s in styles}
+        logger.info(f"[ImageStyles] 已从 styles.json 加载 {len(styles)} 种风格（版本 {data.get('version', '?')}）")
+        return True
+    except Exception as e:
+        logger.error(f"[ImageStyles] 加载 styles.json 失败: {e}，使用内置兜底数据")
+        return False
+
+
+# 兜底内置映射（styles.json 不可用时使用）
+_IMAGE_STYLE_MAP_FALLBACK = {
     "ghibli": "宫崎骏吉卜力动画风格：温暖自然色调、柔和手绘笔触、细腻光影、治愈系氛围。类似《龙猫》《千与千寻》的质感与色彩。",
     "shinkai": "新海诚动画风格：高饱和蓝天、体积云与光线穿透、水面与玻璃反光、铁路与城镇。《你的名字》《天气之子》式的浪漫唯美画面。",
     "pixar": "皮克斯 3D 动画风格：圆润角色建模、柔和体积光、细腻 PBR 材质、情感化表情。类似《寻梦环游记》《心灵奇旅》的照明与质感。",
     "cyberpunk": "《赛博朋克2077》夜之城风格：主色调霓虹黄与青蓝，高对比暗部与霓虹高光。雨夜街道、霓虹招牌、义体与全息投影。脏乱与光鲜并存，电影级光影。",
     "watercolor": "水彩插画风格：晕染边缘、透明叠色、留白与纸纹、清新自然。类似儿童绘本或插画集的水彩质感。",
     "ukiyoe": "日式浮世绘风格：平面构图、黑色勾线描边、传统配色（靛蓝、朱红、浅绿）。葛饰北斋或歌川广重的经典浮世绘美感。",
-    # ── 新增 8 种风格 ──────────────────────────────────────────────────────────
     "clay": "粘土定格动画风格：圆润立体的粘土质感、手工捏制纹理、柔和工作室灯光。类似Aardman《超级无敌掌门狗》的温暖幽默感，人物圆润可爱，背景精细手工感。角色表情生动，每个细节都有手工温度。",
     "felt": "毛毡布艺风格：布料纤维质感、手工缝制细节、温暖饱和色彩。类似北欧手工艺品的温馨触感，边缘有轻微毛绒感，像一幅手工缝制的艺术品。色彩饱满柔和，充满手作温度。",
     "noir_manga": "浦泽直树写实漫画风格：极度写实的人物面孔、细腻心理刻画、繁复城市背景、精细交叉排线光影。类似《怪物》《20世纪少年》的沉重叙事质感，黑白强对比，人物眼神深邃复杂。",
@@ -876,7 +902,6 @@ IMAGE_STYLE_MAP = {
     "jojo": "荒木飞吕彦JoJo漫画风格：夸张戏剧性pose、时尚杂志感构图、装饰性花纹背景、类文艺复兴雕塑质感。强烈的个人能力觉醒宣言感，色彩大胆，线条张力十足。",
     "toriyama": "鸟山明龙珠热血漫画风格：圆润干净的线条、活泼动感的动作、夸张的表情与特效、明快色彩。类似《龙珠》《Dr.SLUMP》的少年热血感，角色充满活力，战斗特效震撼。",
     "clamp": "CLAMP四人组漫画风格：极细长的人体比例、华丽繁复的服装细节、唯美命运感构图、精致的眼睛与发丝。类似《X战记》《圣传》的史诗唯美感，线条优雅，背景装饰性强。",
-    # ─────────────────────────────────────────────────────────────────────────
     "line_art": "极简黑白线稿风格：纯黑白、细线条勾勒、大量留白、极少阴影。类似漫画分镜或手绘草图。",
     "steampunk": "蒸汽朋克风格：铜黄机械、齿轮管道、维多利亚时代服饰、复古工业美学。蒸汽机、飞艇与齿轮的复古科幻感。",
     "pop_art": "波普艺术风格：粗黑轮廓线、高饱和纯色块、网点纹理、强对比。类似安迪·沃霍尔或 Roy Lichtenstein 的波普美感。",
@@ -887,6 +912,10 @@ IMAGE_STYLE_MAP = {
     "chinese_ink": "中国水墨画风格：墨分五色（焦浓重淡清）、宣纸晕染、大量留白、写意笔触。传统山水或人物水墨的淡雅诗意。",
     "storybook": "欧洲童话绘本风格：柔和水彩、复古装帧感、梦幻氛围。类似《小王子》插图的温馨与幻想。",
 }
+
+# 启动时加载；失败则使用兜底
+if not _load_styles_from_file():
+    IMAGE_STYLE_MAP = _IMAGE_STYLE_MAP_FALLBACK
 
 
 def generate_image_from_prompt(
@@ -3604,29 +3633,42 @@ async def get_emotion_trend(
 
 
 @app.get("/api/v1/image-styles")
-async def get_image_styles(
-    db: AsyncSession = Depends(get_db),
-    _: str = Depends(get_current_user_id),
-):
-    """返回所有图片风格列表，按 sort_order 排序，数据来自 prompt_templates 表。"""
+async def get_image_styles():
+    """返回所有图片风格列表（无需 JWT），数据来自 styles.json，支持热更新。"""
+    styles = _STYLES_LIST if _STYLES_LIST else [
+        {"id": k, "name": k, "name_en": k, "prompt_keywords": v,
+         "accent_color": "#888888", "sort_order": i + 1, "enabled": True}
+        for i, (k, v) in enumerate(_IMAGE_STYLE_MAP_FALLBACK.items())
+    ]
+    return APIResponse(
+        code=200,
+        message="success",
+        data={"version": _get_styles_version(), "styles": styles, "total": len(styles)},
+        timestamp=datetime.now().isoformat(),
+    )
+
+
+def _get_styles_version() -> str:
+    """读取 styles.json 的 version 字段，失败返回空串。"""
     try:
-        result = await db.execute(
-            text("SELECT style_key, name, sort_order FROM prompt_templates ORDER BY sort_order")
-        )
-        rows = result.fetchall()
-        styles = [
-            {"style_key": r.style_key, "name": r.name, "sort_order": r.sort_order}
-            for r in rows
-        ]
-        return APIResponse(
-            code=200,
-            message="success",
-            data={"styles": styles, "total": len(styles)},
-            timestamp=datetime.now().isoformat(),
-        )
-    except Exception as e:
-        logger.error(f"获取图片风格列表失败: {e}")
-        raise HTTPException(status_code=500, detail=f"获取图片风格列表失败: {str(e)}")
+        with open(_STYLES_JSON_PATH, "r", encoding="utf-8") as f:
+            return json.load(f).get("version", "")
+    except Exception:
+        return ""
+
+
+@app.post("/api/v1/image-styles/reload")
+async def reload_image_styles(_: str = Depends(get_current_user_id)):
+    """热重载 styles.json（需要 JWT），无需重启服务即可更新风格数据。"""
+    ok = _load_styles_from_file()
+    if not ok:
+        raise HTTPException(status_code=500, detail="styles.json 加载失败，请检查文件格式")
+    return APIResponse(
+        code=200,
+        message="reload success",
+        data={"total": len(_STYLES_LIST), "version": _get_styles_version()},
+        timestamp=datetime.now().isoformat(),
+    )
 
 
 @app.get("/api/v1/sessions/major-events")

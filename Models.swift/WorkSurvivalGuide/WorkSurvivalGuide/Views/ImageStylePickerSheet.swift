@@ -10,17 +10,18 @@ import SwiftUI
 struct ImageStylePickerSheet: View {
     @Binding var selectedStyleId: String
     @Environment(\.dismiss) private var dismiss
-    
+    @ObservedObject private var styleRepo = ImageStyleRepository.shared
+
     private let columns = [
         GridItem(.flexible(), spacing: 12),
         GridItem(.flexible(), spacing: 12)
     ]
-    
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(ImageStylePresets.all) { style in
+                    ForEach(styleRepo.styles) { style in
                         StyleCard(
                             style: style,
                             isSelected: selectedStyleId == style.id
