@@ -674,8 +674,8 @@ def _compress_profile_image(data: bytes, mime: str, max_size_kb: int = 300) -> T
         elif img.mode != 'RGB':
             img = img.convert('RGB')
 
-        # 调整尺寸（长边不超过 1024px）
-        max_dimension = 1024
+        # 调整尺寸（长边不超过 512px，减少 input token，加快生成）
+        max_dimension = 512
         width, height = img.size
         if max(width, height) > max_dimension:
             if width > height:
@@ -977,8 +977,8 @@ def generate_image_from_prompt(
         for img_bytes, mime_type in reference_images[:2]:
             contents_list.append({"mime_type": mime_type, "data": img_bytes})
         logger.info(f"[图片生成] 使用 {len(reference_images)} 张档案照片作为人物参考图")
-    # 追加 4:5 竖版尺寸要求（使用 768×960 较小尺寸，在保持比例的同时加快生成速度）
-    full_prompt += "\n\n【输出尺寸】请生成 4:5 竖版比例的图片（768×960px），适合竖版展示。"
+    # 追加 4:5 竖版尺寸要求（使用 512×640 小尺寸，加快生成速度，客户端可放大）
+    full_prompt += "\n\n【输出尺寸】请生成 4:5 竖版比例的图片（512×640px），适合竖版展示。"
     contents_list.append(full_prompt)
 
     for attempt in range(max_retries):
