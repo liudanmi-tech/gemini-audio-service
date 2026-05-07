@@ -155,9 +155,9 @@ struct TaskListView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .onAppear {
-            // ViewModel.init() 已发起请求；这里只处理 tab 切换回来后的刷新
-            // loadTasks() 内部会根据 hasLoaded 决定是否跳过（已加载过则不重复请求）
-            if !viewModel.isLoading {
+            // hasLoaded=false 时请求（包含：无缓存首次加载、有缓存需后台刷新两种情况）
+            // hasLoaded=true 时跳过（server 已成功响应过，数据是最新的）
+            if !viewModel.hasLoaded && !viewModel.isLoading {
                 viewModel.loadTasks()
             }
         }

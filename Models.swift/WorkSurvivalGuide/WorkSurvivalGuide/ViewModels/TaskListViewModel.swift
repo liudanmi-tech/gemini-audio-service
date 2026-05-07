@@ -16,7 +16,7 @@ class TaskListViewModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let networkManager = NetworkManager.shared
-    private var hasLoaded = false // 记录是否已经加载过数据
+    private(set) var hasLoaded = false // 记录是否已经加载过数据（服务器成功响应后置 true）
     private var loadingTask: Task<Void, Never>? // 当前加载任务，用于取消重复请求
 
     // MARK: - 磁盘缓存
@@ -45,8 +45,8 @@ class TaskListViewModel: ObservableObject {
 
     private init() {
         loadFromCache() // 冷启动立即读取磁盘缓存，无需等待网络
-        // 在 ViewModel 创建时就发起请求（比等待 View.onAppear 更早，缩短首次等待）
-        loadTasks()
+        // 注意：不在 init() 里调用 loadTasks()，由 TaskListView.onAppear 负责触发
+        // 避免 init() + onAppear 双重调用导致后者取消前者请求（共 22 秒以上）
     }
     
     // 加载任务列表
