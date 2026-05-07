@@ -38,7 +38,7 @@ struct WorkSurvivalGuideApp: App {
 
 struct SplashView: View {
     var body: some View {
-        Image("kaiping2")
+        Image(uiImage: UIImage(named: "kaiping2.png") ?? UIImage())
             .resizable()
             .scaledToFill()
             .ignoresSafeArea()
