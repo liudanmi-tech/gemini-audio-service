@@ -15,8 +15,10 @@ struct ContentView: View {
     @State private var showFilePicker = false
     @State private var showTextInput = false
     @AppStorage("onboarding_completed") private var onboardingCompleted = false
+    @State private var showSplash = true
 
     var body: some View {
+        ZStack {
         Group {
             if authManager.isLoggedIn {
                 NavigationStack {
@@ -104,6 +106,30 @@ struct ContentView: View {
         .sheet(isPresented: $recordingViewModel.showPaywall) {
             SubscriptionView()
         }
+
+        // 开屏图覆盖在最上层
+        if showSplash {
+            ZStack {
+                Color.black.ignoresSafeArea()
+                if let img = UIImage(named: "kaiping2.png")
+                    ?? UIImage(named: "kaiping2")
+                    ?? Bundle.main.path(forResource: "kaiping2", ofType: "png").flatMap(UIImage.init(contentsOfFile:)) {
+                    Image(uiImage: img)
+                        .resizable()
+                        .scaledToFill()
+                        .ignoresSafeArea()
+                }
+            }
+            .ignoresSafeArea()
+            .onAppear {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                    withAnimation(.easeOut(duration: 0.4)) {
+                        showSplash = false
+                    }
+                }
+            }
+        }
+        } // ZStack end
     }
 }
 
