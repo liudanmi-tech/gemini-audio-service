@@ -107,7 +107,9 @@ class ImageStyleRepository: ObservableObject {
     }
 
     private func buildURL() -> URL? {
-        let base = NetworkManager.shared.getBaseURL()
+        // 风格列表是全局配置，固定走新加坡主节点（writeBaseURL），
+        // 不走北京只读节点，避免北京节点未部署/停机时拉取失败。
+        let base = AppConfig.shared.writeBaseURL
         let apiBase = base.hasSuffix("/api/v1") ? String(base.dropLast(7)) : base
         return URL(string: "\(apiBase)/api/v1/image-styles")
     }
