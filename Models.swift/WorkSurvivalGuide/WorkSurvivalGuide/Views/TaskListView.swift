@@ -155,8 +155,9 @@ struct TaskListView: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .onAppear {
-            // 只在数据为空且不在加载中时才加载
-            if viewModel.tasks.isEmpty && !viewModel.isLoading {
+            // ViewModel.init() 已发起请求；这里只处理 tab 切换回来后的刷新
+            // loadTasks() 内部会根据 hasLoaded 决定是否跳过（已加载过则不重复请求）
+            if !viewModel.isLoading {
                 viewModel.loadTasks()
             }
         }

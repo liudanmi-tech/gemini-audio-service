@@ -45,6 +45,8 @@ class TaskListViewModel: ObservableObject {
 
     private init() {
         loadFromCache() // 冷启动立即读取磁盘缓存，无需等待网络
+        // 在 ViewModel 创建时就发起请求（比等待 View.onAppear 更早，缩短首次等待）
+        loadTasks()
     }
     
     // 加载任务列表
