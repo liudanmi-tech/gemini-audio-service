@@ -79,6 +79,11 @@ struct SubscriptionView: View {
         .onChange(of: manager.isPro) { newValue in
             if newValue { dismiss() }
         }
+        .task {
+            if manager.products.isEmpty {
+                await manager.loadProducts()
+            }
+        }
     }
 
     // MARK: - Feature rows

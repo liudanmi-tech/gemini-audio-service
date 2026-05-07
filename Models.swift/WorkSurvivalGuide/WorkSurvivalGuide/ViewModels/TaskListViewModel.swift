@@ -10,17 +10,41 @@ import Combine
 
 class TaskListViewModel: ObservableObject {
     static let shared = TaskListViewModel()
-    
+
     @Published var tasks: [TaskItem] = []
     @Published var isLoading = false
     @Published var errorMessage: String?
-    
+
     private let networkManager = NetworkManager.shared
     private var hasLoaded = false // 记录是否已经加载过数据
     private var loadingTask: Task<Void, Never>? // 当前加载任务，用于取消重复请求
-    
+
+    // MARK: - 磁盘缓存
+    private static var cacheFileURL: URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("tasks_cache.json")
+    }
+
+    private func loadFromCache() {
+        guard let url = Self.cacheFileURL,
+              let data = try? Data(contentsOf: url),
+              let cached = try? JSONDecoder().decode([TaskItem].self, from: data) else { return }
+        tasks = cached
+        print("✅ [TaskListViewModel] 磁盘缓存加载完成，任务数量: \(cached.count)")
+    }
+
+    private func saveToCache() {
+        guard let url = Self.cacheFileURL,
+              let data = try? JSONEncoder().encode(tasks) else { return }
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func clearCache() {
+        if let url = Self.cacheFileURL { try? FileManager.default.removeItem(at: url) }
+    }
+
     private init() {
-        // 私有初始化器，确保单例模式
+        loadFromCache() // 冷启动立即读取磁盘缓存，无需等待网络
     }
     
     // 加载任务列表
@@ -65,7 +89,8 @@ class TaskListViewModel: ObservableObject {
                     
                     self.isLoading = false
                     self.hasLoaded = true
-                    
+                    self.saveToCache() // 持久化到磁盘，供下次冷启动使用
+
                     let totalTime = Date().timeIntervalSince(loadStartTime)
                     print("⏱️ [TaskListViewModel] ========== 任务列表加载完成 ==========")
                     print("⏱️ [TaskListViewModel] 总耗时: \(String(format: "%.3f", totalTime))秒")
@@ -101,6 +126,7 @@ class TaskListViewModel: ObservableObject {
         hasLoaded = false
         isLoading = false
         errorMessage = nil
+        clearCache()
     }
 
     // 刷新任务列表（强制刷新）
@@ -121,7 +147,8 @@ class TaskListViewModel: ObservableObject {
                 // 合并任务列表，保留已有任务的 summary 字段（如果 API 返回的任务没有 summary）
                 self.tasks = self.mergeTasks(apiTasks: response.sessions)
                 self.isLoading = false
-                
+                self.saveToCache()
+
                 // 对于archived状态且没有summary的任务，异步获取详情补充summary
                 self.loadMissingSummaries()
             }

@@ -40,8 +40,7 @@ class SubscriptionManager: ObservableObject {
         transactionListenerTask = listenForTransactions()
 
         Task {
-            await loadProducts()
-            await refreshFromBackend()
+            await refreshFromBackend() // loadProducts() 延迟到打开 Paywall 时调用，避免启动时触发 StoreKit 网络请求
         }
     }
 
@@ -49,7 +48,7 @@ class SubscriptionManager: ObservableObject {
         transactionListenerTask?.cancel()
     }
 
-    // MARK: - 加载 App Store 产品列表
+    // MARK: - 加载 App Store 产品列表（在打开 Paywall 时调用，避免启动时触发 StoreKit 网络请求）
 
     func loadProducts() async {
         do {
