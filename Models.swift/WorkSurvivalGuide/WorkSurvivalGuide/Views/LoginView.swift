@@ -369,13 +369,13 @@ struct PrivacyFooterView: View {
                 .font(.system(size: 12))
                 .foregroundColor(.white.opacity(0.35))
             HStack(spacing: 4) {
-                Link("Privacy Policy", destination: URL(string: "https://your-domain.com/privacy")!)
+                Link("Privacy Policy", destination: URL(string: "http://47.79.254.213/static/privacy.html")!)
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.5))
                 Text("and")
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.35))
-                Link("Terms of Service", destination: URL(string: "https://your-domain.com/terms")!)
+                Link("Terms of Service", destination: URL(string: "http://47.79.254.213/static/terms.html")!)
                     .font(.system(size: 12))
                     .foregroundColor(.white.opacity(0.5))
             }
