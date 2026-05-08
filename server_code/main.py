@@ -4435,6 +4435,103 @@ async def analyze_text_async(session_id: str, text: str, user_id: str):
                 pass
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# 订阅系统
+# ──────────────────────────────────────────────────────────────────────────────
+
+_PRODUCT_TIER_MAP = {
+    "com.miclnk.pro.monthly": ("pro", 31),
+}
+
+_TIER_LIMITS = {
+    "free": {"monthly_limit": 3,  "images_per_recording": 1},
+    "pro":  {"monthly_limit": 30, "images_per_recording": 3},
+}
+
+
+@app.get("/api/v1/subscription/status")
+async def get_subscription_status(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """返回当前用户订阅状态（客户端直接解码，不套 APIResponse）"""
+    from datetime import timezone as _tz, timedelta as _td
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    tier = (getattr(user, "subscription_tier", None) or "free")
+    expires_at = getattr(user, "subscription_expires_at", None)
+
+    # 过期检查
+    if tier == "pro" and expires_at:
+        exp = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=_tz.utc)
+        if exp < datetime.now(_tz.utc):
+            tier = "free"
+
+    limits = _TIER_LIMITS.get(tier, _TIER_LIMITS["free"])
+
+    # 本月录音次数：从 sessions 表实时统计
+    now = datetime.now(_tz.utc)
+    month_start = datetime(now.year, now.month, 1, tzinfo=_tz.utc)
+    cnt = await db.execute(
+        select(func.count(Session.id)).where(
+            Session.user_id == uuid.UUID(user_id),
+            Session.created_at >= month_start,
+            Session.status.notin_(["failed"])
+        )
+    )
+    monthly_count = cnt.scalar() or 0
+
+    return {
+        "tier": tier,
+        "expires_at": expires_at.isoformat() if expires_at else None,
+        "monthly_recording_count": monthly_count,
+        "monthly_limit": limits["monthly_limit"],
+        "images_per_recording": limits["images_per_recording"],
+    }
+
+
+@app.post("/api/v1/subscription/verify")
+async def verify_subscription(
+    request: Request,
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """接收 Apple original_transaction_id，更新订阅 tier（信任客户端，后续可加 Apple 服务端验证）"""
+    from datetime import timezone as _tz, timedelta as _td
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    original_transaction_id = body.get("original_transaction_id", "")
+    product_id = body.get("product_id", "")
+
+    if not original_transaction_id:
+        raise HTTPException(status_code=400, detail="original_transaction_id is required")
+
+    tier_info = _PRODUCT_TIER_MAP.get(product_id)
+    if not tier_info:
+        raise HTTPException(status_code=400, detail=f"Unknown product_id: {product_id}")
+
+    tier, days = tier_info
+    expires_at = datetime.now(_tz.utc) + _td(days=days)
+
+    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.subscription_tier = tier
+    user.subscription_expires_at = expires_at
+    await db.commit()
+
+    logger.info(f"[Subscription] 验证成功 user={user_id} product={product_id} tier={tier} expires={expires_at.date()}")
+    return {"ok": True, "tier": tier, "expires_at": expires_at.isoformat()}
+
+
 if __name__ == "__main__":
     import uvicorn
     # 与 Nginx proxy_pass 一致：服务器上 Nginx 代理 80 -> 8000，此处必须监听 8000

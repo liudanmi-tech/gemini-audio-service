@@ -15,9 +15,7 @@ class SubscriptionManager: ObservableObject {
 
     // App Store 产品 ID（与后端 PRODUCT_TIER_MAP 保持一致）
     static let monthlyProductID   = "com.miclnk.pro.monthly"
-    static let quarterlyProductID = "com.miclnk.pro.quarterly"
-    static let annualProductID    = "com.miclnk.pro.annual"
-    static let allProductIDs: Set<String> = [monthlyProductID, quarterlyProductID, annualProductID]
+    static let allProductIDs: Set<String> = [monthlyProductID]
 
     @Published var products: [Product] = []
     @Published var isPro: Bool = false
@@ -53,14 +51,7 @@ class SubscriptionManager: ObservableObject {
     func loadProducts() async {
         do {
             let storeProducts = try await Product.products(for: Self.allProductIDs)
-            self.products = storeProducts.sorted {
-                let order: [String: Int] = [
-                    Self.monthlyProductID: 0,
-                    Self.quarterlyProductID: 1,
-                    Self.annualProductID: 2
-                ]
-                return (order[$0.id] ?? 99) < (order[$1.id] ?? 99)
-            }
+            self.products = storeProducts
             print("[SubscriptionManager] 产品加载成功: \(self.products.map(\.id))")
         } catch {
             print("[SubscriptionManager] 产品加载失败: \(error)")

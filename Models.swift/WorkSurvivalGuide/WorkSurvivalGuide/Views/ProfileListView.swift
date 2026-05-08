@@ -9,9 +9,11 @@ import SwiftUI
 
 struct ProfileListView: View {
     @ObservedObject private var viewModel = ProfileViewModel.shared
+    @ObservedObject private var subscriptionManager = SubscriptionManager.shared
     @State private var showingCreateProfile = false
     @State private var selectedProfile: Profile?
     @State private var showSettingsSheet = false
+    @State private var showSubscription = false
     
     var body: some View {
         ZStack {
@@ -93,7 +95,35 @@ struct ProfileListView: View {
                     .font(AppFonts.cardTitle)
                     .foregroundColor(AppColors.primaryText)
                     .padding(.top, 24)
-                
+
+                // Pro 订阅入口
+                Button(action: {
+                    showSettingsSheet = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showSubscription = true
+                    }
+                }) {
+                    HStack(spacing: 10) {
+                        Image(systemName: subscriptionManager.isPro ? "crown.fill" : "crown")
+                            .foregroundColor(Color(hex: "#F59E0B"))
+                        Text(subscriptionManager.isPro ? "Pro Member" : "Upgrade to Pro")
+                            .font(AppFonts.cardTitle)
+                            .foregroundColor(AppColors.primaryText)
+                        Spacer()
+                        if !subscriptionManager.isPro {
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(AppColors.secondaryText)
+                                .font(.system(size: 14))
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.05))
+                    .cornerRadius(10)
+                }
+                .padding(.horizontal, 24)
+                .disabled(subscriptionManager.isPro)
+
                 Button("Sign Out") {
                     showSettingsSheet = false
                     AuthManager.shared.logout()
@@ -105,12 +135,14 @@ struct ProfileListView: View {
                 .background(Color(hex: "#EF4444"))
                 .cornerRadius(8)
                 .padding(.horizontal, 24)
-                .padding(.top, 16)
-                
+
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(AppColors.background)
+        }
+        .sheet(isPresented: $showSubscription) {
+            SubscriptionView()
         }
     }
 }

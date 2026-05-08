@@ -657,8 +657,24 @@ class RecordingViewModel: ObservableObject {
                 print("🖼️ [RecordingViewModel] 图片状态: \(imgStatus.status)，已生成: \(imgStatus.totalScenes) 张 (\(i+1)/\(maxWaits))")
                 guard imgStatus.status == "completed", imgStatus.totalScenes > 0 else { continue }
 
-                // 全部图片就绪 — 拉取最新详情（含 cover_image_url）
+                // 全部图片就绪 — 拉取最新详情
                 let freshDetail = (try? await networkManager.getTaskDetail(sessionId: sessionId, authToken: authToken)) ?? baseDetail
+
+                // 预缓存策略分析 + 第一张图片，进详情页时零等待；同时用第一张图片作为封面兜底
+                var coverImageUrl: String? = freshDetail.coverImageUrl
+                if let strategy = try? await networkManager.getStrategyAnalysis(sessionId: sessionId) {
+                    DetailCacheManager.shared.cacheStrategy(strategy, for: sessionId)
+                    let imageCount = strategy.sceneImages?.count ?? 0
+                    print("✅ [RecordingViewModel] 策略分析已预缓存（含 \(imageCount) 张场景图片）")
+                    if let firstImg = strategy.sceneImages?.first {
+                        let baseURL = networkManager.getBaseURL()
+                        if let proxyURL = firstImg.getAccessibleImageURL(baseURL: baseURL) {
+                            if coverImageUrl == nil { coverImageUrl = proxyURL }
+                            await preCacheImage(urlString: proxyURL, authToken: authToken)
+                        }
+                    }
+                }
+
                 let completedTask = TaskItem(
                     id: freshDetail.sessionId,
                     title: freshDetail.title,
@@ -671,25 +687,12 @@ class RecordingViewModel: ObservableObject {
                     speakerCount: freshDetail.speakerCount,
                     summary: freshDetail.summary,
                     cardTitle: freshDetail.cardTitle,
-                    coverImageUrl: freshDetail.coverImageUrl
+                    coverImageUrl: coverImageUrl
                 )
-
-                // 预缓存策略分析 + 第一张图片，进详情页时零等待
-                if let strategy = try? await networkManager.getStrategyAnalysis(sessionId: sessionId) {
-                    DetailCacheManager.shared.cacheStrategy(strategy, for: sessionId)
-                    let imageCount = strategy.sceneImages?.count ?? 0
-                    print("✅ [RecordingViewModel] 策略分析已预缓存（含 \(imageCount) 张场景图片）")
-                    if let firstImg = strategy.sceneImages?.first {
-                        let baseURL = networkManager.getBaseURL()
-                        if let proxyURL = firstImg.getAccessibleImageURL(baseURL: baseURL) {
-                            await preCacheImage(urlString: proxyURL, authToken: authToken)
-                        }
-                    }
-                }
 
                 // 图片+策略均就绪，现在发 TaskAnalysisCompleted（卡片变为可点击）
                 await MainActor.run {
-                    print("📢 [RecordingViewModel] 图片就绪，发送 TaskAnalysisCompleted 通知，封面: \(freshDetail.coverImageUrl ?? "nil")")
+                    print("📢 [RecordingViewModel] 图片就绪，发送 TaskAnalysisCompleted 通知，封面: \(coverImageUrl ?? "nil")")
                     NotificationCenter.default.post(
                         name: NSNotification.Name("TaskAnalysisCompleted"),
                         object: completedTask

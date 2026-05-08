@@ -149,7 +149,7 @@ struct SubscriptionView: View {
                 ForEach(manager.products, id: \.id) { product in
                     ProductCard(
                         product: product,
-                        isRecommended: product.id == SubscriptionManager.quarterlyProductID,
+                        isRecommended: false,
                         onPurchase: { Task { await manager.purchase(product) } }
                     )
                 }
