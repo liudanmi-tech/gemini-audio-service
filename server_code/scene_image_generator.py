@@ -222,9 +222,10 @@ async def generate_scene_images(
 规则：
 - 场景数量1-3个，不要重复，选最有代表性的
 - 明确描述「用户」和涉及的具体人物（保留原称呼，如张经理）在做什么
-- 描述示例："用户向张经理汇报预算情况，表情紧张"、"用户与李总监商量解决方案"
 - 若场景仅涉及用户自身，可只描述用户
-- 只返回JSON：{{"scene_count": 2, "scenes": ["场景1", "场景2"]}}"""
+- 场景描述必须用英文输出（English only）
+- 描述示例："User reports budget situation to Manager Zhang, looking tense"、"User discusses solutions with Director Li"
+- 只返回JSON：{{"scene_count": 2, "scenes": ["scene 1 in English", "scene 2 in English"]}}"""
             else:
                 scene_prompt = f"""分析以下录音对话，识别1-3个最有画面感的场景。
 
@@ -237,10 +238,11 @@ async def generate_scene_images(
 
 规则：
 - 场景数量1-3个，选最有代表性的，不要重复相似场景
-- 每个场景必须明确说明【谁】在做【什么动作】，使用"用户"和"对方"指代（不要用Speaker_0/1）
-- 必须符合对话实际逻辑：如果是用户在向对方汇报，就写"用户正在向对方汇报"，不能颠倒
-- 描述格式示例："用户正在向对方汇报工作进展，表情认真"、"对方向用户提出质疑，用户在解释"
-- 只返回JSON：{{"scene_count": 2, "scenes": ["场景1", "场景2"]}}"""
+- 每个场景必须明确说明【谁】在做【什么动作】，使用"the user"和"the other person"指代（不要用Speaker_0/1）
+- 必须符合对话实际逻辑：如果是用户在向对方汇报，就写"The user is reporting to the other person"，不能颠倒
+- 场景描述必须用英文输出（English only）
+- 描述示例："The user is reporting work progress to the other person, looking focused"、"The other person questions the user, who is explaining"
+- 只返回JSON：{{"scene_count": 2, "scenes": ["scene 1 in English", "scene 2 in English"]}}"""
 
             model = genai.GenerativeModel(gemini_flash_model)
             response = await asyncio.to_thread(model.generate_content, scene_prompt)
@@ -251,7 +253,7 @@ async def generate_scene_images(
 
             if not scenes:
                 logger.warning(f"[场景生图] 未提取到场景, session={session_id}")
-                scenes = ["用户与对方正在进行面对面交流"]
+                scenes = ["The user and the other person are having a face-to-face conversation"]
 
             logger.info(f"[场景生图] 提取到 {len(scenes)} 个场景: {scenes}")
 

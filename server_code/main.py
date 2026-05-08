@@ -171,6 +171,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from skills.router import classify_scene, match_skills
 from skills.registry import get_skill, initialize_skills
 from skills.executor import execute_skill
+from skills.ios_skill_registry import reload_skills_config as _reload_skills_config, PROMPT_TEMPLATES as _IOS_PROMPT_TEMPLATES
 
 # 配置 Gemini API
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -2991,17 +2992,43 @@ async def _generate_strategies_core(
             try:
                 skill = await get_skill(skill_id, db)
                 if not skill:
-                    logger.warning(f"技能不存在: {skill_id}")
-                    continue
+                    # 新iOS技能体系：从 stub 的 exec_template + exec_context 直接构建 prompt
+                    exec_template = matched_skill.get("exec_template", "")
+                    exec_context  = matched_skill.get("exec_context", {})
+                    if exec_template and exec_context:
+                        template_str = _IOS_PROMPT_TEMPLATES.get(exec_template, "")
+                        if not template_str:
+                            logger.warning(f"[技能执行] 缺少模板 {exec_template}，跳过技能 {skill_id}")
+                            continue
+                        # 把 exec_context 里的字段（focus/angle/sub_skill_cn）填入模板
+                        prompt = template_str
+                        for k, v in exec_context.items():
+                            prompt = prompt.replace("{" + k + "}", str(v))
+                        skill = {
+                            "skill_id":        skill_id,
+                            "name":            matched_skill.get("skill_name", skill_id),
+                            "prompt_template": prompt,
+                            "category":        matched_skill.get("category", ""),
+                        }
+                        logger.info(f"[技能执行] iOS新技能 {skill_id} 使用模板 {exec_template} 构建 prompt ({len(prompt)} chars)")
+                    else:
+                        logger.warning(f"[技能执行] 技能不存在且无exec_template: {skill_id}，跳过")
+                        continue
                 
                 skill["priority"] = matched_skill["priority"]
                 skill["confidence"] = matched_skill["confidence"]
                 
                 # 为每个技能构建独立 context（注入维度和子技能信息）
                 skill_context = dict(context)
-                skill_context["matched_sub_skill"] = matched_skill.get("matched_sub_skill", "")
+                # iOS新技能：matched_sub_skill 来自 exec_context.sub_skill_cn
+                sub_skill = (
+                    matched_skill.get("matched_sub_skill")
+                    or matched_skill.get("exec_context", {}).get("sub_skill_cn", "")
+                    or matched_skill.get("skill_name", "")
+                )
+                skill_context["matched_sub_skill"]    = sub_skill
                 skill_context["matched_sub_skill_id"] = matched_skill.get("matched_sub_skill_id", "")
-                skill_context["dimension"] = matched_skill.get("dimension", "")
+                skill_context["dimension"]            = matched_skill.get("dimension", "")
                 
                 task = execute_skill(skill, transcript, skill_context, model)
                 execution_tasks.append((skill_id, matched_skill, task))
@@ -3669,6 +3696,21 @@ async def reload_image_styles(_: str = Depends(get_current_user_id)):
         data={"total": len(_STYLES_LIST), "version": _get_styles_version()},
         timestamp=datetime.now().isoformat(),
     )
+
+
+@app.post("/api/v1/admin/skills/reload")
+async def reload_skills_endpoint(_: str = Depends(get_current_user_id)):
+    """热重载 skills_config.json（需要 JWT），无需重启服务即可更新技能配置。"""
+    try:
+        count = _reload_skills_config()
+        return APIResponse(
+            code=200,
+            message="skills config reloaded",
+            data={"total_skills": count},
+            timestamp=datetime.now().isoformat(),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"skills_config.json 加载失败: {e}")
 
 
 @app.get("/api/v1/sessions/major-events")

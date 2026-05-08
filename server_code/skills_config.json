@@ -1,0 +1,451 @@
+{
+  "version": "1.2",
+  "category_descriptions": {
+    "work_life": "professional or workplace setting — salary, boss, coworkers, performance, job search",
+    "campus_life": "academic or student life — professors, roommates, group projects, internships, campus social",
+    "relationships": "romantic or platonic relationship — dating, breakups, friendships, coming out",
+    "family": "family dynamics — parents, immigration, family finances, co-parenting, teens",
+    "personal_growth": "personal development or mental wellbeing — assertiveness, anxiety, anger, self-worth",
+    "life_skills": "practical daily life — healthcare, customer service, money, neighbors, landlord"
+  },
+  "system_skills": {
+    "salary_negotiation": {
+      "category": "work_life",
+      "name": "Salary Negotiation",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "salary or compensation negotiation",
+        "sub_skill_cn": "薪资谈判",
+        "angle": "how to anchor, counter-offer, and close without burning bridges"
+      }
+    },
+    "difficult_boss": {
+      "category": "work_life",
+      "name": "Difficult Boss",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "managing up / navigating a difficult superior",
+        "sub_skill_cn": "向上管理",
+        "angle": "how to protect yourself, stay credible, and influence without authority"
+      }
+    },
+    "work_boundaries": {
+      "category": "work_life",
+      "name": "Work Boundaries",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "setting and defending professional boundaries",
+        "sub_skill_cn": "职场边界",
+        "angle": "how to say no gracefully while keeping relationships intact"
+      }
+    },
+    "performance_reviews": {
+      "category": "work_life",
+      "name": "Performance Reviews",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "performance review or evaluation conversation",
+        "sub_skill_cn": "绩效沟通",
+        "angle": "how to advocate for your work, handle criticism, and negotiate outcomes"
+      }
+    },
+    "feedback": {
+      "category": "work_life",
+      "name": "Giving & Receiving Feedback",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "giving or receiving constructive feedback",
+        "sub_skill_cn": "反馈沟通",
+        "angle": "how to deliver feedback that lands, and receive it without defensiveness"
+      }
+    },
+    "job_interviews": {
+      "category": "work_life",
+      "name": "Job Interviews",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "job interview or hiring conversation",
+        "sub_skill_cn": "面试沟通",
+        "angle": "how to position yourself, handle tough questions, and close strong"
+      }
+    },
+    "coworker_conflicts": {
+      "category": "work_life",
+      "name": "Coworker Conflicts",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "conflict or tension with a coworker",
+        "sub_skill_cn": "同事冲突",
+        "angle": "how to de-escalate, address root causes, and rebuild working trust"
+      }
+    },
+    "remote_work": {
+      "category": "work_life",
+      "name": "Remote Work Communication",
+      "exec_template": "_exec_work_life",
+      "exec_context": {
+        "focus": "remote or async workplace communication",
+        "sub_skill_cn": "远程沟通",
+        "angle": "how to stay visible, clarify expectations, and avoid misreads in writing"
+      }
+    },
+    "roommate_conflicts": {
+      "category": "campus_life",
+      "name": "Roommate Conflicts",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "conflict or friction with a roommate",
+        "sub_skill_cn": "室友矛盾",
+        "angle": "how to address habits/boundaries without damaging shared living"
+      }
+    },
+    "professor_email": {
+      "category": "campus_life",
+      "name": "Talking to Professors",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "academic communication with a professor or advisor",
+        "sub_skill_cn": "师生沟通",
+        "angle": "how to make requests, push back respectfully, and build academic relationships"
+      }
+    },
+    "group_projects": {
+      "category": "campus_life",
+      "name": "Group Projects",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "group project coordination or conflict",
+        "sub_skill_cn": "小组协作",
+        "angle": "how to handle free-riders, align on tasks, and resolve friction"
+      }
+    },
+    "making_friends": {
+      "category": "campus_life",
+      "name": "Making Friends",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "building new friendships or social connections on campus",
+        "sub_skill_cn": "交友社交",
+        "angle": "how to initiate, deepen connections, and navigate early social dynamics"
+      }
+    },
+    "asking_extensions": {
+      "category": "campus_life",
+      "name": "Asking for Extensions",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "requesting academic accommodations, extensions, or grade appeals",
+        "sub_skill_cn": "学术申请",
+        "angle": "how to frame requests credibly and advocate for yourself academically"
+      }
+    },
+    "academic_burnout": {
+      "category": "campus_life",
+      "name": "Academic Burnout",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "academic stress, burnout, or overwhelm conversation",
+        "sub_skill_cn": "学业倦怠",
+        "angle": "how to communicate your limits and get support without stigma"
+      }
+    },
+    "internship_interview": {
+      "category": "campus_life",
+      "name": "Internship Interviews",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "internship or entry-level job interview",
+        "sub_skill_cn": "实习面试",
+        "angle": "how to present limited experience confidently and stand out"
+      }
+    },
+    "networking": {
+      "category": "campus_life",
+      "name": "Networking",
+      "exec_template": "_exec_campus_life",
+      "exec_context": {
+        "focus": "professional networking or informational interview",
+        "sub_skill_cn": "职业人脉",
+        "angle": "how to make genuine connections and follow up without being awkward"
+      }
+    },
+    "partner_communication": {
+      "category": "relationships",
+      "name": "Partner Communication",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "communication with a romantic partner",
+        "sub_skill_cn": "伴侣沟通",
+        "angle": "how to express needs, navigate conflict, and deepen understanding"
+      }
+    },
+    "talking_stage": {
+      "category": "relationships",
+      "name": "The Talking Stage",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "early-stage dating or 'talking stage' conversation",
+        "sub_skill_cn": "暧昧期沟通",
+        "angle": "how to signal interest, read signals, and move things forward intentionally"
+      }
+    },
+    "ghosting_rejection": {
+      "category": "relationships",
+      "name": "Ghosting & Rejection",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "being ghosted, rejected, or ending communication",
+        "sub_skill_cn": "被拒与消失",
+        "angle": "how to process rejection, respond with dignity, and protect self-worth"
+      }
+    },
+    "situationship": {
+      "category": "relationships",
+      "name": "Situationship",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "navigating an undefined or ambiguous romantic connection",
+        "sub_skill_cn": "模糊关系",
+        "angle": "how to clarify what you want, have the defining conversation without fear"
+      }
+    },
+    "dtr_conversation": {
+      "category": "relationships",
+      "name": "DTR Conversation",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "defining the relationship (DTR) conversation",
+        "sub_skill_cn": "确认关系",
+        "angle": "how to bring it up, read the room, and handle any outcome with grace"
+      }
+    },
+    "breakups": {
+      "category": "relationships",
+      "name": "Breakups",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "breakup conversation or post-breakup communication",
+        "sub_skill_cn": "分手沟通",
+        "angle": "how to end things kindly, set closure, and protect both parties' dignity"
+      }
+    },
+    "friendship_conflicts": {
+      "category": "relationships",
+      "name": "Friendship Conflicts",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "conflict or tension in a friendship",
+        "sub_skill_cn": "友谊冲突",
+        "angle": "how to address hurt feelings, repair trust, and reset the dynamic"
+      }
+    },
+    "coming_out": {
+      "category": "relationships",
+      "name": "Coming Out",
+      "exec_template": "_exec_relationships",
+      "exec_context": {
+        "focus": "coming out or disclosing personal identity to someone",
+        "sub_skill_cn": "出柜沟通",
+        "angle": "how to prepare, choose the moment, and handle various reactions"
+      }
+    },
+    "parent_boundaries": {
+      "category": "family",
+      "name": "Parent Boundaries",
+      "exec_template": "_exec_family",
+      "exec_context": {
+        "focus": "setting boundaries with parents or in-laws",
+        "sub_skill_cn": "与父母划边界",
+        "angle": "how to assert independence while preserving family bonds"
+      }
+    },
+    "immigrant_family": {
+      "category": "family",
+      "name": "Immigrant Family Dynamics",
+      "exec_template": "_exec_family",
+      "exec_context": {
+        "focus": "cross-cultural or generational conflict in an immigrant family",
+        "sub_skill_cn": "移民家庭沟通",
+        "angle": "how to bridge cultural gaps and reduce guilt-driven communication patterns"
+      }
+    },
+    "family_money": {
+      "category": "family",
+      "name": "Family Money Talks",
+      "exec_template": "_exec_family",
+      "exec_context": {
+        "focus": "money or financial conversations within family",
+        "sub_skill_cn": "家庭财务沟通",
+        "angle": "how to discuss financial expectations, fairness, and shared responsibilities"
+      }
+    },
+    "coparenting": {
+      "category": "family",
+      "name": "Co-parenting Communication",
+      "exec_template": "_exec_family",
+      "exec_context": {
+        "focus": "co-parenting coordination or conflict between separated parents",
+        "sub_skill_cn": "共同育儿协商",
+        "angle": "how to keep communication child-focused and minimize hostility"
+      }
+    },
+    "parent_teen": {
+      "category": "family",
+      "name": "Parent-Teen Communication",
+      "exec_template": "_exec_family",
+      "exec_context": {
+        "focus": "parent-teen or parent-young adult communication",
+        "sub_skill_cn": "亲子沟通",
+        "angle": "how to reduce power struggles and build genuine dialogue with teens"
+      }
+    },
+    "coming_out_family": {
+      "category": "family",
+      "name": "Coming Out to Family",
+      "exec_template": "_exec_family",
+      "exec_context": {
+        "focus": "coming out or disclosing identity to family members",
+        "sub_skill_cn": "向家人出柜",
+        "angle": "how to manage family reactions and protect your emotional safety"
+      }
+    },
+    "assertiveness": {
+      "category": "personal_growth",
+      "name": "Assertiveness",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "being more assertive or direct in communication",
+        "sub_skill_cn": "自我主张",
+        "angle": "how to speak up for yourself clearly without aggression"
+      }
+    },
+    "imposter_syndrome": {
+      "category": "personal_growth",
+      "name": "Imposter Syndrome",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "imposter syndrome or self-doubt affecting communication",
+        "sub_skill_cn": "冒充者综合征",
+        "angle": "how to recognize the pattern and communicate from a place of earned credibility"
+      }
+    },
+    "social_anxiety": {
+      "category": "personal_growth",
+      "name": "Social Anxiety",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "social anxiety affecting conversation or relationships",
+        "sub_skill_cn": "社交焦虑",
+        "angle": "how to ground yourself and engage more fully despite anxiety"
+      }
+    },
+    "burnout_recovery": {
+      "category": "personal_growth",
+      "name": "Burnout Recovery",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "communicating about burnout, exhaustion, or overwhelm",
+        "sub_skill_cn": "职业倦怠",
+        "angle": "how to ask for what you need and set recovery conditions"
+      }
+    },
+    "anger_management": {
+      "category": "personal_growth",
+      "name": "Anger Management",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "managing anger or emotional escalation in conversation",
+        "sub_skill_cn": "情绪管理",
+        "angle": "how to pause, name the feeling, and re-engage constructively"
+      }
+    },
+    "friend_crisis": {
+      "category": "personal_growth",
+      "name": "Helping a Friend in Crisis",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "supporting a friend going through a difficult time",
+        "sub_skill_cn": "支持朋友",
+        "angle": "how to listen without fixing, validate without minimizing"
+      }
+    },
+    "dealing_criticism": {
+      "category": "personal_growth",
+      "name": "Dealing with Criticism",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "receiving harsh or unfair criticism",
+        "sub_skill_cn": "应对批评",
+        "angle": "how to stay grounded, extract useful signal, and respond non-defensively"
+      }
+    },
+    "boundary_setting": {
+      "category": "personal_growth",
+      "name": "Boundary Setting",
+      "exec_template": "_exec_personal_growth",
+      "exec_context": {
+        "focus": "setting or defending personal limits in relationships",
+        "sub_skill_cn": "边界设定",
+        "angle": "how to state your limits clearly and hold them under pressure"
+      }
+    },
+    "healthcare_advocacy": {
+      "category": "life_skills",
+      "name": "Healthcare Advocacy",
+      "exec_template": "_exec_life_skills",
+      "exec_context": {
+        "focus": "advocating for yourself in a medical or healthcare context",
+        "sub_skill_cn": "医疗自我倡导",
+        "angle": "how to ask the right questions, push back on dismissal, and get the care you need"
+      }
+    },
+    "customer_service": {
+      "category": "life_skills",
+      "name": "Customer Service Disputes",
+      "exec_template": "_exec_life_skills",
+      "exec_context": {
+        "focus": "resolving a complaint or dispute with a company or service",
+        "sub_skill_cn": "消费维权",
+        "angle": "how to escalate effectively, stay calm, and get results"
+      }
+    },
+    "money_conversations": {
+      "category": "life_skills",
+      "name": "Money Conversations",
+      "exec_template": "_exec_life_skills",
+      "exec_context": {
+        "focus": "talking about money, splitting costs, or financial boundaries with non-family",
+        "sub_skill_cn": "金钱对话",
+        "angle": "how to bring up money without awkwardness and reach fair agreements"
+      }
+    },
+    "neighbor_conflicts": {
+      "category": "life_skills",
+      "name": "Neighbor Conflicts",
+      "exec_template": "_exec_life_skills",
+      "exec_context": {
+        "focus": "conflict or issue with a neighbor",
+        "sub_skill_cn": "邻里冲突",
+        "angle": "how to raise concerns directly, de-escalate tension, and maintain civil coexistence"
+      }
+    },
+    "landlord_comm": {
+      "category": "life_skills",
+      "name": "Landlord Communication",
+      "exec_template": "_exec_life_skills",
+      "exec_context": {
+        "focus": "tenant-landlord communication — repairs, deposits, lease disputes",
+        "sub_skill_cn": "租房沟通",
+        "angle": "how to document issues, assert rights, and negotiate without losing housing"
+      }
+    }
+  },
+  "prompt_templates": {
+    "_exec_campus_life": "You are an expert in academic communication, student life dynamics, and navigating institutional power structures. Analyze this conversation from the perspective of **{focus}** and give the speaker concrete, actionable guidance.\n\nSkill focus: **{focus}**\nAngle: {angle}\n{matched_sub_skill}\n\n## Your Task\n\n### 1. Situation Read\n- What is actually happening in this interaction? (power dynamics, unspoken rules, institutional context)\n- What does the other person really want or fear?\n- Where is the speaker vulnerable? Where do they have more leverage than they realize?\n\n### 2. Key Moments — Annotated Timeline\nPick 3–5 pivotal exchanges. For each:\n- What was said vs. what was meant\n- The subtext underneath\n- What the speaker could have said instead (and why it would land better)\n\n### 3. Tactical Strategies\nGive 3–4 concrete strategies the speaker can use now or next time.\nFor each: name it, explain the logic, give exact language they can use.\n\n### 4. Reframe\nGive the speaker one insight that shifts how they see this situation — from reactive to intentional.\n\n---\n\nRespond ONLY in this exact JSON format. transcript_index must be a valid 0-based index into the transcript array:\n\n{\n  \"visual\": [\n    {\n      \"transcript_index\": 0,\n      \"speaker\": \"Speaker_0\",\n      \"image_prompt\": \"Studio Ghibli style, warm natural tones. Left side is the user, right side is the other person. [Describe the scene in English: setting, posture, atmosphere, what is happening]\",\n      \"emotion\": \"anxious\",\n      \"subtext\": \"What was really being communicated at this moment\",\n      \"context\": \"What is happening at this moment in the conversation\",\n      \"my_inner\": \"What the user was likely feeling internally\",\n      \"other_inner\": \"What the other person was likely thinking or feeling\"\n    }\n  ],\n  \"strategies\": [\n    {\n      \"id\": \"s1\",\n      \"label\": \"2–4 word label\",\n      \"emoji\": \"🎯\",\n      \"title\": \"Strategy Title\",\n      \"content\": \"Full strategy explanation with exact scripts and language to use. Use Markdown with **bold** for key phrases and > for example scripts.\"\n    }\n  ]\n}\n\nRules:\n- visual: 3–5 items, each a distinct key moment, transcript_index must be valid\n- strategies: 3–4 items\n- All text fields must be in English\n- speaker must match the speaker ID from the transcript\n\nConversation transcript:\n{transcript_json}\n\n{memory_context}",
+    "_exec_life_skills": "You are an expert in practical life communication — advocating for yourself in everyday institutions, service interactions, and civil disputes. Analyze this conversation from the perspective of **{focus}** and help the speaker get better real-world outcomes.\n\nSkill focus: **{focus}**\nAngle: {angle}\n{matched_sub_skill}\n\n## Your Task\n\n### 1. Situation Read\n- What is the real issue at stake? (practical, financial, legal, or relational)\n- What leverage does the speaker have that they may not be using?\n- What is the other party's likely goal, constraint, or pressure?\n\n### 2. Key Moments — Annotated Timeline\nPick 3–5 pivotal exchanges. For each:\n- What worked and what backfired\n- What the speaker could say instead for a better practical outcome\n- The other party's likely calculation at this moment\n\n### 3. Tactical Strategies\nGive 3–4 concrete, real-world strategies. Focus on practical effectiveness.\nFor each: name it, explain the logic, provide exact scripts or next steps.\n\n### 4. Power Move\nIdentify one thing the speaker can do that shifts the power balance in their favor — a call to make, a document to request, a phrase that changes the framing.\n\n---\n\nRespond ONLY in this exact JSON format. transcript_index must be a valid 0-based index into the transcript array:\n\n{\n  \"visual\": [\n    {\n      \"transcript_index\": 0,\n      \"speaker\": \"Speaker_0\",\n      \"image_prompt\": \"Studio Ghibli style, warm natural tones. Left side is the user, right side is the other person. [Describe the scene in English: the practical setting, what is happening, the power dynamic visible in posture and expression]\",\n      \"emotion\": \"frustrated\",\n      \"subtext\": \"What was really being communicated at this moment\",\n      \"context\": \"What is happening at this moment in the conversation\",\n      \"my_inner\": \"What the user was likely feeling internally\",\n      \"other_inner\": \"What the other party was likely thinking or calculating\"\n    }\n  ],\n  \"strategies\": [\n    {\n      \"id\": \"s1\",\n      \"label\": \"2–4 word label\",\n      \"emoji\": \"⚡\",\n      \"title\": \"Strategy Title\",\n      \"content\": \"Full strategy explanation with exact scripts and next steps. Use Markdown with **bold** for key phrases and > for example language to use.\"\n    }\n  ]\n}\n\nRules:\n- visual: 3–5 items, each a distinct key moment, transcript_index must be valid\n- strategies: 3–4 items\n- All text fields must be in English\n- speaker must match the speaker ID from the transcript\n\nConversation transcript:\n{transcript_json}\n\n{memory_context}",
+    "_exec_work_life": "You are an expert in professional dynamics, workplace psychology, and organizational power. Analyze this conversation from the perspective of **{focus}** and give the speaker concrete, actionable guidance.\n\nSkill focus: **{focus}**\nAngle: {angle}\n{matched_sub_skill}\n\n## Your Task\n\n### 1. Power & Stakes Analysis\n- Who holds power here, and what kind? (formal authority, information control, social capital, emotional leverage)\n- What is the other person's real goal vs. stated goal?\n- Where is the speaker's leverage? Where are they most exposed?\n\n### 2. Key Moments — Annotated Timeline\nPick 3–5 pivotal exchanges from the transcript. For each:\n- What was said vs. what was actually meant\n- What subtext was running underneath\n- What the speaker could have said instead, and why it lands better\n\n### 3. Tactical Strategies\nGive 3–4 workplace-specific strategies the speaker can use now or next time.\nFor each: name it, explain the logic, provide exact scripts and language the speaker can use.\n\n### 4. One Reframe\nGive the speaker one insight that shifts their position from reactive to strategic.\n\n---\n\nRespond ONLY in this exact JSON format. transcript_index must be a valid 0-based index into the transcript array:\n\n{\n  \"visual\": [\n    {\n      \"transcript_index\": 0,\n      \"speaker\": \"Speaker_0\",\n      \"image_prompt\": \"Studio Ghibli style, warm natural tones. Left side is the user, right side is the other person. [Describe the scene in English: setting, posture, atmosphere, what is happening]\",\n      \"emotion\": \"tense\",\n      \"subtext\": \"What was really being communicated at this moment\",\n      \"context\": \"What is happening at this moment in the conversation\",\n      \"my_inner\": \"What the user was likely feeling internally\",\n      \"other_inner\": \"What the other person was likely thinking or feeling\"\n    }\n  ],\n  \"strategies\": [\n    {\n      \"id\": \"s1\",\n      \"label\": \"2–4 word label\",\n      \"emoji\": \"💡\",\n      \"title\": \"Strategy Title\",\n      \"content\": \"Full strategy explanation with exact scripts and language to use. Use Markdown with **bold** for key phrases and > for example scripts.\"\n    }\n  ]\n}\n\nRules:\n- visual: 3–5 items, each a distinct key moment, transcript_index must be valid\n- strategies: 3–4 items\n- All text fields must be in English\n- speaker must match the speaker ID from the transcript (e.g. Speaker_0, Speaker_1)\n\nConversation transcript:\n{transcript_json}\n\n{memory_context}",
+    "_exec_relationships": "You are an expert in interpersonal dynamics, attachment patterns, and relationship communication. Analyze this conversation from the perspective of **{focus}** and give the speaker honest, actionable guidance.\n\nSkill focus: **{focus}**\nAngle: {angle}\n{matched_sub_skill}\n\n## Your Task\n\n### 1. Relationship Dynamics Read\n- What is the underlying dynamic between these two people? (power balance, attachment style, unspoken needs)\n- What does each person really want vs. what they're saying?\n- Where is the speaker protecting themselves? Where are they more open than they realize?\n\n### 2. Key Moments — Annotated Timeline\nPick 3–5 pivotal exchanges. For each:\n- What was said vs. what was felt\n- The subtext and unmet need underneath\n- What the speaker could have expressed instead (more honest, more effective)\n\n### 3. Communication Strategies\nGive 3–4 strategies for navigating this relationship dynamic.\nFor each: name it, explain the emotional logic, give exact language the speaker can use.\n\n### 4. One Truth\nGive the speaker one honest insight about this dynamic that they may have been avoiding seeing.\n\n---\n\nRespond ONLY in this exact JSON format. transcript_index must be a valid 0-based index into the transcript array:\n\n{\n  \"visual\": [\n    {\n      \"transcript_index\": 0,\n      \"speaker\": \"Speaker_0\",\n      \"image_prompt\": \"Studio Ghibli style, warm natural tones. Left side is the user, right side is the other person. [Describe the scene in English: setting, mood, emotional atmosphere, what is happening between them]\",\n      \"emotion\": \"vulnerable\",\n      \"subtext\": \"What was really being communicated at this moment\",\n      \"context\": \"What is happening at this moment in the conversation\",\n      \"my_inner\": \"What the user was likely feeling internally\",\n      \"other_inner\": \"What the other person was likely thinking or feeling\"\n    }\n  ],\n  \"strategies\": [\n    {\n      \"id\": \"s1\",\n      \"label\": \"2–4 word label\",\n      \"emoji\": \"💬\",\n      \"title\": \"Strategy Title\",\n      \"content\": \"Full strategy explanation with exact scripts and language to use. Use Markdown with **bold** for key phrases and > for example scripts.\"\n    }\n  ]\n}\n\nRules:\n- visual: 3–5 items, each a distinct key moment, transcript_index must be valid\n- strategies: 3–4 items\n- All text fields must be in English\n- speaker must match the speaker ID from the transcript\n\nConversation transcript:\n{transcript_json}\n\n{memory_context}",
+    "_exec_family": "You are an expert in family systems, intergenerational dynamics, and navigating complex family relationships. Analyze this conversation from the perspective of **{focus}** and give the speaker grounded, actionable guidance.\n\nSkill focus: **{focus}**\nAngle: {angle}\n{matched_sub_skill}\n\n## Your Task\n\n### 1. Family System Read\n- What family dynamic or pattern is playing out here? (roles, loyalty, power, generational patterns)\n- What does each person actually need underneath what they're saying?\n- Where does the speaker have more agency than they feel they do?\n\n### 2. Key Moments — Annotated Timeline\nPick 3–5 pivotal exchanges. For each:\n- What was said vs. the family pattern behind it\n- The unspoken need or fear driving this moment\n- What the speaker could have said that would shift the dynamic\n\n### 3. Navigation Strategies\nGive 3–4 strategies for navigating this family dynamic with more skill and less reactivity.\nFor each: name it, explain the family system logic, give exact language the speaker can use.\n\n### 4. One Pattern to Name\nGive the speaker one name or frame for the dynamic they're caught in — naming it is the first step to changing it.\n\n---\n\nRespond ONLY in this exact JSON format. transcript_index must be a valid 0-based index into the transcript array:\n\n{\n  \"visual\": [\n    {\n      \"transcript_index\": 0,\n      \"speaker\": \"Speaker_0\",\n      \"image_prompt\": \"Studio Ghibli style, warm natural tones. Left side is the user, right side is the other person. [Describe the scene in English: domestic or family setting, posture, emotional atmosphere, what is happening]\",\n      \"emotion\": \"overwhelmed\",\n      \"subtext\": \"What was really being communicated at this moment\",\n      \"context\": \"What is happening at this moment in the conversation\",\n      \"my_inner\": \"What the user was likely feeling internally\",\n      \"other_inner\": \"What the other person was likely thinking or feeling\"\n    }\n  ],\n  \"strategies\": [\n    {\n      \"id\": \"s1\",\n      \"label\": \"2–4 word label\",\n      \"emoji\": \"🏠\",\n      \"title\": \"Strategy Title\",\n      \"content\": \"Full strategy explanation with exact scripts and language to use. Use Markdown with **bold** for key phrases and > for example scripts.\"\n    }\n  ]\n}\n\nRules:\n- visual: 3–5 items, each a distinct key moment, transcript_index must be valid\n- strategies: 3–4 items\n- All text fields must be in English\n- speaker must match the speaker ID from the transcript\n\nConversation transcript:\n{transcript_json}\n\n{memory_context}",
+    "_exec_personal_growth": "You are an expert in psychology, self-development, and internal communication patterns. Analyze this conversation from the perspective of **{focus}** and help the speaker develop more self-awareness and effective behavioral patterns.\n\nSkill focus: **{focus}**\nAngle: {angle}\n{matched_sub_skill}\n\n## Your Task\n\n### 1. Internal Pattern Read\n- What internal pattern or belief system is driving the speaker's behavior here?\n- What is the gap between how the speaker sees themselves and how they are coming across?\n- Where is the speaker already showing more strength than they realize?\n\n### 2. Key Moments — Annotated Timeline\nPick 3–5 pivotal moments from the conversation. For each:\n- What the speaker said vs. what their inner critic or fear was actually driving\n- The self-limiting belief underneath\n- What a more self-aware version of the speaker might have said instead\n\n### 3. Growth Strategies\nGive 3–4 concrete strategies for developing the skill of **{focus}**.\nFor each: name it, explain the psychological mechanism, give exact language or practices the speaker can try.\n\n### 4. One Core Shift\nGive the speaker one fundamental reframe that addresses the root pattern — not just the surface behavior.\n\n---\n\nRespond ONLY in this exact JSON format. transcript_index must be a valid 0-based index into the transcript array:\n\n{\n  \"visual\": [\n    {\n      \"transcript_index\": 0,\n      \"speaker\": \"Speaker_0\",\n      \"image_prompt\": \"Studio Ghibli style, warm natural tones. Left side is the user, right side is the other person (or the user alone if self-reflection). [Describe the scene in English: setting, emotional atmosphere, the user's internal state made visible]\",\n      \"emotion\": \"self-critical\",\n      \"subtext\": \"What was really being communicated at this moment\",\n      \"context\": \"What is happening at this moment in the conversation\",\n      \"my_inner\": \"What the user was likely feeling internally\",\n      \"other_inner\": \"What the other person was likely thinking or feeling\"\n    }\n  ],\n  \"strategies\": [\n    {\n      \"id\": \"s1\",\n      \"label\": \"2–4 word label\",\n      \"emoji\": \"🌱\",\n      \"title\": \"Strategy Title\",\n      \"content\": \"Full strategy explanation with exact practices and language to try. Use Markdown with **bold** for key concepts and > for example scripts or self-talk.\"\n    }\n  ]\n}\n\nRules:\n- visual: 3–5 items, each a distinct key moment, transcript_index must be valid\n- strategies: 3–4 items\n- All text fields must be in English\n- speaker must match the speaker ID from the transcript\n\nConversation transcript:\n{transcript_json}\n\n{memory_context}"
+  }
+}
