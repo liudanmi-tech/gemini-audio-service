@@ -103,6 +103,16 @@ struct ContentView: View {
         .sheet(isPresented: $recordingViewModel.showPaywall) {
             SubscriptionView()
         }
+        .alert("Upload Failed", isPresented: Binding(
+            get: { recordingViewModel.uploadError != nil },
+            set: { if !$0 { recordingViewModel.uploadError = nil } }
+        )) {
+            Button("OK", role: .cancel) {
+                recordingViewModel.uploadError = nil
+            }
+        } message: {
+            Text(recordingViewModel.uploadError ?? "")
+        }
     }
 }
 

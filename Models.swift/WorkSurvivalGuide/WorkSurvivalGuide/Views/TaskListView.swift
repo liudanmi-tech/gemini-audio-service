@@ -49,6 +49,31 @@ struct TaskListView: View {
                     ProgressView("Loading...")
                         .tint(AppColors.headerText)
                     Spacer()
+                } else if let errorMsg = viewModel.errorMessage, viewModel.tasks.isEmpty {
+                    Spacer()
+                    VStack(spacing: 16) {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: 50))
+                            .foregroundColor(AppColors.secondaryText)
+                        Text("Unable to load")
+                            .font(AppFonts.cardTitle)
+                            .foregroundColor(AppColors.secondaryText)
+                        Text(errorMsg)
+                            .font(AppFonts.time)
+                            .foregroundColor(AppColors.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                        Button(action: { viewModel.refreshTasks() }) {
+                            Text("Retry")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 28)
+                                .padding(.vertical, 10)
+                                .background(Color.blue.opacity(0.8))
+                                .cornerRadius(10)
+                        }
+                    }
+                    Spacer()
                 } else if viewModel.tasks.isEmpty {
                     Spacer()
                     VStack(spacing: 16) {

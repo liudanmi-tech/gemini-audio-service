@@ -28,11 +28,11 @@ struct LoginView: View {
                             .font(.system(size: 72))
                             .foregroundColor(.blue)
 
-                        Text("Work Survival Guide")
+                        Text("MicLnk")
                             .font(.system(size: 26, weight: .bold))
                             .foregroundColor(.white)
 
-                        Text("Your personal AI work coach")
+                        Text("Voice to comic diary · AI self-awareness")
                             .font(.system(size: 15))
                             .foregroundColor(.white.opacity(0.5))
                     }
@@ -56,32 +56,6 @@ struct LoginView: View {
                             ProgressView()
                                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         }
-
-                        // Continue with phone — 测试用按钮
-                        NavigationLink(destination: PhoneSignInView()) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "phone.fill")
-                                    .font(.system(size: 15))
-                                Text("Continue with phone")
-                                    .font(.system(size: 15, weight: .medium))
-                            }
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 50)
-                            .background(Color.white.opacity(0.12))
-                            .foregroundColor(.white)
-                            .cornerRadius(10)
-                        }
-                        .disabled(viewModel.isLoading)
-
-                        // Continue with email — 次级文字链接
-                        NavigationLink(destination: EmailSignInView()) {
-                            Text("Continue with email")
-                                .font(.system(size: 15))
-                                .foregroundColor(.white.opacity(0.55))
-                                .underline()
-                        }
-                        .padding(.top, 2)
-                        .disabled(viewModel.isLoading)
                     }
                     .padding(.horizontal, 32)
 

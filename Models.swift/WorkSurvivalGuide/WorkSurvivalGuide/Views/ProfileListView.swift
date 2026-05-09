@@ -124,6 +124,46 @@ struct ProfileListView: View {
                 .padding(.horizontal, 24)
                 .disabled(subscriptionManager.isPro)
 
+                // Privacy Policy
+                Link(destination: URL(string: "https://docs.qq.com/doc/DZHBUZm9CT1haTndI")!) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "hand.raised.fill")
+                            .foregroundColor(AppColors.secondaryText)
+                        Text("Privacy Policy")
+                            .font(AppFonts.cardTitle)
+                            .foregroundColor(AppColors.primaryText)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .foregroundColor(AppColors.secondaryText)
+                            .font(.system(size: 14))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.05))
+                    .cornerRadius(10)
+                }
+                .padding(.horizontal, 24)
+
+                // Terms of Service
+                Link(destination: URL(string: "https://docs.qq.com/doc/DZExyTFd6VGFtTG13")!) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "doc.text.fill")
+                            .foregroundColor(AppColors.secondaryText)
+                        Text("Terms of Service")
+                            .font(AppFonts.cardTitle)
+                            .foregroundColor(AppColors.primaryText)
+                        Spacer()
+                        Image(systemName: "arrow.up.right")
+                            .foregroundColor(AppColors.secondaryText)
+                            .font(.system(size: 14))
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(Color.white.opacity(0.05))
+                    .cornerRadius(10)
+                }
+                .padding(.horizontal, 24)
+
                 Button("Sign Out") {
                     showSettingsSheet = false
                     AuthManager.shared.logout()

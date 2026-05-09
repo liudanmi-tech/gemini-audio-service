@@ -16,7 +16,8 @@ class RecordingViewModel: ObservableObject {
     @Published var uploadProgress: Double = 0  // 0~1，1.0 表示已发送完毕，等待服务器响应
     @Published var uploadPhaseDescription: String = "Uploading"  // "Uploading" | "Processing, please wait..."
     @Published var showPaywall: Bool = false
-    
+    @Published var uploadError: String? = nil
+
     private let audioRecorder = AudioRecorderService.shared
     private let networkManager = NetworkManager.shared
     private var timer: Timer?
@@ -304,8 +305,14 @@ class RecordingViewModel: ObservableObject {
                         print("❌ [RecordingViewModel] ========== 上传/分析失败 ==========")
                         print("❌ [RecordingViewModel] 错误类型: \(type(of: error))")
                         print("❌ [RecordingViewModel] 错误信息: \(error.localizedDescription)")
-                        print("❌ [RecordingViewModel] 错误域: \(nsError.domain)")
-                        print("❌ [RecordingViewModel] 错误码: \(nsError.code)")
+                        let friendly = Self.friendlyErrorMessage(error)
+                        self.uploadError = friendly
+                        if let taskId = self.currentRecordingTaskId {
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("TaskDeleted"),
+                                object: taskId
+                            )
+                        }
                     }
                 }
             }
@@ -458,11 +465,12 @@ class RecordingViewModel: ObservableObject {
                         NotificationCenter.default.post(name: NSNotification.Name("TaskDeleted"), object: taskId)
                     }
                 } else {
+                    let friendly = Self.friendlyErrorMessage(error)
                     await MainActor.run {
+                        self.uploadError = friendly
                         NotificationCenter.default.post(
-                            name: NSNotification.Name("TaskAnalysisFailed"),
-                            object: taskId,
-                            userInfo: ["message": nsError.localizedDescription]
+                            name: NSNotification.Name("TaskDeleted"),
+                            object: taskId
                         )
                     }
                 }
@@ -773,6 +781,21 @@ class RecordingViewModel: ObservableObject {
         return max(0, min(100, score))
     }
     
+    // 友好的错误文案
+    private static func friendlyErrorMessage(_ error: Error) -> String {
+        if let urlErr = error as? URLError {
+            switch urlErr.code {
+            case .notConnectedToInternet, .networkConnectionLost:
+                return "No internet connection. Please check your network and try again."
+            case .timedOut:
+                return "Request timed out. Please try again."
+            default:
+                break
+            }
+        }
+        return "Upload failed. Please try again."
+    }
+
     // 格式化录音时长
     var formattedTime: String {
         let minutes = Int(recordingTime) / 60

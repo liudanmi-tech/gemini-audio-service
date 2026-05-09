@@ -4574,6 +4574,77 @@ async def verify_subscription(
     return {"ok": True, "tier": tier, "expires_at": expires_at.isoformat()}
 
 
+# ─── Shared helpers for stats endpoints ────────────────────────────────────────
+
+def _stats_refined_title(card_title, summary, fallback):
+    """镜像 iOS refinedTitle：card_title → summary截前30字 → fallback"""
+    if card_title and card_title.strip():
+        return card_title.strip()
+    if summary and summary.strip():
+        text = summary.strip()
+        if len(text) <= 30:
+            return text
+        result = text[:30]
+        for i in range(len(result) - 1, -1, -1):
+            if result[i] in '。！？，；：':
+                result = result[:i + 1]
+                break
+        return result if result else text[:30]
+    return (fallback or "").strip() or "未命名"
+
+
+def _stats_thumbnail(sa, sid, api_base):
+    """从 StrategyAnalysis 提取封面图 URL"""
+    if sa is None:
+        return None
+    vd = sa.visual_data
+    if isinstance(vd, list) and vd:
+        fv = vd[0] if isinstance(vd[0], dict) else {}
+        iu = fv.get("image_url") if isinstance(fv, dict) else None
+        if iu and ("oss" in iu or "geminipicture" in iu.lower()):
+            return f"{api_base}/api/v1/images/{sid}/0"
+    imgs = sa.scene_images
+    if isinstance(imgs, list) and imgs:
+        for si in imgs:
+            su = (si if isinstance(si, dict) else {}).get("image_url")
+            if su and ("oss" in su or "geminipicture" in su.lower()):
+                m = re.search(r'/([0-9]+)\.png', su)
+                if m:
+                    return f"{api_base}/api/v1/images/{sid}/{m.group(1)}"
+    return None
+
+
+_SCENE_META = {
+    "work_life":       ("🏢", "Work Life"),
+    "campus_life":     ("🎓", "Campus Life"),
+    "relationships":   ("💕", "Relationships"),
+    "family":          ("🏠", "Family"),
+    "personal_growth": ("🌱", "Personal Growth"),
+    "life_skills":     ("⚡", "Life Skills"),
+}
+
+
+def _load_skill_label_map(db_skills):
+    """从 skills_config.json + skills 表构建 skill_id -> {label, category} 映射"""
+    import json as _j
+    result = {}
+    try:
+        _cfg_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills_config.json")
+        with open(_cfg_path) as _f:
+            _cfg = _j.load(_f)
+        for _sid, _sv in _cfg.get("system_skills", {}).items():
+            _cn = (_sv.get("exec_context") or {}).get("sub_skill_cn") or _sv.get("name", _sid)
+            result[_sid] = {"label": _cn, "category": _sv.get("category", "")}
+    except Exception:
+        pass
+    for dsk in db_skills:
+        if dsk.skill_id not in result:
+            result[dsk.skill_id] = {"label": dsk.name, "category": dsk.category}
+    return result
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+
 @app.get("/api/v1/weekly-stats")
 async def get_weekly_stats(
     start_date: str = Query(...),
@@ -4604,44 +4675,9 @@ async def get_weekly_stats(
 
         api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213").rstrip("/")
 
-        def _refined_title(card_title, summary, fallback):
-            """镜像 iOS refinedTitle 逻辑：card_title → summary截前30字 → fallback"""
-            if card_title and card_title.strip():
-                return card_title.strip()
-            if summary and summary.strip():
-                text = summary.strip()
-                if len(text) <= 30:
-                    return text
-                result = text[:30]
-                for i in range(len(result) - 1, -1, -1):
-                    if result[i] in '。！？，；：':
-                        result = result[:i + 1]
-                        break
-                return result if result else text[:30]
-            return (fallback or "").strip() or "未命名"
-
         def _polarity(score):
             if score is None: return None
             return "positive" if score >= 60 else ("negative" if score <= 40 else "neutral")
-
-        def _thumb(sa):
-            if sa is None: return None
-            sid = str(sa.session_id)
-            vd = sa.visual_data
-            if isinstance(vd, list) and vd:
-                fv = vd[0] if isinstance(vd[0], dict) else {}
-                iu = fv.get("image_url") if isinstance(fv, dict) else None
-                if iu and ("oss" in iu or "geminipicture" in iu.lower()):
-                    return f"{api_base}/api/v1/images/{sid}/0"
-            imgs = sa.scene_images
-            if isinstance(imgs, list) and imgs:
-                for si in imgs:
-                    su = (si if isinstance(si, dict) else {}).get("image_url")
-                    if su and ("oss" in su or "geminipicture" in su.lower()):
-                        m = re.search(r'/([0-9]+)\.png', su)
-                        if m:
-                            return f"{api_base}/api/v1/images/{sid}/{m.group(1)}"
-            return None
 
         # sessions list
         sessions_out = []
@@ -4656,7 +4692,7 @@ async def get_weekly_stats(
                 top_skill_conf = top.get("confidence")
             sessions_out.append({
                 "session_id": str(s.id),
-                "title": _refined_title(
+                "title": _stats_refined_title(
                     ar.card_title if ar else None,
                     ar.summary if ar else None,
                     s.title
@@ -4668,7 +4704,7 @@ async def get_weekly_stats(
                 "mood_polarity": _polarity(mood),
                 "top_skill_id": top_skill_id,
                 "top_skill_confidence": top_skill_conf,
-                "thumbnail_url": _thumb(sa),
+                "thumbnail_url": _stats_thumbnail(sa, str(s.id), api_base),
             })
 
         # mood_series: one entry per day in range
@@ -4738,6 +4774,180 @@ async def get_weekly_stats(
         logger.error(f"获取周期统计失败: {e}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"获取周期统计失败: {str(e)}")
+
+
+@app.get("/api/v1/skills-radar")
+async def get_skills_radar(
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """技能雷达：场景分布 + 技能命中分析 + 高光时刻"""
+    from datetime import datetime as _dt, timedelta as _td3, timezone as _tz3
+    import collections as _col2
+
+    def _hit_level(n):
+        if n <= 0: return None
+        if n == 1: return "初探"
+        if n == 2: return "练习中"
+        if n <= 4: return "熟悉"
+        if n <= 7: return "精通"
+        return "驾轻就熟"
+
+    try:
+        start_dt = _dt.strptime(start_date, "%Y-%m-%d").replace(tzinfo=_tz3.utc)
+        end_dt = (_dt.strptime(end_date, "%Y-%m-%d") + _td3(days=1)).replace(tzinfo=_tz3.utc)
+        api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213").rstrip("/")
+
+        # 1. 查询日期范围内该用户的所有 session + strategy + analysis
+        session_rows = (await db.execute(
+            select(Session, StrategyAnalysis, AnalysisResult)
+            .outerjoin(StrategyAnalysis, StrategyAnalysis.session_id == Session.id)
+            .outerjoin(AnalysisResult, AnalysisResult.session_id == Session.id)
+            .where(
+                Session.user_id == uuid.UUID(user_id),
+                Session.status.in_(["completed", "archived"]),
+                Session.created_at >= start_dt,
+                Session.created_at < end_dt
+            )
+            .order_by(Session.created_at.asc())
+        )).all()
+
+        if not session_rows:
+            return APIResponse(code=200, message="success",
+                               data={"scenes": [], "highlights": []},
+                               timestamp=datetime.now().isoformat())
+
+        session_ids = [s.id for s, sa, ar in session_rows]
+
+        # 2. 查询所有 skill_executions
+        se_rows = (await db.execute(
+            select(SkillExecution)
+            .where(SkillExecution.session_id.in_(session_ids))
+        )).scalars().all()
+
+        # session_id(str) -> set of skill_ids
+        session_skill_map = _col2.defaultdict(set)
+        for se in se_rows:
+            session_skill_map[str(se.session_id)].add(se.skill_id)
+
+        # 3. 构建 skill label 映射
+        db_skills = (await db.execute(select(Skill))).scalars().all()
+        skill_label_map = _load_skill_label_map(db_skills)
+
+        # 4. 按 scene_category 聚合 session（按时间顺序）
+        scene_sessions = _col2.defaultdict(list)
+        for s, sa, ar in session_rows:
+            cat = (sa.scene_category if sa else None) or "personal_growth"
+            scene_sessions[cat].append((str(s.id), s, sa, ar))
+
+        # 5. 构建每个场景的 RadarScene
+        scenes_out = []
+        highlight_candidates = []  # (hit_count, sid, title, date, labels, thumb, cat)
+
+        for cat, entries in sorted(scene_sessions.items(), key=lambda x: -len(x[1])):
+            emoji, label = _SCENE_META.get(cat, ("💬", cat))
+            n = len(entries)
+
+            # 构建每个 skill 的命中时序矩阵：skill_id -> [0/1, ...] length n
+            skill_matrix = _col2.defaultdict(lambda: [0] * n)
+            for i, (sid, s, sa, ar) in enumerate(entries):
+                for sk_id in session_skill_map.get(sid, set()):
+                    skill_matrix[sk_id][i] = 1
+
+            # RadarSkill 列表（只保留命中过的）
+            radar_skills = []
+            for sk_id, hit_seq in skill_matrix.items():
+                hit_count = sum(hit_seq)
+                if hit_count == 0:
+                    continue
+                sparkline = hit_seq[-8:]
+                mid = len(hit_seq) // 2
+                recent = sum(hit_seq[mid:])
+                older  = sum(hit_seq[:mid]) if mid > 0 else recent
+                trend  = "improving" if recent > older else ("watch" if recent < older else "stable")
+                radar_skills.append({
+                    "skill_id": sk_id,
+                    "skill_label": skill_label_map.get(sk_id, {}).get("label", sk_id),
+                    "hit_count": hit_count,
+                    "level": _hit_level(hit_count),
+                    "trend": trend,
+                    "sparkline": sparkline,
+                })
+            radar_skills.sort(key=lambda x: -x["hit_count"])
+
+            # 推荐技能：同类别中尚未命中的
+            hit_ids = {sk["skill_id"] for sk in radar_skills}
+            recommendations = []
+            for sk_id, sk_meta in skill_label_map.items():
+                if sk_meta.get("category") == cat and sk_id not in hit_ids:
+                    recommendations.append({
+                        "skill_id": sk_id,
+                        "skill_label": sk_meta["label"],
+                        "scene_count": 0,
+                        "reason": f"在{label}场景中尚未练习",
+                    })
+                    if len(recommendations) >= 3:
+                        break
+
+            scenes_out.append({
+                "scene_id": cat,
+                "scene_label": label,
+                "scene_emoji": emoji,
+                "session_count": n,
+                "skills": radar_skills,
+                "recommendations": recommendations,
+            })
+
+            # 高光时刻候选
+            for sid, s, sa, ar in entries:
+                sk_ids = session_skill_map.get(sid, set())
+                if not sk_ids:
+                    continue
+                sk_labels = [skill_label_map.get(sk, {}).get("label", sk) for sk in sk_ids]
+                title = _stats_refined_title(
+                    ar.card_title if ar else None,
+                    ar.summary if ar else None,
+                    s.title
+                )
+                date_str = s.created_at.strftime("%b %d") if s.created_at else ""
+                highlight_candidates.append((
+                    len(sk_ids), sid, title, date_str,
+                    sk_labels, _stats_thumbnail(sa, sid, api_base),
+                    emoji, label
+                ))
+
+        # 6. 高光时刻：按命中技能数降序，去重取前5
+        highlight_candidates.sort(key=lambda x: -x[0])
+        highlights_out = []
+        seen = set()
+        for cnt, sid, title, date_str, sk_labels, thumb, emoji, label in highlight_candidates:
+            if sid in seen:
+                continue
+            seen.add(sid)
+            highlights_out.append({
+                "session_id": sid,
+                "session_title": title,
+                "session_date": date_str,
+                "skill_labels": sk_labels[:3],
+                "cover_image_url": thumb,
+                "scene_label": label,
+                "scene_emoji": emoji,
+            })
+            if len(highlights_out) >= 5:
+                break
+
+        return APIResponse(
+            code=200,
+            message="success",
+            data={"scenes": scenes_out, "highlights": highlights_out},
+            timestamp=datetime.now().isoformat()
+        )
+    except Exception as e:
+        logger.error(f"获取技能雷达失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取技能雷达失败: {str(e)}")
 
 
 if __name__ == "__main__":
