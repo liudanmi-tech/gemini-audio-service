@@ -769,9 +769,9 @@ struct WeeklySessionRow: View {
             // 卡片标题 + 日期
             VStack(alignment: .leading, spacing: 4) {
                 Text(session.title ?? "Untitled")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 16, weight: .semibold, design: .rounded))
                     .foregroundColor(isHighlighted ? Color(hex: "#FB923C") : .white)
-                    .lineLimit(1)
+                    .lineLimit(2)
                     .animation(.easeInOut(duration: 0.3), value: isHighlighted)
 
                 HStack(spacing: 6) {

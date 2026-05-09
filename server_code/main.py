@@ -4574,6 +4574,172 @@ async def verify_subscription(
     return {"ok": True, "tier": tier, "expires_at": expires_at.isoformat()}
 
 
+@app.get("/api/v1/weekly-stats")
+async def get_weekly_stats(
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db)
+):
+    """获取周期统计数据（心情曲线 / 技能雷达 / 社交能量）"""
+    from datetime import datetime as _dt, timedelta as _td2, timezone as _tz2
+    import collections as _col
+
+    try:
+        start_dt = _dt.strptime(start_date, "%Y-%m-%d").replace(tzinfo=_tz2.utc)
+        end_dt = (_dt.strptime(end_date, "%Y-%m-%d") + _td2(days=1)).replace(tzinfo=_tz2.utc)
+
+        rows = (await db.execute(
+            select(Session, AnalysisResult, StrategyAnalysis)
+            .outerjoin(AnalysisResult, AnalysisResult.session_id == Session.id)
+            .outerjoin(StrategyAnalysis, StrategyAnalysis.session_id == Session.id)
+            .where(
+                Session.user_id == uuid.UUID(user_id),
+                Session.status.in_(["completed", "archived"]),
+                Session.created_at >= start_dt,
+                Session.created_at < end_dt
+            )
+            .order_by(Session.created_at.asc())
+        )).all()
+
+        api_base = os.getenv("API_PUBLIC_URL", "http://47.79.254.213").rstrip("/")
+
+        def _refined_title(card_title, summary, fallback):
+            """镜像 iOS refinedTitle 逻辑：card_title → summary截前30字 → fallback"""
+            if card_title and card_title.strip():
+                return card_title.strip()
+            if summary and summary.strip():
+                text = summary.strip()
+                if len(text) <= 30:
+                    return text
+                result = text[:30]
+                for i in range(len(result) - 1, -1, -1):
+                    if result[i] in '。！？，；：':
+                        result = result[:i + 1]
+                        break
+                return result if result else text[:30]
+            return (fallback or "").strip() or "未命名"
+
+        def _polarity(score):
+            if score is None: return None
+            return "positive" if score >= 60 else ("negative" if score <= 40 else "neutral")
+
+        def _thumb(sa):
+            if sa is None: return None
+            sid = str(sa.session_id)
+            vd = sa.visual_data
+            if isinstance(vd, list) and vd:
+                fv = vd[0] if isinstance(vd[0], dict) else {}
+                iu = fv.get("image_url") if isinstance(fv, dict) else None
+                if iu and ("oss" in iu or "geminipicture" in iu.lower()):
+                    return f"{api_base}/api/v1/images/{sid}/0"
+            imgs = sa.scene_images
+            if isinstance(imgs, list) and imgs:
+                for si in imgs:
+                    su = (si if isinstance(si, dict) else {}).get("image_url")
+                    if su and ("oss" in su or "geminipicture" in su.lower()):
+                        m = re.search(r'/([0-9]+)\.png', su)
+                        if m:
+                            return f"{api_base}/api/v1/images/{sid}/{m.group(1)}"
+            return None
+
+        # sessions list
+        sessions_out = []
+        for s, ar, sa in rows:
+            mood = ar.mood_score if ar else None
+            scene_cat = (sa.scene_category if sa else None)
+            applied = (sa.applied_skills if sa else []) or []
+            top_skill_id = top_skill_conf = None
+            if isinstance(applied, list) and applied:
+                top = applied[0] if isinstance(applied[0], dict) else {}
+                top_skill_id = top.get("skill_id")
+                top_skill_conf = top.get("confidence")
+            sessions_out.append({
+                "session_id": str(s.id),
+                "title": _refined_title(
+                    ar.card_title if ar else None,
+                    ar.summary if ar else None,
+                    s.title
+                ),
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+                "duration_sec": s.duration or 0,
+                "scene_category": scene_cat,
+                "mood_score": mood,
+                "mood_polarity": _polarity(mood),
+                "top_skill_id": top_skill_id,
+                "top_skill_confidence": top_skill_conf,
+                "thumbnail_url": _thumb(sa),
+            })
+
+        # mood_series: one entry per day in range
+        date_entries = _col.defaultdict(list)
+        for s, ar, sa in rows:
+            if s.created_at:
+                d_str = s.created_at.strftime("%Y-%m-%d")
+                date_entries[d_str].append((ar.mood_score if ar else None, str(s.id)))
+
+        cur = _dt.strptime(start_date, "%Y-%m-%d").date()
+        end_d = _dt.strptime(end_date, "%Y-%m-%d").date()
+        mood_series = []
+        while cur <= end_d:
+            d_str = cur.strftime("%Y-%m-%d")
+            entries = date_entries.get(d_str, [])
+            scores = [e[0] for e in entries if e[0] is not None]
+            avg = sum(scores) / len(scores) if scores else None
+            mood_series.append({
+                "date": d_str,
+                "score": round(avg, 1) if avg is not None else None,
+                "polarity": _polarity(avg),
+                "session_id": entries[-1][1] if entries else None,
+                "session_count": len(entries),
+            })
+            cur += _td2(days=1)
+
+        # skill_radar: group by scene_category
+        cat_scores = _col.defaultdict(list)
+        cat_counts = _col.Counter()
+        for s, ar, sa in rows:
+            if sa and sa.scene_category:
+                cat = sa.scene_category
+                cat_counts[cat] += 1
+                if ar and ar.mood_score is not None:
+                    cat_scores[cat].append(ar.mood_score)
+        skill_radar = [
+            {
+                "category_id": cat,
+                "score": round(sum(cat_scores[cat]) / len(cat_scores[cat]), 1) if cat_scores[cat] else 50.0,
+                "delta": None,
+                "session_count": cat_counts[cat],
+            }
+            for cat in sorted(cat_counts, key=lambda c: -cat_counts[c])
+        ]
+
+        # social_energy: total duration per category
+        cat_dur = _col.defaultdict(float)
+        for s, ar, sa in rows:
+            if sa and sa.scene_category:
+                cat_dur[sa.scene_category] += (s.duration or 0) / 60.0
+        total_dur = sum(cat_dur.values()) or 1.0
+        social_energy = sorted(
+            [{"category_id": c, "duration_min": round(d, 1),
+              "session_count": cat_counts[c], "pct": round(d / total_dur, 3)}
+             for c, d in cat_dur.items()],
+            key=lambda x: -x["duration_min"]
+        )
+
+        return {
+            "period": {"start": start_date, "end": end_date},
+            "mood_series": mood_series,
+            "skill_radar": skill_radar,
+            "social_energy": social_energy,
+            "sessions": sessions_out,
+        }
+    except Exception as e:
+        logger.error(f"获取周期统计失败: {e}")
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"获取周期统计失败: {str(e)}")
+
+
 if __name__ == "__main__":
     import uvicorn
     # 与 Nginx proxy_pass 一致：服务器上 Nginx 代理 80 -> 8000，此处必须监听 8000
